@@ -123,7 +123,7 @@ class AIAnalyzer:
                     f"Seçili model görsel analizi (vision) desteklemiyor: '{model}'\n\n"
                     "Çözüm:\n"
                     "• AI Analiz sayfasında farklı bir model seçin\n"
-                    "• Önerilen: google/gemini-2.0-flash-001\n"
+                    "• Önerilen: google/gemini-2.5-flash-preview\n"
                     "• Ya da: openai/gpt-4o-mini, anthropic/claude-3-haiku"
                 )
                 logger.error("Vision-unsupported hata (model=%s): %s", model, exc)
@@ -138,7 +138,7 @@ class AIAnalyzer:
                     "• Hesabınızda bu modele erişim yok\n\n"
                     "Çözüm:\n"
                     "• AI Analiz sayfasında başka bir model seçin\n"
-                    "• Önerilen: google/gemini-2.0-flash-001\n"
+                    "• Önerilen: google/gemini-2.5-flash-preview\n"
                     "• Ayarlar > Model Test'ten erişilebilir modelleri görün"
                 )
                 logger.error("Model-not-found hata (model=%s): %s", model, exc)

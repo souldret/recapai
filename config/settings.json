@@ -15,7 +15,7 @@
     "logs_dir": "./logs"
   },
   "defaults": {
-    "vision_model": "google/gemini-2.0-flash-001",
+    "vision_model": "google/gemini-2.5-flash-preview",
     "script_model": "openai/gpt-4o",
     "tts_engine": "kokoro",
     "tts_voice": "tr-TR-AhmetNeural",
