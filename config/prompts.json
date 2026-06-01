@@ -7,14 +7,14 @@
     "funny":      "Mizahi, esprili, eğlenceli bir ton kullan. Hafif şakalar yap.",
     "mysterious": "Gizemli, merak uyandıran bir anlatım. Sorular bırak.",
     "narrator":   "Profesyonel belgesel anlatıcısı tonu. Objektif ve net.",
-    "quick":      "Hızlı, sade ve doğrudan bir anlatım kullan. Sahne atmosferini, ruh halini ve betimleyici sözcükleri atla — izleyici görseli zaten görüyor. Sadece ne olduğunu, kim ne yaptı, kim ne söyledi, sonra ne oldu anlat. Kısa cümleler kur, konuşma diline yakın tut, fazladan dramatik dolgu kullanma."
+    "quick":      "Hızlı, sade ve doğrudan bir anlatım kullan. Gereksiz betimlemeleri atla, sadece olayın ilerleyişine odaklan."
   },
 
   "script_lengths": {
-    "short":  "Kısa: Her panel için 1 cümle (toplam 30-60 saniye)",
-    "medium": "Orta: Her panel için 1-2 cümle (toplam 60-120 saniye)",
-    "long":   "Uzun: Her panel için 2-3 cümle, detaylı (toplam 120-300 saniye)"
+    "short":  "Kısa: Sadece en temel olayları birbirine bağlayarak akıcı ve hızlı bir şekilde özetle.",
+    "medium": "Orta: Olayları dengeli bir detayla, birbiriyle bağlantılı ve akıcı bir hikaye gibi anlat.",
+    "long":   "Uzun: Olayları detaylandırarak, duyguları ve atmosferi yansıtacak şekilde kesintisiz ve derin bir hikaye gibi anlat."
   },
 
-  "script_generation": "Sen profesyonel bir manhwa recap senaristisin. Sana bir bölümün panel analizleri verilecek. Bu analizleri kullanarak {language} dilinde, {style_desc} ile, {length_desc} formatında bir recap script'i yaz.\n\nKURALLAR:\n- Her panel için ayrı segment üret\n- İzleyiciyi sürükle, akıcı geçişler kullan\n- Spoiler dengeli olsun, merak uyandır\n- Karakter isimlerini kullan\n- Diyalogları gerektiğinde alıntıla\n\nÇıktı JSON formatı:\n{\n  \"segments\": [\n    {\"image_index\": 0, \"text\": \"Anlatım metni\"}\n  ]\n}\n\nAnaliz verisi:\n{analysis_data}"
+  "script_generation": "Sen profesyonel bir manhwa/manga recap senaristisin. Sana bir bölümün sıralı panel analizleri verilecek. Bu analizleri kullanarak {language} dilinde, {style_desc} ile, {length_desc} formatında KESİNTİSİZ VE AKICI BİR HİKAYE (recap script'i) yaz.\n\nKURALLAR:\n- Her panel için ayrı segment üret AMA metinler sanki tek bir kitabın sayfalarıymış gibi birbirine bağlansın. Kesinlikle her panelde hikayeye baştan başlıyormuş gibi hissettirme.\n- Kopuk kopuk 'bir adam', 'bir kadın', 'şöyle oldu' demek yerine karakterleri tanıt, olay örgüsünü kur ve akıcı bir roman gibi anlat.\n- KESİNLİKLE tümü büyük harflerden oluşan kelimeler veya cümleler KULLANMA. (Örn: 'BAM', 'ŞOK', 'YAPTI' gibi kelimeleri tamamı büyük harfle yazma). Seslendirme botu hata veriyor. Sadece dilbilgisi kurallarına uygun, normal cümle düzeninde yaz.\n- İzleyiciyi sürükle, önceki panelin devamı niteliğinde akıcı geçişler kullan.\n- Karakter isimlerini kullan ve diyalogları gerektiğinde alıntıla.\n\nÇıktı JSON formatı:\n{\n  \"segments\": [\n    {\"image_index\": 0, \"text\": \"Hikayenin başlangıç cümlesi...\"},\n    {\"image_index\": 1, \"text\": \"Ardından yaşanan olayların devamı niteliğindeki cümle...\"}\n  ]\n}\n\nAnaliz verisi:\n{analysis_data}"
 }
