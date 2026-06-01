@@ -378,10 +378,10 @@ class ScriptGenerator:
         prompt = (
             f"Aşağıdaki manga paneli için KESİNLİKLE VE SADECE {lang_label} dilinde metin yaz.\n"
             f"Şu kurala HARFİYEN UY: {style_desc}\n"
-            f"Önceki ve sonraki olaylara uyumlu ol, hikayeyi bölme. KESİNLİKLE tümü büyük harflerden oluşan kelime KULLANMA.\n"
+            f"Önceki ve sonraki olaylara uyumlu ol, hikayeyi bölme. KESİNLİKLE tümü büyük harflerden oluşan kelime veya cümle KULLANMA.\n"
             f"OCR GİBİ DAVRANMA: Paneldeki diyalogları BİREBİR kopyalamak YASAKTIR. Kendi cümlelerinle hikayeye yedir.\n"
             f"SES EFEKTLERİ YASAKTIR: Görsel ses efektlerini (SFX), yansıma sözcükleri, Çince/Japonca karakterleri veya '(sound effect)' gibi notları senaryoya ASLA ekleme.\n"
-            f"cümle KULLANMA. Sadece metin döndür, JSON veya açıklama ekleme. (Not: Bu kural Türkçe "
+            f"Sadece metin döndür, JSON veya açıklama ekleme. (Not: Bu kurallar Türkçe "
             f"olmasına rağmen, üreteceğin metin tamamen {lang_label} olmalıdır!)\n\n"
             f"Panel: Sahne: {scene}. Aksiyon: {action}. "
             f"Karakterler: {chars}. Diyalog: {dialogues}."
