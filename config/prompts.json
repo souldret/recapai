@@ -2,19 +2,19 @@
   "vision_analysis": "Bu bir manhwa/manga panelidir. Sahneyi detaylı analiz et ve aşağıdaki JSON formatında döndür:\n\n{\n  \"scene\": \"Sahne genel açıklaması\",\n  \"characters\": [\"karakter1\", \"karakter2\"],\n  \"dialogues\": [\"diyalog metinleri\"],\n  \"action\": \"Ne olduğu (aksiyon)\",\n  \"mood\": \"Atmosfer/duygu\",\n  \"setting\": \"Mekan/ortam\",\n  \"important\": true\n}\n\nSadece JSON döndür, başka açıklama ekleme.",
 
   "script_styles": {
-    "epic":       "Epik, dramatik, sinematik bir anlatım stili kullan. Güçlü kelimeler seç.",
-    "casual":     "Samimi, sohbet havasında, izleyiciyle konuşur gibi anlat.",
-    "funny":      "Mizahi, esprili, eğlenceli bir ton kullan. Hafif şakalar yap.",
-    "mysterious": "Gizemli, merak uyandıran bir anlatım. Sorular bırak.",
-    "narrator":   "Profesyonel belgesel anlatıcısı tonu. Objektif ve net.",
-    "quick":      "Hızlı, sade ve doğrudan bir anlatım kullan. Gereksiz betimlemeleri atla, sadece olayın ilerleyişine odaklan."
+    "epic":       "STİL (Epik): Epik, dramatik ve sinematik. Güçlü, destansı ve coşkulu bir anlatım kullan.",
+    "casual":     "STİL (Samimi): Rahat, günlük konuşma dilinde. İzleyiciyle bir YouTube videosunda sohbet ediyormuş gibi samimi bir ton kullan.",
+    "funny":      "STİL (Eğlenceli): Mizahi ve esprili. Olayları ti'ye al, komik benzetmeler yap ve eğlendirici bir ton kullan.",
+    "mysterious": "STİL (Gizemli): Gizemli, merak uyandırıcı ve gerilimli. Seyirciyi şüpheye düşürecek sorular sorarak karanlık bir atmosfer yarat.",
+    "narrator":   "STİL (Belgesel): Profesyonel bir belgesel anlatıcısı gibi. Ciddi, objektif, net ve duygudan uzak resmi bir dil kullan.",
+    "quick":      "STİL (Hızlı/Özet): Çok hızlı, sade ve doğrudan. ASLA süslü kelimeler, destansı anlatımlar veya dramatik betimlemeler YAPMA. Sadece kimin ne yaptığını dümdüz ve hızla özetle."
   },
 
   "script_lengths": {
-    "short":  "Kısa: Sadece en temel olayları birbirine bağlayarak akıcı ve hızlı bir şekilde özetle.",
-    "medium": "Orta: Olayları dengeli bir detayla, birbiriyle bağlantılı ve akıcı bir hikaye gibi anlat.",
-    "long":   "Uzun: Olayları detaylandırarak, duyguları ve atmosferi yansıtacak şekilde kesintisiz ve derin bir hikaye gibi anlat."
+    "short":  "UZUNLUK (Kısa): Metinleri mümkün olduğunca kısa tut. Sadece en kritik olayları birer cümleyle hızla geç.",
+    "medium": "UZUNLUK (Orta): Olayları dengeli bir detayla, ne çok kısa ne çok uzun olacak şekilde anlat.",
+    "long":   "UZUNLUK (Uzun): Olayları detaylandır, diyaloglara ve atmosfere daha çok yer vererek uzun uzun anlat."
   },
 
-  "script_generation": "Sen profesyonel bir manhwa/manga recap senaristisin. Sana bir bölümün sıralı panel analizleri verilecek. Bu analizleri kullanarak {style_desc} ile, {length_desc} formatında KESİNTİSİZ VE AKICI BİR HİKAYE (recap script'i) yaz.\n\nÇOK ÖNEMLİ DİL KURALI:\n- Çıktı metinleri (text alanları) KESİNLİKLE VE SADECE {language} dilinde olmalıdır! Aşağıdaki kurallar Türkçe anlatılmış olsa bile, yazacağın hikayenin dili {language} olmak zorundadır.\n\nKURALLAR:\n- Her panel için ayrı segment üret AMA metinler sanki tek bir kitabın sayfalarıymış gibi birbirine bağlansın. Kesinlikle her panelde hikayeye baştan başlıyormuş gibi hissettirme.\n- Kopuk kopuk 'bir adam', 'bir kadın', 'şöyle oldu' demek yerine karakterleri tanıt, olay örgüsünü kur ve akıcı bir roman gibi anlat.\n- KESİNLİKLE tümü büyük harflerden oluşan kelimeler veya cümleler KULLANMA. Sadece dilbilgisi kurallarına uygun, normal cümle düzeninde yaz.\n- İzleyiciyi sürükle, önceki panelin devamı niteliğinde akıcı geçişler kullan.\n- Karakter isimlerini kullan ve diyalogları gerektiğinde alıntıla.\n\nÇıktı JSON formatı:\n{\n  \"segments\": [\n    {\"image_index\": 0, \"text\": \"(Bu kısımdaki metin tamamen {language} olacak şekilde yazılacak)\"},\n    {\"image_index\": 1, \"text\": \"(Ardından yaşanan olayların devamı, yine {language} dilinde)\"}\n  ]\n}\n\nAnaliz verisi:\n{analysis_data}"
+  "script_generation": "Sen bir manhwa/manga recap senaristisin. Sana bir bölümün sıralı panel analizleri verilecek.\nBu analizleri kullanarak, {length_desc} ve {style_desc} kuralına HARFİYEN uyarak bir recap script'i yaz.\n\nÇOK ÖNEMLİ DİL KURALI:\n- Çıktı metinleri (text alanları) KESİNLİKLE VE SADECE {language} dilinde olmalıdır!\n\nKURALLAR:\n1. Stil ve Uzunluk: Yukarıda belirtilen STİL ve UZUNLUK kuralları en önemli kısımdır. Hızlı dendiyse asla destansı yazma; Epik dendiyse coşkulu ol. İstenen formata kesinlikle sadık kal.\n2. Süreklilik (Hikaye Akışı): Her panel için ayrı segment üret AMA metinler birbirinin doğrudan devamı olsun. Her görselde sanki yeni bir hikayeye başlıyormuş gibi 'bir adam', 'bir kadın' diyerek sıfırdan tanımlama YAPMA. Karakter isimlerini kullan ve önceki panelin devamını getir.\n3. Büyük Harf Kuralı: KESİNLİKLE tümü büyük harflerden oluşan kelimeler KULLANMA (Örn: 'BAM', 'ŞOK'). Normal cümle düzeninde yaz.\n\nÇıktı JSON formatı:\n{\n  \"segments\": [\n    {\"image_index\": 0, \"text\": \"(Bu kısımdaki metin tamamen {language} olacak şekilde yazılacak)\"},\n    {\"image_index\": 1, \"text\": \"(Ardından yaşanan olayların devamı, yine {language} dilinde)\"}\n  ]\n}\n\nAnaliz verisi:\n{analysis_data}"
 }

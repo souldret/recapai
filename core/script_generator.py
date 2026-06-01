@@ -376,9 +376,9 @@ class ScriptGenerator:
         dialogues = "; ".join(analysis.get("dialogues", [])[:2])
 
         prompt = (
-            f"Aşağıdaki manga paneli için KESİNLİKLE VE SADECE {lang_label} dilinde, "
-            f"{style_desc} bir anlatım cümlesi yaz. Önceki ve sonraki olaylara uyumlu, "
-            f"akıcı bir dil kullan. KESİNLİKLE tümü büyük harflerden oluşan kelime veya "
+            f"Aşağıdaki manga paneli için KESİNLİKLE VE SADECE {lang_label} dilinde metin yaz.\n"
+            f"Şu kurala HARFİYEN UY: {style_desc}\n"
+            f"Önceki ve sonraki olaylara uyumlu ol, hikayeyi bölme. KESİNLİKLE tümü büyük harflerden oluşan kelime veya "
             f"cümle KULLANMA. Sadece metin döndür, JSON veya açıklama ekleme. (Not: Bu kural Türkçe "
             f"olmasına rağmen, üreteceğin metin tamamen {lang_label} olmalıdır!)\n\n"
             f"Panel: Sahne: {scene}. Aksiyon: {action}. "
