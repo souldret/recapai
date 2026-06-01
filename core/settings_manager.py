@@ -164,8 +164,8 @@ class SettingsManager(QObject):
                 "logs_dir": "./logs",
             },
             "defaults": {
-                "vision_model": "google/gemini-2.5-flash-preview",
-                "script_model": "google/gemini-2.5-flash-preview",
+                "vision_model": "google/gemini-2.5-flash",
+                "script_model": "google/gemini-2.5-flash",
                 "tts_engine": "edge-tts",
                 "tts_voice": "tr-TR-AhmetNeural",
             },
