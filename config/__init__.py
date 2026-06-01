@@ -1,0 +1,1 @@
+"""RecapAI config paketi."""

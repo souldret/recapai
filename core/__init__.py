@@ -1,0 +1,1 @@
+"""RecapAI core paketi."""

@@ -1,0 +1,359 @@
+{
+  "vision_models": [
+    {
+      "id": "google/gemini-2.0-flash-001",
+      "name": "Gemini 2.0 Flash",
+      "cost": "$",
+      "recommended": true,
+      "supports_vision": true,
+      "max_tokens": 8192,
+      "description": "Hızlı ve uygun fiyatlı, stabil — önerilen"
+    },
+    {
+      "id": "google/gemini-2.5-flash-preview:thinking",
+      "name": "Gemini 2.5 Flash Preview (Thinking)",
+      "cost": "$",
+      "supports_vision": true,
+      "max_tokens": 8192,
+      "description": "Akıl yürütmeli en güncel Gemini"
+    },
+    {
+      "id": "google/gemini-2.5-flash-preview",
+      "name": "Gemini 2.5 Flash Preview",
+      "cost": "$",
+      "supports_vision": true,
+      "max_tokens": 8192,
+      "description": "En güncel Gemini, vision desteği"
+    },
+    {
+      "id": "google/gemini-2.5-pro-preview",
+      "name": "Gemini 2.5 Pro Preview",
+      "cost": "$$",
+      "supports_vision": true,
+      "max_tokens": 8192,
+      "description": "En güçlü Gemini, detaylı sahne analizi"
+    },
+    {
+      "id": "google/gemini-flash-1.5",
+      "name": "Gemini 1.5 Flash",
+      "cost": "$",
+      "supports_vision": true,
+      "max_tokens": 8192,
+      "description": "Stabil, hızlı"
+    },
+    {
+      "id": "google/gemini-pro-1.5",
+      "name": "Gemini 1.5 Pro",
+      "cost": "$$",
+      "supports_vision": true,
+      "max_tokens": 8192,
+      "description": "Yüksek kaliteli sahne analizi"
+    },
+    {
+      "id": "anthropic/claude-opus-4",
+      "name": "Claude Opus 4",
+      "cost": "$$$$",
+      "supports_vision": true,
+      "max_tokens": 8192,
+      "description": "Anthropic'in en güçlü modeli"
+    },
+    {
+      "id": "anthropic/claude-sonnet-4-5",
+      "name": "Claude Sonnet 4.5",
+      "cost": "$$$",
+      "supports_vision": true,
+      "max_tokens": 8192,
+      "description": "Güncel Sonnet, hız/kalite dengesi"
+    },
+    {
+      "id": "anthropic/claude-3.7-sonnet",
+      "name": "Claude 3.7 Sonnet",
+      "cost": "$$$",
+      "supports_vision": true,
+      "max_tokens": 8192,
+      "description": "Hibrit akıl yürütme, vision"
+    },
+    {
+      "id": "anthropic/claude-3.5-sonnet",
+      "name": "Claude 3.5 Sonnet",
+      "cost": "$$$",
+      "supports_vision": true,
+      "max_tokens": 8192,
+      "description": "En iyi sahne anlama (stabil)"
+    },
+    {
+      "id": "anthropic/claude-3.5-haiku",
+      "name": "Claude 3.5 Haiku",
+      "cost": "$",
+      "supports_vision": true,
+      "max_tokens": 8192,
+      "description": "Hızlı ve uygun fiyatlı Haiku"
+    },
+    {
+      "id": "anthropic/claude-3-haiku",
+      "name": "Claude 3 Haiku",
+      "cost": "$",
+      "supports_vision": true,
+      "max_tokens": 4096,
+      "description": "Ucuz ve hızlı vision"
+    },
+    {
+      "id": "openai/gpt-4o",
+      "name": "GPT-4o",
+      "cost": "$$$",
+      "supports_vision": true,
+      "max_tokens": 4096,
+      "description": "OpenAI en iyi vision modeli"
+    },
+    {
+      "id": "openai/gpt-4o-mini",
+      "name": "GPT-4o Mini",
+      "cost": "$",
+      "supports_vision": true,
+      "max_tokens": 4096,
+      "description": "Ucuz ve hızlı OpenAI vision"
+    },
+    {
+      "id": "openai/o4-mini",
+      "name": "OpenAI o4-mini",
+      "cost": "$$",
+      "supports_vision": true,
+      "max_tokens": 8192,
+      "description": "Akıl yürütme + vision, ekonomik"
+    },
+    {
+      "id": "openai/o3",
+      "name": "OpenAI o3",
+      "cost": "$$$$",
+      "supports_vision": true,
+      "max_tokens": 8192,
+      "description": "En güçlü OpenAI akıl yürütme modeli"
+    },
+    {
+      "id": "meta-llama/llama-4-maverick",
+      "name": "Llama 4 Maverick",
+      "cost": "$",
+      "supports_vision": true,
+      "max_tokens": 8192,
+      "description": "Meta'nın multimodal Llama 4"
+    },
+    {
+      "id": "meta-llama/llama-4-scout",
+      "name": "Llama 4 Scout",
+      "cost": "$",
+      "supports_vision": true,
+      "max_tokens": 8192,
+      "description": "Llama 4 hafif, hızlı, vision"
+    },
+    {
+      "id": "qwen/qwen2.5-vl-72b-instruct",
+      "name": "Qwen 2.5 VL 72B",
+      "cost": "$",
+      "supports_vision": true,
+      "max_tokens": 8192,
+      "description": "Güçlü açık kaynak vision"
+    },
+    {
+      "id": "qwen/qwen-2-vl-72b-instruct",
+      "name": "Qwen 2 VL 72B",
+      "cost": "$",
+      "supports_vision": true,
+      "max_tokens": 4096,
+      "description": "Açık kaynak vision modeli"
+    },
+    {
+      "id": "mistralai/mistral-small-3.2-24b-instruct",
+      "name": "Mistral Small 3.2 24B",
+      "cost": "$",
+      "supports_vision": true,
+      "max_tokens": 8192,
+      "description": "Mistral'ın yeni vision modeli"
+    },
+    {
+      "id": "x-ai/grok-2-vision-1212",
+      "name": "Grok 2 Vision",
+      "cost": "$$",
+      "supports_vision": true,
+      "max_tokens": 8192,
+      "description": "xAI Grok vision desteği"
+    }
+  ],
+  "script_models": [
+    {
+      "id": "anthropic/claude-3.5-sonnet",
+      "name": "Claude 3.5 Sonnet",
+      "cost": "$$$",
+      "recommended": true,
+      "max_tokens": 8192,
+      "description": "En yaratıcı senaryo yazımı — önerilen"
+    },
+    {
+      "id": "anthropic/claude-opus-4",
+      "name": "Claude Opus 4",
+      "cost": "$$$$",
+      "max_tokens": 8192,
+      "description": "En üst düzey senaryo kalitesi"
+    },
+    {
+      "id": "anthropic/claude-sonnet-4-5",
+      "name": "Claude Sonnet 4.5",
+      "cost": "$$$",
+      "max_tokens": 8192,
+      "description": "Güncel Sonnet, hız/kalite dengesi"
+    },
+    {
+      "id": "anthropic/claude-3.7-sonnet",
+      "name": "Claude 3.7 Sonnet",
+      "cost": "$$$",
+      "max_tokens": 8192,
+      "description": "Hibrit akıl yürütme ile senaryo"
+    },
+    {
+      "id": "anthropic/claude-3.5-haiku",
+      "name": "Claude 3.5 Haiku",
+      "cost": "$",
+      "max_tokens": 8192,
+      "description": "Hızlı Anthropic, uygun fiyat"
+    },
+    {
+      "id": "anthropic/claude-3-haiku",
+      "name": "Claude 3 Haiku",
+      "cost": "$",
+      "max_tokens": 4096,
+      "description": "Hızlı ve ucuz"
+    },
+    {
+      "id": "openai/gpt-4o",
+      "name": "GPT-4o",
+      "cost": "$$$",
+      "max_tokens": 4096,
+      "description": "Dengeli kalite"
+    },
+    {
+      "id": "openai/gpt-4o-mini",
+      "name": "GPT-4o Mini",
+      "cost": "$",
+      "max_tokens": 4096,
+      "description": "Ucuz ve hızlı"
+    },
+    {
+      "id": "openai/o4-mini",
+      "name": "OpenAI o4-mini",
+      "cost": "$$",
+      "max_tokens": 8192,
+      "description": "Akıl yürütme, senaryo için güçlü"
+    },
+    {
+      "id": "openai/o3",
+      "name": "OpenAI o3",
+      "cost": "$$$$",
+      "max_tokens": 8192,
+      "description": "En güçlü OpenAI modeli"
+    },
+    {
+      "id": "google/gemini-2.5-pro-preview",
+      "name": "Gemini 2.5 Pro Preview",
+      "cost": "$$",
+      "max_tokens": 8192,
+      "description": "Güçlü ve uzun bağlam"
+    },
+    {
+      "id": "google/gemini-2.5-flash-preview",
+      "name": "Gemini 2.5 Flash Preview",
+      "cost": "$",
+      "max_tokens": 8192,
+      "description": "Hızlı Gemini, senaryo için uygun"
+    },
+    {
+      "id": "google/gemini-2.0-flash-001",
+      "name": "Gemini 2.0 Flash",
+      "cost": "$",
+      "max_tokens": 8192,
+      "description": "Hızlı ve stabil"
+    },
+    {
+      "id": "google/gemini-flash-1.5",
+      "name": "Gemini 1.5 Flash",
+      "cost": "$",
+      "max_tokens": 8192,
+      "description": "Hızlı ve uygun fiyatlı"
+    },
+    {
+      "id": "deepseek/deepseek-chat",
+      "name": "DeepSeek V3",
+      "cost": "$",
+      "max_tokens": 8192,
+      "description": "Çok ucuz, kaliteli senaryo"
+    },
+    {
+      "id": "deepseek/deepseek-r1",
+      "name": "DeepSeek R1",
+      "cost": "$",
+      "max_tokens": 8192,
+      "description": "Akıl yürütme, derinlikli anlatı"
+    },
+    {
+      "id": "deepseek/deepseek-r1-distill-llama-70b",
+      "name": "DeepSeek R1 Llama 70B",
+      "cost": "$",
+      "max_tokens": 8192,
+      "description": "Ucuz akıl yürütme distilasyonu"
+    },
+    {
+      "id": "meta-llama/llama-3.3-70b-instruct",
+      "name": "Llama 3.3 70B",
+      "cost": "$",
+      "max_tokens": 4096,
+      "description": "Açık kaynak, kaliteli"
+    },
+    {
+      "id": "meta-llama/llama-3.1-405b-instruct",
+      "name": "Llama 3.1 405B",
+      "cost": "$$",
+      "max_tokens": 4096,
+      "description": "En büyük Llama, yüksek kalite"
+    },
+    {
+      "id": "meta-llama/llama-4-maverick",
+      "name": "Llama 4 Maverick",
+      "cost": "$",
+      "max_tokens": 8192,
+      "description": "Meta'nın yeni Llama 4"
+    },
+    {
+      "id": "mistralai/mistral-large",
+      "name": "Mistral Large",
+      "cost": "$$",
+      "max_tokens": 4096,
+      "description": "Güçlü Avrupa modeli"
+    },
+    {
+      "id": "mistralai/mistral-small-3.2-24b-instruct",
+      "name": "Mistral Small 3.2 24B",
+      "cost": "$",
+      "max_tokens": 8192,
+      "description": "Ucuz Mistral, iyi kalite"
+    },
+    {
+      "id": "qwen/qwen-2.5-72b-instruct",
+      "name": "Qwen 2.5 72B",
+      "cost": "$",
+      "max_tokens": 8192,
+      "description": "Güçlü açık kaynak senaryo"
+    },
+    {
+      "id": "x-ai/grok-3-beta",
+      "name": "Grok 3 Beta",
+      "cost": "$$",
+      "max_tokens": 8192,
+      "description": "xAI Grok 3, güçlü anlatı"
+    },
+    {
+      "id": "x-ai/grok-3-mini-beta",
+      "name": "Grok 3 Mini Beta",
+      "cost": "$",
+      "max_tokens": 8192,
+      "description": "xAI Grok 3 hafif versiyon"
+    }
+  ]
+}

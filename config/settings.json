@@ -1,0 +1,46 @@
+{
+  "app": {
+    "name": "RecapAI",
+    "version": "1.1.0",
+    "language": "tr",
+    "theme": "dark"
+  },
+  "api": {
+    "openrouter_api_key": "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",
+    "openrouter_base_url": "https://openrouter.ai/api/v1"
+  },
+  "paths": {
+    "projects_dir": "./projects",
+    "output_dir": "./output",
+    "logs_dir": "./logs"
+  },
+  "defaults": {
+    "vision_model": "google/gemini-2.0-flash-001",
+    "script_model": "openai/gpt-4o",
+    "tts_engine": "kokoro",
+    "tts_voice": "tr-TR-AhmetNeural",
+    "kokoro_voice": "am_adam"
+  },
+  "tts": {
+    "default_speed": 1.0,
+    "kokoro_cache_path": "",
+    "kokoro_use_gpu": true
+  },
+  "panel": {
+    "min_area_ratio": 0.02,
+    "max_area_ratio": 0.8,
+    "default_reading_order": "rtl",
+    "show_order_arrows": true
+  },
+  "stitch": {
+    "scale_percent": 100,
+    "jpeg_quality": null,
+    "format": "png"
+  },
+  "export": {
+    "format": "jpg",
+    "jpeg_quality": 85,
+    "include_metadata_json": true,
+    "zip_folder_prefix": "bolum"
+  }
+}

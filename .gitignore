@@ -1,0 +1,15 @@
+__pycache__/
+*.py[cod]
+*.pyo
+.env
+.venv/
+venv/
+projects/
+output/
+logs/
+*.log
+*.mp4
+*.mp3
+*.wav
+.DS_Store
+Thumbs.db

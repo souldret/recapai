@@ -1,0 +1,108 @@
+"""
+RecapAI - TTS Cache sistemi.
+Aynı text+voice+params kombinasyonu için ses yeniden üretilmez.
+"""
+
+import hashlib
+import json
+import logging
+import shutil
+from pathlib import Path
+from typing import Optional
+
+logger = logging.getLogger(__name__)
+
+
+class TTSCache:
+    """
+    TTS çıktılarını önbellekler.
+    cache_dir: projects/{proj}/audio/.cache/
+    """
+
+    def __init__(self, cache_dir: str | Path) -> None:
+        self.cache_dir = Path(cache_dir)
+        self.cache_dir.mkdir(parents=True, exist_ok=True)
+        self._index_path = self.cache_dir / "index.json"
+        self._index: dict = self._load_index()
+        logger.debug("TTSCache başlatıldı: %s", self.cache_dir)
+
+    # ── Index ──────────────────────────────────────────────────────
+
+    def _load_index(self) -> dict:
+        try:
+            if self._index_path.exists():
+                return json.loads(self._index_path.read_text(encoding="utf-8"))
+        except Exception as exc:
+            logger.warning("Cache index yüklenemedi: %s", exc)
+        return {}
+
+    def _save_index(self) -> None:
+        try:
+            self._index_path.write_text(
+                json.dumps(self._index, indent=2, ensure_ascii=False),
+                encoding="utf-8",
+            )
+        except Exception as exc:
+            logger.warning("Cache index kaydedilemedi: %s", exc)
+
+    # ── Public API ─────────────────────────────────────────────────
+
+    def get_cache_key(self, text: str, voice: str, params: dict) -> str:
+        """text + voice + params kombinasyonundan deterministik hash üretir."""
+        payload = json.dumps(
+            {"text": text, "voice": voice, "params": params},
+            sort_keys=True,
+            ensure_ascii=False,
+        )
+        return hashlib.sha256(payload.encode("utf-8")).hexdigest()[:32]
+
+    def get(self, key: str) -> Optional[str]:
+        """Cache'de varsa ses dosyasının yolunu döner, yoksa None."""
+        if key not in self._index:
+            return None
+        cached_path = Path(self._index[key])
+        if cached_path.exists():
+            logger.debug("Cache hit: %s", key)
+            return str(cached_path)
+        # Dosya silinmiş, index'ten temizle
+        del self._index[key]
+        self._save_index()
+        return None
+
+    def put(self, key: str, audio_path: str) -> None:
+        """Ses dosyasını cache'e kopyalar ve index'e ekler."""
+        src = Path(audio_path)
+        if not src.exists():
+            logger.warning("Cache put: kaynak dosya yok: %s", audio_path)
+            return
+
+        suffix = src.suffix or ".mp3"
+        dst = self.cache_dir / f"{key}{suffix}"
+        try:
+            shutil.copy2(src, dst)
+            self._index[key] = str(dst)
+            self._save_index()
+            logger.debug("Cache put: %s → %s", key, dst)
+        except Exception as exc:
+            logger.warning("Cache put hatası: %s", exc)
+
+    def clear(self) -> None:
+        """Tüm cache'i temizler."""
+        try:
+            for f in self.cache_dir.iterdir():
+                if f.name != "index.json":
+                    f.unlink(missing_ok=True)
+            self._index = {}
+            self._save_index()
+            logger.info("TTS cache temizlendi.")
+        except Exception as exc:
+            logger.error("Cache temizleme hatası: %s", exc)
+
+    def size_mb(self) -> float:
+        """Cache dizininin toplam boyutunu MB cinsinden döner."""
+        total = sum(f.stat().st_size for f in self.cache_dir.rglob("*") if f.is_file())
+        return total / (1024 * 1024)
+
+    def entry_count(self) -> int:
+        """Cache'deki giriş sayısı."""
+        return len(self._index)
