@@ -759,10 +759,11 @@ class ScriptPage(QWidget):
         model = self.model_combo.currentData() or "anthropic/claude-3.5-sonnet"
         style = self.style_combo.currentData() or "epic"
         language = self.lang_combo.currentData() or "tr"
+        length = LENGTHS[self.length_slider.value()]
         idx = self._cards.index(card)
 
         from ui.workers.script_worker import RegenerateSegmentWorker
-        self._regen_worker = RegenerateSegmentWorker(chapter, idx, model, api_key, style, language)
+        self._regen_worker = RegenerateSegmentWorker(chapter, idx, model, api_key, style, language, length)
         self._regen_worker.finished.connect(lambda i, s: self._on_regen_done(i, s))
         self._regen_worker.error.connect(lambda m: QMessageBox.critical(self, "Hata", m))
         card.btn_regen.setEnabled(False)

@@ -124,6 +124,7 @@ class RegenerateSegmentWorker(QThread):
         api_key: str,
         style: str = "epic",
         language: str = "tr",
+        length: str = "medium",
         parent=None,
     ) -> None:
         super().__init__(parent)
@@ -133,6 +134,7 @@ class RegenerateSegmentWorker(QThread):
         self._api_key = api_key
         self._style = style
         self._language = language
+        self._length = length
 
     def run(self) -> None:
         from core.openrouter_client import OpenRouterClient, OpenRouterError
@@ -160,7 +162,7 @@ class RegenerateSegmentWorker(QThread):
             generator = ScriptGenerator(client)
             seg = generator.regenerate_segment(
                 self._chapter, self._segment_index,
-                self._model, self._style, self._language,
+                self._model, self._style, self._language, self._length
             )
             self.finished.emit(self._segment_index, seg)
         except OpenRouterError as exc:

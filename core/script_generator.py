@@ -344,6 +344,7 @@ class ScriptGenerator:
         model: str,
         style: str = "epic",
         language: str = "tr",
+        length: str = "medium",
     ) -> SegmentData:
         """
         Tek bir segmenti yeniden üretir.
@@ -354,6 +355,7 @@ class ScriptGenerator:
             model: LLM modeli ID.
             style: Stil anahtarı.
             language: Dil kodu.
+            length: Uzunluk seçeneği.
 
         Returns:
             Güncellenmiş SegmentData.
@@ -368,6 +370,10 @@ class ScriptGenerator:
         prompts = _load_prompts()
         styles = prompts.get("script_styles", {})
         style_desc = styles.get(style, style)
+        
+        lengths = prompts.get("script_lengths", {})
+        length_desc = lengths.get(length, length)
+
         lang_label = LANGUAGE_LABELS.get(language, language)
 
         scene = analysis.get("scene", "")
@@ -379,6 +385,8 @@ class ScriptGenerator:
             f"Aşağıdaki manga paneli için KESİNLİKLE VE SADECE {lang_label} dilinde metin yaz.\n"
             f"Sen tecrübeli, akıcı ve sürükleyici bir manhwa recap anlatıcısısın (narrator).\n"
             f"Şu kurala HARFİYEN UY: {style_desc}\n"
+            f"UZUNLUK KURALI: {length_desc}\n"
+            f"Eğer 'Kısa' veya 'Hızlı' seçildiyse edebiyat parçalamayı bırak ve kelime sınırlarına KESİNLİKLE UY.\n"
             f"SADECE ÜÇÜNCÜ ŞAHIS: Anlatım her zaman üçüncü şahıs ('O', isimler) üzerinden yürümelidir. 'Ben' ASLA kullanma.\n"
             f"KESİN DOLAYLI ANLATIM: Diyalogları ASLA doğrudan alıntı (tırnak içinde) olarak yazma. Konuşmaları her zaman eylem, düşünce veya niyet olarak dolaylı yoldan hikayeye yedir.\n"
             f"İSİMLENDİRME VE HİKAYE BÜTÜNLÜĞÜ: 'Bir adam', 'Bir kadın', 'İki kişi', 'Rahip', 'Ana karakter' gibi kim olduğu belirsiz, genel ve sıkıcı sayımlar ASLA YAPMA! İsim yoksa bağlamsal betimlemeler kullan (Örn: 'Tapınağın koruyucusu'). Metinler hikayenin KESİNTİSİZ devamı olmalıdır.\n"
