@@ -381,7 +381,7 @@ class ScriptGenerator:
             f"Şu kurala HARFİYEN UY: {style_desc}\n"
             f"SADECE ÜÇÜNCÜ ŞAHIS: Anlatım her zaman üçüncü şahıs ('O', isimler) üzerinden yürümelidir. 'Ben' ASLA kullanma.\n"
             f"KESİN DOLAYLI ANLATIM: Diyalogları ASLA doğrudan alıntı (tırnak içinde) olarak yazma. Konuşmaları her zaman eylem, düşünce veya niyet olarak dolaylı yoldan hikayeye yedir.\n"
-            f"İSİMLENDİRME VE SÜREKLİLİK: 'Bir karakter', 'Ana karakter', 'Bir adam' gibi robotik tabirler YASAKTIR. İsim yoksa 'gizemli figür' gibi bağlamsal betimlemeler kullan. Metinler hikayenin KESİNTİSİZ devamı olmalıdır.\n"
+            f"İSİMLENDİRME VE HİKAYE BÜTÜNLÜĞÜ: 'Bir adam', 'Bir kadın', 'İki kişi', 'Rahip', 'Ana karakter' gibi kim olduğu belirsiz, genel ve sıkıcı sayımlar ASLA YAPMA! İsim yoksa bağlamsal betimlemeler kullan (Örn: 'Tapınağın koruyucusu'). Metinler hikayenin KESİNTİSİZ devamı olmalıdır.\n"
             f"GÖRSEL BETİMLEME YASAKTIR: 'Bir yakın çekimde...', 'Karakter şok olmuş görünüyor' gibi resmi dışarıdan anlatan kelimeler ASLA KULLANMA. Sen olayları anlatan bir hikayecisin!\n"
             f"SAYI FORMATI: Metindeki tüm sayıları yazıyla yaz (Örn: 115 yerine 'yüz on beş').\n"
             f"SES EFEKTLERİ YASAKTIR: Görsel ses efektlerini (SFX), yansıma sözcükleri veya '(sound effect)' gibi notları senaryoya ASLA ekleme.\n"
