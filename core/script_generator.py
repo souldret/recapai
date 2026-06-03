@@ -31,6 +31,49 @@ def _load_prompts() -> dict:
         return {}
 
 
+def _sanitize_characters(chars: List[str], language: str = "tr") -> List[str]:
+    """
+    Vision modelinin ürettiği jenerik karakter etiketlerini temizler.
+    'Gizemli Figür', 'Mantar Figürü', 'bir adam' gibi görsel tasvirler
+    yerine anlatıcının doğal kullanabileceği rol/zamir döndürür.
+
+    Gerçek isimler (tek kelimeli özel isim veya bilinen isim kalıbı) dokunulmadan bırakılır.
+    """
+    # Jenerik kelime kalıpları — bunları içeren etiketler temizlenir
+    GENERIC_PATTERNS = re.compile(
+        r"\b(figür|figure|adam|kadın|kişi|kız|erkek|çocuk|yaşlı|genç|insan"
+        r"|man|woman|person|girl|boy|child|elder|young|human"
+        r"|karakter|character|birisi|someone|biri)\b",
+        re.IGNORECASE | re.UNICODE,
+    )
+
+    # Dile göre yedek unvanlar (sırayla tüketilir)
+    FALLBACKS = {
+        "tr": ["Protagonist", "Savaşçı", "Gizemli Yabancı", "Rakip", "Müttefik",
+               "Lider", "Düşman", "Yardımcı", "Gizli Güç"],
+        "en": ["Protagonist", "Warrior", "Mysterious Stranger", "Rival", "Ally",
+               "Leader", "Enemy", "Companion", "Hidden Power"],
+    }
+    fallback_pool = list(FALLBACKS.get(language, FALLBACKS["tr"]))
+    fallback_idx = 0
+
+    result = []
+    for name in chars:
+        name = name.strip()
+        if not name:
+            continue
+        if GENERIC_PATTERNS.search(name):
+            # Jenerik — fallback unvan ata (aynı jenerik etiket tekrar gelirse
+            # aynı unvanı korumak için basit cache kullanmıyoruz; sırayla ver)
+            if fallback_idx < len(fallback_pool):
+                result.append(fallback_pool[fallback_idx])
+                fallback_idx += 1
+            # Fallback bittiyse karakteri tamamen çıkar (anlatıcı zamir kullanır)
+        else:
+            result.append(name)
+    return result
+
+
 def _parse_segments(text: str) -> List[dict]:
     """
     LLM çıktısından segment listesini ayrıştırır.
@@ -293,7 +336,7 @@ class ScriptGenerator:
                 continue
             scene     = data.get("scene", "")
             action    = data.get("action", "")
-            chars     = ", ".join(data.get("characters", []))
+            chars     = ", ".join(_sanitize_characters(data.get("characters", []), language))
             dialogues = "; ".join(data.get("dialogues", [])[:2])
             mood      = data.get("mood", "")
             line = (
@@ -378,7 +421,7 @@ class ScriptGenerator:
 
         scene = analysis.get("scene", "")
         action = analysis.get("action", "")
-        chars = ", ".join(analysis.get("characters", []))
+        chars = ", ".join(_sanitize_characters(analysis.get("characters", []), language))
         dialogues = "; ".join(analysis.get("dialogues", [])[:2])
         mood = analysis.get("mood", "")
 
