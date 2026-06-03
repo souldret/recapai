@@ -412,6 +412,7 @@ class TtsPage(QWidget):
         self.ctx = ctx
         self._state        = self.ctx.app_state
         self._worker       = None
+        self._regen_workers: List = []   # tekli/seçili worker'ları GC'den korur
         self._cache        = None
         self._segment_items: List[SegmentListItem] = []
         self._selected_idx: Optional[int] = None
@@ -996,6 +997,9 @@ class TtsPage(QWidget):
         worker.error.connect(
             lambda i, msg, real_idx=idx: self._on_segment_error(real_idx, msg)
         )
+        # Worker'ı self'e bağla — fonksiyon dönünce GC tarafından yok edilmemesi için
+        self._regen_workers.append(worker)
+        worker.finished.connect(lambda w=worker: self._regen_workers.remove(w) if w in self._regen_workers else None)
         worker.start()
         self._set_status(f"Segment #{idx + 1} yeniden seslendiriliyor...")
 
