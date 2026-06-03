@@ -380,23 +380,51 @@ class ScriptGenerator:
         action = analysis.get("action", "")
         chars = ", ".join(analysis.get("characters", []))
         dialogues = "; ".join(analysis.get("dialogues", [])[:2])
+        mood = analysis.get("mood", "")
+
+        # Komşu segmentleri bağlam olarak al — anlatı sürekliliği için
+        prev_text = ""
+        next_text = ""
+        if segment_index > 0:
+            prev_seg = chapter.segments[segment_index - 1]
+            prev_text = prev_seg.text
+        if segment_index < len(chapter.segments) - 1:
+            next_seg = chapter.segments[segment_index + 1]
+            next_text = next_seg.text
+
+        context_block = ""
+        if prev_text:
+            context_block += f"\n[ÖNCEKİ SAHNE — senin metnin bu sahnenin hemen DEVAMI olmalı]:\n\"{prev_text}\"\n"
+        if next_text:
+            context_block += f"\n[SONRAKİ SAHNE — senin metnin bu sahneye doğal bir köprü kurmalı]:\n\"{next_text}\"\n"
 
         prompt = (
-            f"Aşağıdaki manga paneli için KESİNLİKLE VE SADECE {lang_label} dilinde metin yaz.\n"
-            f"Sen tecrübeli, akıcı ve sürükleyici bir manhwa recap anlatıcısısın (narrator).\n"
-            f"Şu kurala HARFİYEN UY: {style_desc}\n"
-            f"UZUNLUK KURALI: {length_desc}\n"
-            f"EDEBİYAT YAPMAK YASAKTIR: Eğer 'Kısa' veya 'Hızlı' seçildiyse gereksiz sıfatlardan, destansı betimlemelerden DERHAL vazgeç ve kelime/cümle sınırlarına KESİNLİKLE UY.\n"
-            f"SADECE ÜÇÜNCÜ ŞAHIS: Anlatım her zaman üçüncü şahıs (Örn: 'He', 'She', 'O') üzerinden yürümelidir. 'Ben' veya 'I' ASLA kullanma.\n"
-            f"KESİN DOLAYLI ANLATIM: Diyalogları ASLA doğrudan alıntı (tırnak içinde) olarak yazma. Konuşmaları her zaman eylem, düşünce veya niyet olarak dolaylı yoldan hikayeye yedir.\n"
-            f"BETİMLEME KONTROLÜ: Eğer 'Kısa' veya 'Hızlı' mod seçildiyse karakterlerin DIŞ GÖRÜNÜŞÜNÜ (saç rengi, kıyafet) ASLA BETİMLEME. Epik/Uzun modlarda hikayeye yedirerek betimleyebilirsin ama polis eşkal çizeri gibi yazma.\n"
-            f"İSİMLENDİRME: 'Bir adam', 'Bir kadın', 'A man' gibi robotik nesne tanımlamaları ASLA YAPMA. İsim yoksa {lang_label} dilinde 'Ana karakter', 'The protagonist', 'He' gibi unvanlar kullan.\n"
-            f"SAYI FORMATI: Metindeki tüm sayıları yazıyla yaz.\n"
-            f"SES EFEKTLERİ YASAKTIR: Görsel ses efektlerini (SFX) senaryoya ASLA ekleme.\n"
-            f"BÜYÜK HARF KURALI: KESİNLİKLE tümü büyük harflerden oluşan kelime KULLANMA.\n"
-            f"\n[KÖTÜ ÖRNEK - YAZMA]: 'The red-caped character cradles a baby...'\n"
-            f"[İYİ ÖRNEK ({lang_label} dilinde yazmalısın)]: 'He held the newborn close, watching as the stranger leaned in.' (Eğer dil İngilizce ise)\n"
-            f"\nPanel: Sahne: {scene}. Aksiyon: {action}. Karakterler: {chars}. Diyalog: {dialogues}."
+            f"Sen deneyimli, akıcı ve sürükleyici bir manhwa recap anlatıcısısın.\n"
+            f"Aşağıdaki TEK bir manga paneli için {lang_label} dilinde metin yaz.\n"
+            f"\n"
+            f"STİL KURALI (HARFİYEN UY): {style_desc}\n"
+            f"UZUNLUK KURALI (HARFİYEN UY): {length_desc}\n"
+            f"\n"
+            f"ANLATı AKIŞI — EN KRİTİK KURAL:\n"
+            f"Bu panel, daha büyük bir hikayenin ortasında yer alıyor. Sanki sıfırdan başlıyormuş gibi ASLA yazma.\n"
+            f"Önceki sahneden gelen gerilimi, duyguyu veya eylemi devir al ve bir sonraki sahneye doğal bir köprü kur.\n"
+            f"'Tam o sırada...', 'Ama...', 'Durumun ciddiyetini anlayan...', 'O gitmeden önce...' gibi geçiş ifadeleri kullan.\n"
+            f"{context_block}\n"
+            f"KURALLAR:\n"
+            f"- SADECE ÜÇÜNCÜ ŞAHIS: 'Ben' veya 'I' ASLA kullanma.\n"
+            f"- KESİN DOLAYLI ANLATIM: Diyalogları tırnak içinde ASLA yazma; eylem/niyet/düşünce olarak yedir.\n"
+            f"- BETİMLEME KONTROLÜ: 'Kısa'/'Hızlı' modda dış görünüş (saç, kıyafet) ASLA betimleme.\n"
+            f"- İSİMLENDİRME: 'Bir adam', 'A man' gibi robotik tanımlamalar ASLA YAPMA. İsim yoksa '{lang_label}'e uygun unvan kullan.\n"
+            f"- SAYI FORMATI: Tüm sayıları yazıyla yaz.\n"
+            f"- SES EFEKTİ YASAKTIR: SFX metne ASLA girmesin.\n"
+            f"- BÜYÜK HARF KURALI: Tümü büyük harfli kelime KULLANMA.\n"
+            f"\nPanel bilgisi:\n"
+            f"Sahne: {scene}\n"
+            f"Aksiyon: {action}\n"
+            f"Karakterler: {chars}\n"
+            f"Diyalog: {dialogues}\n"
+            f"Atmosfer: {mood}\n"
+            f"\nSADECE {lang_label} dilinde, düz metin olarak yaz. JSON veya tırnak işareti kullanma."
         )
 
         result = self._client.chat_completion(
