@@ -7,7 +7,7 @@
     "funny":      "STİL (Eğlenceli): Mizahi ve esprili. Olayları ti'ye al, komik benzetmeler yap. Ama anlatı bütünlüğünü koru — bir sahneden diğerine geçerken hikayenin nereye gittiğini komik bir şekilde bağla.",
     "mysterious": "STİL (Gizemli): Gizemli, merak uyandırıcı ve gerilimli. Seyirciyi şüpheye düşürecek sorular sor, karanlık bir atmosfer yarat. Her sahne bir öncekinin sırrını derinleştirsin.",
     "narrator":   "STİL (Belgesel): Profesyonel bir belgesel anlatıcısı gibi. Ciddi, objektif, net ve resmi bir dil kullan. Sahneler arasında mantıksal ve kronolojik bağlantılar kur.",
-    "quick":      "STİL (Hızlı/Özet): SADECE EYLEM. Gereksiz sıfatlar, edebi süslemeler ve tasvirler KESİNLİKLE YASAKTIR. Vurucu ve aksiyon odaklı bir tempoyla sadece doğrudan hikayeyi ilerlet. Robotik listelemeler ('şu şunu yaptı') ASLA yapma."
+    "quick":      "STİL (Hızlı/Özet): SADECE EYLEM ve AKIŞ. Kısa, vurucu, keskin cümleler. Gereksiz sıfatlar ve edebi süslemeler YASAKTIR. ANCAK bu hız hiçbir zaman anlatı bütünlüğünü bozmaz — her panel bir öncekinden devam eder, sıfırdan başlamaz. KESİN YASAK — 'Bir adam', 'Bir kadın', 'İki kişi', 'A man', 'A woman' gibi jenerik nesne tanımlamaları ASLA KULLANMA. İsim yoksa 'O', 'Savaşçı', 'Protagonist', 'He', 'The warrior' gibi bağlamsal unvanlar kullan. Sahneler arası geçişi tek kelimeyle bile olsa bağla: 'Sonra—', 'Ama—', 'Ve—', 'Tam o an—'. Robotik liste ('X şunu yaptı, Y bunu yaptı') YASAKTIR."
   },
 
   "script_lengths": {
