@@ -82,13 +82,12 @@ class TestParseJsonResponse:
         result = _parse_json_response('{"key": "unclosed string}')
         assert isinstance(result, dict)
 
-    def test_array_response_returns_parseable(self):
-        # Model array döndüğünde fonksiyon list döner (dict değil);
-        # en azından valid JSON parse edilmeli — exception fırlatmamalı
+    def test_array_response_returns_dict(self):
+        # Model yanlışlıkla array döndüğünde fonksiyon dict dönmeli —
+        # çünkü tüm çağrıcılar result["key"] şeklinde erişiyor.
+        # Fonksiyon list yanıtı için boş {} döndürür (3. kademe taraması eşleşmez).
         result = _parse_json_response('[{"item": 1}, {"item": 2}]')
-        # list ya da dict olabilir ama None veya boş olmamalı
-        assert result is not None
-        assert isinstance(result, (dict, list))
+        assert isinstance(result, dict)
 
     def test_whitespace_only_returns_dict(self):
         result = _parse_json_response("   \n\t  ")

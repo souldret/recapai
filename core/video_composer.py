@@ -591,6 +591,11 @@ class VideoComposer:
                 d = 4.0
             durations.append(d)
 
+        # Tek klip — xfade zinciri gereksiz, doğrudan simple_concat
+        if len(clip_paths) == 1:
+            self._simple_concat(clip_paths, output_path)
+            return
+
         # Yığımlı birleştirme: 2'li xfade zinciri
         use_pool = (transition == "random") or isinstance(transition, list)
         result = self._xfade_chain(
@@ -599,14 +604,10 @@ class VideoComposer:
         )
         cmd = ["-y"] + result["inputs"]
 
-        if len(clip_paths) == 1:
-            self._simple_concat(clip_paths, output_path)
-            return
-
         cmd += [
             "-filter_complex", result["filter"],
-            "-map", f"[vout]",
-            "-map", f"[aout]",
+            "-map", "[vout]",
+            "-map", "[aout]",
             "-c:v", self._codec,
             "-preset", "fast",
             "-crf", "23",
@@ -666,7 +667,7 @@ class VideoComposer:
             v_label = out_v
             a_label = out_a
 
-            offset += durations[i] - t_dur
+            offset = max(0.0, offset + durations[i] - t_dur)
 
         return {
             "inputs": inputs,

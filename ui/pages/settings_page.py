@@ -24,7 +24,7 @@ from ui.utils.icons import Icons, ICON_COLOR_SUCCESS, ICON_COLOR_ERROR
 from ui.utils.icons import ICON_COLOR_WARNING, ICON_COLOR_MUTED
 
 logger = logging.getLogger(__name__)
-SETTINGS_PATH = Path("config/settings.json")
+# SETTINGS_PATH burada kullanılmıyor; ayarlar SettingsManager üzerinden yönetilir.
 
 
 class APITestWorker(QThread):
@@ -1689,7 +1689,8 @@ class SettingsPage(QWidget):
                     data["stitch"]["jpeg_quality"] = None
                 else:
                     data["stitch"]["format"]       = "jpeg"
-                    data["stitch"]["jpeg_quality"] = int(fmt_key.replace("jpeg", ""))
+                    quality_str = fmt_key.replace("jpeg", "").strip()
+                    data["stitch"]["jpeg_quality"] = int(quality_str) if quality_str.isdigit() else 85
 
             # Export ayarları
             if hasattr(self, "export_format_combo"):
@@ -1707,11 +1708,9 @@ class SettingsPage(QWidget):
             # update_from_dict: _settings'i günceller, save() çağırır,
             # api_key_changed sinyalini yayınlar. Hata varsa except bloğu yakalar.
             sm.update_from_dict(data, save=True)
-
-            # api_key_changed update_from_dict içinde zaten yayınlanır;
-            # güvenlik için bir kez daha yayınlıyoruz (key değiştiyse).
-            if old_key != new_api_key and new_api_key:
-                sm.api_key_changed.emit(new_api_key)
+            # api_key_changed sinyali update_from_dict içinde doğru şekilde yayınlanır.
+            # get_all() artık deep copy döndürdüğü için aliasing sorunu yok;
+            # buraya ekstra emit eklemeye gerek yok (double-signal riski).
 
             self.ctx.app_state.status_message.emit("Ayarlar kaydedildi.")
             logger.info("Ayarlar kaydedildi. API key uzunluğu: %d", len(new_api_key))

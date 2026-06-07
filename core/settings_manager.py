@@ -117,13 +117,32 @@ class SettingsManager(QObject):
             logger.info("SettingsManager: API key değişti (sinyal yayınlandı).")
 
     def get_all(self) -> Dict:
-        """Tüm ayarları kopya olarak döner."""
-        return self._settings.copy()
+        """Tüm ayarların derin kopyasını döner (shallow copy aliasing'i önler)."""
+        import copy
+        return copy.deepcopy(self._settings)
+
+    @staticmethod
+    def _deep_merge(base: Dict, override: Dict) -> Dict:
+        """
+        İki dict'i derinlemesine birleştirir.
+        override'daki her iç içe dict, base'deki ilgili dict ile merge edilir;
+        üst düzey update() gibi iç dict'leri silmez.
+        """
+        result = base.copy()
+        for key, val in override.items():
+            if key in result and isinstance(result[key], dict) and isinstance(val, dict):
+                result[key] = SettingsManager._deep_merge(result[key], val)
+            else:
+                result[key] = val
+        return result
 
     def update_from_dict(self, data: Dict, save: bool = True) -> None:
-        """Birden fazla ayarı dict olarak güncelle."""
+        """
+        Birden fazla ayarı dict olarak güncelle (derin birleştirme).
+        Kısmi dict geçirildiğinde mevcut iç içe anahtarlar korunur.
+        """
         old_key = self.get_api_key()
-        self._settings.update(data)
+        self._settings = self._deep_merge(self._settings, data)
         if save:
             self.save()
         new_key = self.get_api_key()

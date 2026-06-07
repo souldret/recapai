@@ -268,7 +268,8 @@ class ProjectManager:
         # Önbellekte yoksa veya klasör silinmişse önbelleği yenile ve tekrar dene
         self.invalidate_cache()
         self._warm_cache()
-        return self._cache.get(project_id)
+        path = self._cache.get(project_id)
+        return path if (path and path.exists()) else None
 
 
 # ── Modül-seviyesi yardımcılar (geriye dönük uyumluluk) ───────────────────────

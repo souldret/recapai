@@ -32,10 +32,18 @@ def _parse_json_response(text: str) -> Dict:
     """
     Model çıktısından JSON bloğunu ayrıştırır.
     Kod bloğu içinde olabilir: ```json ... ```
+    Her zaman dict döner; list veya diğer JSON türleri için boş {} döner.
     """
+    def _ensure_dict(value) -> Dict:
+        """Ayrıştırılan değerin dict olmasını garantiler."""
+        if isinstance(value, dict):
+            return value
+        logger.warning("JSON ayrıştırıldı ama dict değil (%s); boş dict döndürülüyor.", type(value).__name__)
+        return {}
+
     # Önce doğrudan parse dene
     try:
-        return json.loads(text.strip())
+        return _ensure_dict(json.loads(text.strip()))
     except json.JSONDecodeError:
         pass
 
@@ -43,7 +51,7 @@ def _parse_json_response(text: str) -> Dict:
     match = re.search(r"```(?:json)?\s*([\s\S]*?)```", text)
     if match:
         try:
-            return json.loads(match.group(1).strip())
+            return _ensure_dict(json.loads(match.group(1).strip()))
         except json.JSONDecodeError:
             pass
 
@@ -51,7 +59,7 @@ def _parse_json_response(text: str) -> Dict:
     match = re.search(r"\{[\s\S]*\}", text)
     if match:
         try:
-            return json.loads(match.group(0))
+            return _ensure_dict(json.loads(match.group(0)))
         except json.JSONDecodeError:
             pass
 

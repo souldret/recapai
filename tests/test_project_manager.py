@@ -90,11 +90,12 @@ class TestSaveProject:
         assert data["name"] == "Değiştirilmiş İsim"
 
     def test_save_updates_updated_at(self, temp_projects_dir):
+        from datetime import datetime
         p = pm_mod.create_project("Zaman Damgası", "webtoon")
-        original_ts = p.updated_at
+        original_ts = datetime.fromisoformat(p.updated_at)
         import time; time.sleep(1.1)
         pm_mod.save_project(p)
-        assert p.updated_at > original_ts
+        assert datetime.fromisoformat(p.updated_at) > original_ts
 
 
 # ── delete_project ─────────────────────────────────────────────────────────────
