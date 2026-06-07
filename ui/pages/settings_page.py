@@ -11,7 +11,7 @@ from typing import Optional
 
 from PyQt6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel, QPushButton,
-    QFrame, QLineEdit, QComboBox, QTabWidget, QFileDialog,
+    QFrame, QGroupBox, QLineEdit, QComboBox, QTabWidget, QFileDialog,
     QMessageBox, QSizePolicy, QDialog, QDialogButtonBox,
     QTextEdit, QScrollArea, QListWidget, QListWidgetItem,
     QApplication,
@@ -29,16 +29,29 @@ SETTINGS_PATH = Path("config/settings.json")
 
 class APITestWorker(QThread):
     result_ready = pyqtSignal(bool, str, dict)
-    
-    def __init__(self, client) -> None:
+
+    def __init__(self, client, api_key: str = "") -> None:
         super().__init__()
         self.client = client
-        
+        self._test_key = api_key.strip()
+
     def run(self) -> None:
         try:
-            ok, msg = self.client.test_connection()
-            info = self.client.get_account_info() if ok else {}
-            self.result_ready.emit(ok, msg, info or {})
+            # Geçici anahtar verilmişse, testin süresince in-memory olarak uygula
+            # (kaydetme yok; SettingsManager.set kullanmıyoruz)
+            from core.settings_manager import SettingsManager
+            sm = SettingsManager.instance()
+            original_key = sm.get_api_key()
+            use_temp = self._test_key and self._test_key != original_key
+            if use_temp:
+                sm.set("api.openrouter_api_key", self._test_key, save=False)
+            try:
+                ok, msg = self.client.test_connection()
+                info = self.client.get_account_info() if ok else {}
+                self.result_ready.emit(ok, msg, info or {})
+            finally:
+                if use_temp:
+                    sm.set("api.openrouter_api_key", original_key, save=False)
         except Exception as e:
             self.result_ready.emit(False, str(e), {})
 
@@ -1044,9 +1057,12 @@ class SettingsPage(QWidget):
             return
 
         self.btn_test.setEnabled(False)
+        self.lbl_test_result.setText("Test ediliyor...")
         self.lbl_test_result.setStyleSheet("color: #9aa5ce;")
 
-        self._api_test_worker = APITestWorker(self.ctx.open_router_client)
+        # Girilen anahtarı worker'a geçiriyoruz — kayıtlı anahtardan farklıysa
+        # worker geçici olarak o anahtarı kullanır, diski değiştirmez.
+        self._api_test_worker = APITestWorker(self.ctx.open_router_client, api_key)
         self._api_test_worker.result_ready.connect(self._on_api_test_done)
         self._api_test_worker.start()
 
@@ -1680,30 +1696,23 @@ class SettingsPage(QWidget):
                 data.setdefault("app", {})
                 data["app"]["theme"] = self.theme_combo.currentData() or "dark"
 
-            # KRİTİK: SettingsManager üzerinden kaydet
-            # Bu işlem hem diski yazar hem settings_changed + api_key_changed sinyallerini yayınlar
+            # SettingsManager üzerinden kaydet — tüm sinyaller otomatik yayınlanır.
+            # update_from_dict: _settings'i günceller, save() çağırır,
+            # api_key_changed sinyalini yayınlar. Hata varsa except bloğu yakalar.
             old_key = sm.get_api_key()
-            sm._settings = data
-            if sm.save():
-                # api_key_changed sinyali save() içinde settings_changed ile tetiklenir;
-                # manuel olarak da yayınlayalım (key gerçekten değiştiyse)
-                if old_key != new_api_key and new_api_key:
-                    sm.api_key_changed.emit(new_api_key)
+            sm.update_from_dict(data, save=True)
 
-                # AppState'i de güncelle (geriye dönük uyumluluk)
-                state = self.ctx.app_state
-                state._settings = data
-                state.status_message.emit("Ayarlar kaydedildi.")
+            # api_key_changed update_from_dict içinde zaten yayınlanır;
+            # güvenlik için bir kez daha yayınlıyoruz (key değiştiyse).
+            if old_key != new_api_key and new_api_key:
+                sm.api_key_changed.emit(new_api_key)
 
-                logger.info(
-                    "Ayarlar kaydedildi. API key uzunluğu: %d", len(new_api_key)
-                )
-                QMessageBox.information(
-                    self, "Basarili",
-                    "Ayarlar kaydedildi.\nTüm modüller yeni ayarları kullanacak."
-                )
-            else:
-                QMessageBox.warning(self, "Hata", "Ayarlar kaydedilemedi.")
+            self.ctx.app_state.status_message.emit("Ayarlar kaydedildi.")
+            logger.info("Ayarlar kaydedildi. API key uzunluğu: %d", len(new_api_key))
+            QMessageBox.information(
+                self, "Basarili",
+                "Ayarlar kaydedildi.\nTüm modüller yeni ayarları kullanacak."
+            )
 
         except Exception as exc:
             logger.error("Ayarlar kaydedilemedi: %s", exc)
@@ -1711,10 +1720,11 @@ class SettingsPage(QWidget):
 
     # ── Yardimcilar ────────────────────────────────────────────────
 
-    def _section_frame(self, title: str) -> QFrame:
-        frame = QFrame()
-        frame.setObjectName("sectionFrame")
-        return frame
+    def _section_frame(self, title: str) -> QGroupBox:
+        """Başlıklı bölüm kutusu döner. Çağrı noktaları QVBoxLayout(frame) ile layout oluşturur."""
+        box = QGroupBox(title)
+        box.setObjectName("sectionFrame")
+        return box
 
     def _field_label(self, text: str) -> QLabel:
         lbl = QLabel(text)

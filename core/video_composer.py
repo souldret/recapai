@@ -647,8 +647,9 @@ class VideoComposer:
         offset = durations[0] - t_dur
 
         for i in range(1, n):
-            out_v = f"[v{i}]" if i < n - 1 else "[vout]"
-            out_a = f"[a{i}]" if i < n - 1 else "[aout]"
+            is_last = (i == n - 1)
+            out_v = "[vout]" if is_last else f"[v{i}]"
+            out_a = "[aout]" if is_last else f"[a{i}]"
 
             # random mod: her geçiş için havuzdan rastgele seç
             cur_transition = _random.choice(random_pool) if random_pool else transition
@@ -661,8 +662,9 @@ class VideoComposer:
                 f"{a_label}[{i}:a]acrossfade=d={t_dur:.2f}{out_a}"
             )
 
-            v_label = out_v if i < n - 1 else "[vout]"
-            a_label = out_a if i < n - 1 else "[aout]"
+            # Bir sonraki iterasyon için giriş etiketleri bu iterasyonun çıkışlarıdır
+            v_label = out_v
+            a_label = out_a
 
             offset += durations[i] - t_dur
 

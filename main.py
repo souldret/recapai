@@ -48,11 +48,18 @@ from core.constants import THEME_PATH, APP_LOG_PATH, ERROR_LOG_PATH, LOGS_DIR
 # Log dizini oluştur
 LOGS_DIR.mkdir(exist_ok=True)
 
+from logging.handlers import RotatingFileHandler as _RotatingFileHandler
+
 logging.basicConfig(
     level=logging.DEBUG,
     format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
     handlers=[
-        logging.FileHandler(APP_LOG_PATH, encoding="utf-8"),
+        _RotatingFileHandler(
+            APP_LOG_PATH,
+            encoding="utf-8",
+            maxBytes=5 * 1024 * 1024,   # 5 MB
+            backupCount=3,               # app.log, app.log.1, app.log.2, app.log.3
+        ),
         logging.StreamHandler(sys.stdout),
     ],
 )
