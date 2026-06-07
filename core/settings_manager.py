@@ -4,6 +4,7 @@ Tüm uygulama bu sınıftan settings okur/yazar.
 Runtime'da değişiklikler anında tüm modüllere yansır.
 """
 
+import copy
 import json
 import logging
 from pathlib import Path
@@ -118,7 +119,6 @@ class SettingsManager(QObject):
 
     def get_all(self) -> Dict:
         """Tüm ayarların derin kopyasını döner (shallow copy aliasing'i önler)."""
-        import copy
         return copy.deepcopy(self._settings)
 
     @staticmethod

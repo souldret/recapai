@@ -85,7 +85,8 @@ class TestParseJsonResponse:
     def test_array_response_returns_dict(self):
         # Model yanlışlıkla array döndüğünde fonksiyon dict dönmeli —
         # çünkü tüm çağrıcılar result["key"] şeklinde erişiyor.
-        # Fonksiyon list yanıtı için boş {} döndürür (3. kademe taraması eşleşmez).
+        # Kademe 1: json.loads() başarılı, list parse edilir →
+        # _ensure_dict(list) → {} döner. Kademe 3'e hiç ulaşılmaz.
         result = _parse_json_response('[{"item": 1}, {"item": 2}]')
         assert isinstance(result, dict)
 

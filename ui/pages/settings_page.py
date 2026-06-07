@@ -1634,14 +1634,8 @@ class SettingsPage(QWidget):
         try:
             sm = self.ctx.settings_manager
 
-            # old_key'i get_all() / shallow copy mutasyonundan ÖNCE yakala.
-            # get_all() shallow copy döndürdüğü için data["api"] = sm._settings["api"]
-            # ile aynı nesne; sonradan data["api"]["openrouter_api_key"] = new_api_key
-            # doğrudan _settings'i de değiştiriyor. Dolayısıyla old_key buradan alınmazsa
-            # api_key_changed sinyali hiç tetiklenmez.
-            old_key = sm.get_api_key()
-
             # Mevcut ayarları al (SettingsManager içindeki)
+            # get_all() deep copy döndürür — nested dict aliasing yok.
             data = sm.get_all()
 
             data.setdefault("api", {})

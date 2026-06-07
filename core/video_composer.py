@@ -645,7 +645,7 @@ class VideoComposer:
         v_label = "[0:v]"
         a_label = "[0:a]"
 
-        offset = durations[0] - t_dur
+        offset = max(0.0, durations[0] - t_dur)
 
         for i in range(1, n):
             is_last = (i == n - 1)
