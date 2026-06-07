@@ -84,10 +84,11 @@ class TestParseJsonResponse:
 
     def test_array_response_returns_parseable(self):
         # Model array döndüğünde fonksiyon list döner (dict değil);
-        # en azından valid JSON parse edilmeli ve boş dict değil dönmeli
+        # en azından valid JSON parse edilmeli — exception fırlatmamalı
         result = _parse_json_response('[{"item": 1}, {"item": 2}]')
-        # list ya da dict olabilir — önemli olan exception fırlatmaması
+        # list ya da dict olabilir ama None veya boş olmamalı
         assert result is not None
+        assert isinstance(result, (dict, list))
 
     def test_whitespace_only_returns_dict(self):
         result = _parse_json_response("   \n\t  ")

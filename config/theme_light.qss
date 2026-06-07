@@ -328,7 +328,7 @@ QSplitter::handle:hover {
     border-radius: 8px;
 }
 
-#sectionFrame,
+QFrame#sectionFrame,
 QGroupBox#sectionFrame {
     background-color: #ffffff;
     border: 1px solid #e4e4e7;

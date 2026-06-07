@@ -32,6 +32,15 @@ def _safe_name(name: str) -> str:
     return re.sub(r"[^\w\-]", "_", name.strip())
 
 
+def _write_project_json(project_dir: Path, project: Project) -> None:
+    """project.json'u yazar. Sınıf metodlarından çağrılmadan önce tanımlanır."""
+    json_path = project_dir / PROJECT_FILE
+    json_path.write_text(
+        json.dumps(project.to_dict(), indent=2, ensure_ascii=False),
+        encoding="utf-8",
+    )
+
+
 # ── ProjectManager (önbellekli) ────────────────────────────────────────────────
 
 class ProjectManager:
@@ -171,11 +180,15 @@ class ProjectManager:
     def list_projects(self) -> List[Dict]:
         """
         projects/ altındaki tüm projelerin özet bilgilerini döndürür.
+        Tam disk taraması yapar; önbelleği sıfırlayıp yeniden inşa eder
+        böylece silinmiş projelere ait stale girişler temizlenir.
 
         Returns:
             [{"id", "name", "created_at", "updated_at", "chapter_count", "path"}, ...]
         """
         PROJECTS_ROOT.mkdir(exist_ok=True)
+        # Tam tarama yapıyoruz — önceki stale girişleri temizle
+        self._cache.clear()
         result: List[Dict] = []
         for item in sorted(PROJECTS_ROOT.iterdir()):
             if not item.is_dir():
@@ -187,7 +200,7 @@ class ProjectManager:
                 data = json.loads(json_path.read_text(encoding="utf-8"))
                 pid = data.get("id", "")
                 if pid:
-                    self._cache[pid] = item  # listelenirken önbelleği doldur
+                    self._cache[pid] = item  # güncel önbelleği doldur
                 result.append({
                     "id":            pid,
                     "name":          data.get("name", item.name),
@@ -299,12 +312,3 @@ def get_project_dir(project: Project) -> Optional[Path]:
 def _find_project_dir(project_id: str) -> Optional[Path]:
     """Geriye dönük uyumluluk — find_project_dir'e yönlendirir."""
     return _get_pm().find_project_dir(project_id)
-
-
-def _write_project_json(project_dir: Path, project: Project) -> None:
-    """project.json'u yazar."""
-    json_path = project_dir / PROJECT_FILE
-    json_path.write_text(
-        json.dumps(project.to_dict(), indent=2, ensure_ascii=False),
-        encoding="utf-8",
-    )
