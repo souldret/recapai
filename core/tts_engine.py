@@ -7,6 +7,7 @@ import asyncio
 import logging
 import os
 import re
+import shutil
 import tempfile
 from abc import ABC, abstractmethod
 from pathlib import Path
@@ -500,9 +501,9 @@ class KokoroTTSEngine(TTSEngine):
             if ok:
                 Path(wav_path).unlink(missing_ok=True)
             else:
-                import shutil; shutil.move(wav_path, output_path)
+                shutil.move(wav_path, output_path)
         else:
-            import shutil; shutil.move(wav_path, output_path)
+            shutil.move(wav_path, output_path)
 
         from core.audio_processor import get_duration
         duration = get_duration(output_path)

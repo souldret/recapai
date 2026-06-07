@@ -21,7 +21,7 @@ def _load_vision_prompt() -> str:
     """prompts.json'dan vision analiz promptunu yükler."""
     from pathlib import Path
     try:
-        data = json.loads(Path("config/prompts.json").read_text(encoding="utf-8"))
+        data = json.loads((Path(__file__).resolve().parent.parent / "config" / "prompts.json").read_text(encoding="utf-8"))
         return data.get("vision_analysis", "Bu görseli analiz et ve JSON formatında döndür.")
     except Exception as exc:
         logger.warning("prompts.json yüklenemedi: %s", exc)

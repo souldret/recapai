@@ -149,7 +149,7 @@ class SettingsManager(QObject):
         return {
             "app": {
                 "name": "RecapAI",
-                "version": "1.0.0",
+                "version": "1.1.0",
                 "language": "tr",
             },
             "api": {

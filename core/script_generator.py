@@ -25,7 +25,7 @@ CHUNK_SIZE = 40
 
 def _load_prompts() -> dict:
     try:
-        return json.loads(Path("config/prompts.json").read_text(encoding="utf-8"))
+        return json.loads((Path(__file__).resolve().parent.parent / "config" / "prompts.json").read_text(encoding="utf-8"))
     except Exception as exc:
         logger.warning("prompts.json yüklenemedi: %s", exc)
         return {}
@@ -253,7 +253,7 @@ class ScriptGenerator:
             start + 1, end, max_tokens,
         )
 
-        # Streaming KULLLANMA — JSON chunk'lar halinde gelince parse başarısız olur.
+        # Streaming KULLANMA — JSON chunk'lar halinde gelince parse başarısız olur.
         # stream_callback sadece durum mesajı için çağrılır, LLM çıktısı için değil.
         result = self._client.chat_completion(
             model, messages, temperature=0.8, max_tokens=max_tokens,

@@ -133,7 +133,7 @@ class MainWindow(QMainWindow):
             self.lbl_api.setPixmap(pm)
         else:
             # Fallback: unicode nokta
-            dot = "⬤" if connected else "⬤"
+            dot = "⬤" if connected else "○"
             self.lbl_api.setText(f"{dot}  {'API Bagli' if connected else 'API Bagli Degil'}")
 
     def _connect_signals(self) -> None:

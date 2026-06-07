@@ -13,3 +13,4 @@ logs/
 *.wav
 .DS_Store
 Thumbs.db
+config/settings.json

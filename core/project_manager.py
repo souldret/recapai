@@ -14,7 +14,7 @@ from core.models import Project, Chapter, ImageData
 
 logger = logging.getLogger(__name__)
 
-PROJECTS_ROOT = Path("projects")
+PROJECTS_ROOT = Path(__file__).resolve().parent.parent / "projects"
 PROJECT_FILE = "project.json"
 SUB_DIRS = ["images", "audio", "output", "thumbnails"]
 
