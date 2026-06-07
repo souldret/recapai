@@ -328,10 +328,25 @@ QSplitter::handle:hover {
     border-radius: 8px;
 }
 
-#sectionFrame {
+#sectionFrame,
+QGroupBox#sectionFrame {
     background-color: #ffffff;
     border: 1px solid #e4e4e7;
     border-radius: 8px;
+}
+
+QGroupBox#sectionFrame {
+    font-weight: 600;
+    font-size: 10pt;
+    color: #52525b;
+    padding-top: 18px;
+}
+
+QGroupBox#sectionFrame::title {
+    subcontrol-origin: margin;
+    subcontrol-position: top left;
+    left: 12px;
+    top: 4px;
 }
 
 #detailPanel {

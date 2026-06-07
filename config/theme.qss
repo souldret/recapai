@@ -433,27 +433,48 @@ QFrame#statCard:hover {
     background-color: #282930;
 }
 
-QFrame#sectionFrame {
+QFrame#sectionFrame,
+QGroupBox#sectionFrame {
     background-color: #25262b;
     border: 1px solid #2a2b30;
     border-radius: 10px;
 }
 
-QFrame#sectionFrame QWidget {
+QGroupBox#sectionFrame {
+    font-weight: 600;
+    font-size: 10pt;
+    color: #a1a1aa;
+    padding-top: 18px;
+}
+
+QGroupBox#sectionFrame::title {
+    subcontrol-origin: margin;
+    subcontrol-position: top left;
+    left: 12px;
+    top: 4px;
+}
+
+QFrame#sectionFrame QWidget,
+QGroupBox#sectionFrame QWidget {
     background-color: transparent;
 }
 
 QFrame#sectionFrame QComboBox,
 QFrame#sectionFrame QLineEdit,
 QFrame#sectionFrame QTextEdit,
-QFrame#sectionFrame QListWidget {
+QFrame#sectionFrame QListWidget,
+QGroupBox#sectionFrame QComboBox,
+QGroupBox#sectionFrame QLineEdit,
+QGroupBox#sectionFrame QTextEdit,
+QGroupBox#sectionFrame QListWidget {
     background-color: #17181c;
 }
 
 /* Card label'ları şeffaf */
 QFrame#card > QLabel,
 QFrame#statCard > QLabel,
-QFrame#sectionFrame > QLabel {
+QFrame#sectionFrame > QLabel,
+QGroupBox#sectionFrame > QLabel {
     background-color: transparent;
 }
 

@@ -430,26 +430,47 @@ QFrame#statCard:hover {
     background-color: #0d1530;
 }
 
-QFrame#sectionFrame {
+QFrame#sectionFrame,
+QGroupBox#sectionFrame {
     background-color: #0d1228;
     border: 1px solid #1a2540;
     border-radius: 10px;
 }
 
-QFrame#sectionFrame QWidget {
+QGroupBox#sectionFrame {
+    font-weight: 600;
+    font-size: 10pt;
+    color: #7eb8f7;
+    padding-top: 18px;
+}
+
+QGroupBox#sectionFrame::title {
+    subcontrol-origin: margin;
+    subcontrol-position: top left;
+    left: 12px;
+    top: 4px;
+}
+
+QFrame#sectionFrame QWidget,
+QGroupBox#sectionFrame QWidget {
     background-color: transparent;
 }
 
 QFrame#sectionFrame QComboBox,
 QFrame#sectionFrame QLineEdit,
 QFrame#sectionFrame QTextEdit,
-QFrame#sectionFrame QListWidget {
+QFrame#sectionFrame QListWidget,
+QGroupBox#sectionFrame QComboBox,
+QGroupBox#sectionFrame QLineEdit,
+QGroupBox#sectionFrame QTextEdit,
+QGroupBox#sectionFrame QListWidget {
     background-color: #060a14;
 }
 
 QFrame#card > QLabel,
 QFrame#statCard > QLabel,
-QFrame#sectionFrame > QLabel {
+QFrame#sectionFrame > QLabel,
+QGroupBox#sectionFrame > QLabel {
     background-color: transparent;
 }
 
