@@ -6,7 +6,7 @@
     "theme": "dark"
   },
   "api": {
-    "openrouter_api_key": "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",
+    "openrouter_api_key": "",
     "openrouter_base_url": "https://openrouter.ai/api/v1"
   },
   "paths": {

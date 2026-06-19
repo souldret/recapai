@@ -130,7 +130,8 @@ def generate_ass(chapter, output_path: str, style: Optional[Dict[str, Any]] = No
     primary_color = _hex_to_ass(color_name)
     outline_color = _hex_to_ass(stroke_color_name)
 
-    # Hizalama: 1=alt sol, 2=alt orta, 3=alt sağ, 5=üst sol, 8=üst orta
+    # Hizalama: 1=alt sol, 2=alt orta, 3=alt sag, 4=orta sol, 5=orta orta, 6=orta sag
+    #            7=ust sol, 8=ust orta, 9=ust sag
     alignment_map = {"bottom": 2, "middle": 5, "top": 8}
     alignment = alignment_map.get(position, 2)
 
