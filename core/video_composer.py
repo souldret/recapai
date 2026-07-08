@@ -52,14 +52,16 @@ DEFAULT_SETTINGS: Dict[str, Any] = {
 # ── Ken Burns pan yön ön ayarları ─────────────────────────────────────────────
 # Her tuple: (pan_x_expr, pan_y_expr) — zoom büyüdükçe görüntü bu yönde kayar
 _PAN_PRESETS = [
-    ("iw/2-(iw/zoom/2)",  "ih/2-(ih/zoom/2)"),   # 0: merkez (statik)
-    ("iw*(1-1/zoom)",     "ih*(1-1/zoom)"),        # 1: sağ-alt → sol-üst
-    ("0",                 "0"),                    # 2: sol-üst → sağ-alt
-    ("iw*(1-1/zoom)",     "0"),                    # 3: sağ-üst → sol-alt
-    ("0",                 "ih*(1-1/zoom)"),         # 4: sol-alt → sağ-üst
-    ("iw/2-(iw/zoom/2)",  "0"),                    # 5: üst-orta → alt
-    ("iw/2-(iw/zoom/2)",  "ih*(1-1/zoom)"),        # 6: alt-orta → üst
-    ("0",                 "ih/2-(ih/zoom/2)"),      # 7: sol-orta → sağ
+    # (pan_x_expr, pan_y_expr) — FFmpeg zoompan x/y crop sol-üst köşesidir.
+    # x/y arttıkça kamera o yönün tersine doğru kayar (crop penceresi hareket eder).
+    ("iw/2-(iw/zoom/2)",  "ih/2-(ih/zoom/2)"),   # 0: merkez zoom-in (pan yok)
+    ("iw*(1-1/zoom)",     "ih*(1-1/zoom)"),        # 1: sağ-alt köşeye zoom-in
+    ("0",                 "0"),                    # 2: sol-üst köşeye zoom-in
+    ("iw*(1-1/zoom)",     "0"),                    # 3: sağ-üst köşeye zoom-in
+    ("0",                 "ih*(1-1/zoom)"),        # 4: sol-alt köşeye zoom-in
+    ("iw/2-(iw/zoom/2)",  "0"),                    # 5: üst-ortaya zoom-in
+    ("iw/2-(iw/zoom/2)",  "ih*(1-1/zoom)"),        # 6: alt-ortaya zoom-in
+    ("0",                 "ih/2-(ih/zoom/2)"),     # 7: sol-ortaya zoom-in
 ]
 
 

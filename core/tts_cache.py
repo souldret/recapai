@@ -88,7 +88,6 @@ class TTSCache:
 
     def clear(self) -> None:
         """Tüm cache'i temizler (dosya ve alt dizinler dahil)."""
-        import shutil
         try:
             for entry in self.cache_dir.iterdir():
                 if entry.name == "index.json":
