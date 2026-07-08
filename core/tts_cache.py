@@ -87,11 +87,19 @@ class TTSCache:
             logger.warning("Cache put hatası: %s", exc)
 
     def clear(self) -> None:
-        """Tüm cache'i temizler."""
+        """Tüm cache'i temizler (dosya ve alt dizinler dahil)."""
+        import shutil
         try:
-            for f in self.cache_dir.iterdir():
-                if f.name != "index.json":
-                    f.unlink(missing_ok=True)
+            for entry in self.cache_dir.iterdir():
+                if entry.name == "index.json":
+                    continue
+                try:
+                    if entry.is_dir():
+                        shutil.rmtree(entry, ignore_errors=True)
+                    else:
+                        entry.unlink(missing_ok=True)
+                except Exception as entry_exc:
+                    logger.warning("Cache girdisi silinemedi (%s): %s", entry, entry_exc)
             self._index = {}
             self._save_index()
             logger.info("TTS cache temizlendi.")

@@ -184,7 +184,8 @@ class AIAnalyzer:
         Returns:
             {image_index: analiz_dict, ...} formatında sonuçlar.
         """
-        results: Dict[str, Any] = dict(chapter.analysis_data)  # önbellekten başla
+        # analysis_data'daki tüm key'leri string'e normalize et (integer key uyumsuzluğunu önler)
+        results: Dict[str, Any] = {str(k): v for k, v in chapter.analysis_data.items()}
         total = len(chapter.images)
 
         for i, image_data in enumerate(chapter.images):
@@ -192,7 +193,7 @@ class AIAnalyzer:
                 logger.info("Analiz kullanıcı tarafından durduruldu.")
                 break
 
-            # Önbellekte varsa atla
+            # Önbellekte varsa atla — her zaman string key kullan
             cache_key = str(i)
             if cache_key in results and not results[cache_key].get("error"):
                 msg = f"{i + 1}/{total} önbellekten yüklendi: {image_data.filename}"

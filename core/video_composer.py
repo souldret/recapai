@@ -502,8 +502,8 @@ class VideoComposer:
         ]
         if watermark_path and Path(watermark_path).exists():
             cmd += ["-i", watermark_path]
-        # Sessiz ses kaynağı her zaman son input
-        cmd += ["-f", "lavfi", "-i", "aevalsrc=0:c=stereo:r=44100"]
+        # Sessiz ses kaynağı her zaman son input; duration ile sınırla
+        cmd += ["-f", "lavfi", "-i", f"aevalsrc=0:c=stereo:r=44100:d={duration}"]
         silent_audio_index = 2 if (watermark_path and Path(watermark_path).exists()) else 1
         cmd += [
             "-filter_complex", vf,
@@ -697,8 +697,10 @@ class VideoComposer:
 
         ret = self._run(cmd)
         if ret != 0:
-            logger.warning("xfade başarısız, basit concat'e geçiliyor.")
-            self._simple_concat(clip_paths_to_use, output_path)
+            # xfade başarısız — orijinal kliplerle simple concat'e dön
+            # (normalize edilmiş kliplerle değil: kısmi başarısızlıkta format uyumsuzluğu olabilir)
+            logger.warning("xfade başarısız, orijinal kliplerle basit concat'e geçiliyor.")
+            self._simple_concat(clip_paths, output_path)
 
         # Normalizasyon geçici dosyalarını temizle
         for norm_file in normalized_clips:
@@ -773,9 +775,20 @@ class VideoComposer:
         return ret == 0 and Path(output_path).exists() and Path(output_path).stat().st_size > 0
 
     def _burn_subtitles(self, input_path: str, sub_path: str, output_path: str) -> None:
-        """ASS altyazıları video üzerine yazar (FFmpeg subtitles filtresi)."""
-        # Windows'ta yol separatörlerini escape et
-        safe_sub = sub_path.replace("\\", "/").replace(":", "\\:")
+        """ASS altyazıları video üzerine yazar (FFmpeg subtitles filtresi).
+
+        Windows yol güvenliği:
+        - Ters slash → ileri slash
+        - İki nokta üst üste escape (C: → C\:)
+        - Boşluk veya özel karakter içeren yollar için tek tırnak korunur
+        """
+        # Windows: C:\Users\Ad Soyad\... → C\:/Users/Ad Soyad/...
+        safe_sub = sub_path.replace("\\", "/")
+        # Sürücü harfi iki noktasını escape et (C: → C\:)
+        import re as _re
+        safe_sub = _re.sub(r"^([A-Za-z])(:/)", r"\1\\:/", safe_sub)
+        # Tek tırnak içindeki tek tırnakları escape et
+        safe_sub = safe_sub.replace("'", "'\\''")
         self._run([
             "-y",
             "-i", input_path,

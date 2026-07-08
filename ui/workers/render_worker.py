@@ -271,13 +271,16 @@ class PipelineWorker(QThread):
         # ── Aşama 3: TTS ─────────────────────────────────────────
         self._emit_stage("Seslendirme", 50)
         try:
-            import hashlib
             from core.tts_engine import TTSManager
             from core.tts_cache import TTSCache
+            from core.audio_processor import get_duration as _get_dur
 
             audio_dir = Path(self._audio_dir)
             audio_dir.mkdir(parents=True, exist_ok=True)
-            cache = TTSCache(str(audio_dir / ".cache"))
+
+            # Global cache kullan (settings'te açıksa), yoksa proje-yerel cache
+            cache = TTSCache.get_global_cache()
+
             manager = TTSManager.get_instance()
             engine = manager.get_engine(self._tts_engine)
 
@@ -294,15 +297,13 @@ class PipelineWorker(QThread):
 
                 out_path = str(audio_dir / f"segment_{i:04d}.mp3")
 
-                # Cache kontrolü
-                cache_key = hashlib.sha256(
-                    f"{seg.text}|{self._tts_voice}|{self._tts_engine}".encode()
-                ).hexdigest()
+                # Cache kontrolü — TTSCache.get_cache_key() ile tutarlı key
+                tts_params = {"engine": self._tts_engine}
+                cache_key = cache.get_cache_key(seg.text, self._tts_voice, tts_params)
                 cached = cache.get(cache_key)
                 if cached and Path(cached).exists():
                     seg.audio_path = cached
-                    from core.audio_processor import get_duration
-                    seg.duration = get_duration(cached)
+                    seg.duration = _get_dur(cached)
                     self.log.emit(f"  [TTS] Segment {i+1}: cache'den")
                     continue
 

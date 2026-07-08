@@ -853,14 +853,23 @@ class RenderPage(QWidget):
                     break
 
     def _current_chapter(self):
-        """Seçili bölümü döndürür."""
+        """Seçili bölümü döndürür. ID ile arar, index uyumsuzluğuna karşı güvenli."""
         project = self._app_state.current_project
         if not project:
             return None
         idx = self.chapter_combo.currentIndex()
-        if idx < 0 or idx >= len(project.chapters):
+        if idx < 0:
             return None
-        return project.chapters[idx]
+        # Önce ID ile ara (combo yeniden sıralanmış veya güncellenmişse güvenli)
+        chapter_id = self.chapter_combo.itemData(idx)
+        if chapter_id is not None:
+            for ch in project.chapters:
+                if ch.id == chapter_id:
+                    return ch
+        # Fallback: index ile eriş
+        if idx < len(project.chapters):
+            return project.chapters[idx]
+        return None
 
     # ─────────────────────────────────────────────────────────────────────────
     # Preset uygulama
