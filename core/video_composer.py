@@ -759,10 +759,13 @@ class VideoComposer:
         }
 
     def _normalize_clip_audio(self, clip_path: str, output_path: str) -> bool:
-        """Ses seviyesini loudnorm filtresi ile normalize eder (titreme önleme)."""
+        """
+        Ses seviyesini loudnorm filtresi ile normalize eder.
+        linear=true: tek geçişte lineer normalizasyon (2-pass gerekmez, hız öncelikli).
+        """
         ret = self._run([
             "-y", "-i", clip_path,
-            "-af", "loudnorm=I=-16:TP=-1.5:LRA=11",
+            "-af", "loudnorm=I=-16:TP=-1.5:LRA=11:linear=true",
             "-c:v", "copy",
             "-c:a", "aac", "-b:a", "192k",
             output_path,
