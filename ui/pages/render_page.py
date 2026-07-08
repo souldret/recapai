@@ -625,6 +625,57 @@ class RenderPage(QWidget):
 
         vbox.addLayout(file_row("Intro:", "intro_path_edit"))
         vbox.addLayout(file_row("Outro:", "outro_path_edit"))
+
+        # ── Watermark ─────────────────────────────────────────────
+        wm_sep = QLabel("Watermark / Logo")
+        wm_sep.setObjectName("pageSubtitle")
+        vbox.addWidget(wm_sep)
+
+        wm_row = QHBoxLayout()
+        self.watermark_path_edit = QLineEdit()
+        self.watermark_path_edit.setPlaceholderText("Logo/watermark görseli seç (PNG önerilir)...")
+        self.watermark_path_edit.setReadOnly(True)
+        wm_btn = QPushButton()
+        wm_btn.setIcon(Icons.get(Icons.FOLDER))
+        wm_btn.setIconSize(QSize(16, 16))
+        wm_btn.setFixedWidth(36)
+        wm_btn.clicked.connect(self._browse_watermark)
+        wm_clr = QPushButton()
+        wm_clr.setIcon(Icons.get(Icons.CLOSE))
+        wm_clr.setIconSize(QSize(14, 14))
+        wm_clr.setFixedWidth(28)
+        wm_clr.clicked.connect(self.watermark_path_edit.clear)
+        wm_row.addWidget(self.watermark_path_edit, 1)
+        wm_row.addWidget(wm_btn)
+        wm_row.addWidget(wm_clr)
+        vbox.addLayout(wm_row)
+
+        # Watermark konum + boyut
+        wm_opts = QHBoxLayout()
+        wm_opts.addWidget(QLabel("Konum:"))
+        self.wm_pos_combo = QComboBox()
+        for lbl, val in [("Sağ Alt", "br"), ("Sol Alt", "bl"), ("Sağ Üst", "tr"), ("Sol Üst", "tl")]:
+            self.wm_pos_combo.addItem(lbl, val)
+        wm_opts.addWidget(self.wm_pos_combo)
+        wm_opts.addSpacing(12)
+        wm_opts.addWidget(QLabel("Boyut %:"))
+        self.wm_scale_spin = QSpinBox()
+        self.wm_scale_spin.setRange(2, 30)
+        self.wm_scale_spin.setValue(8)
+        self.wm_scale_spin.setSuffix("%")
+        self.wm_scale_spin.setFixedWidth(70)
+        wm_opts.addWidget(self.wm_scale_spin)
+        wm_opts.addSpacing(12)
+        wm_opts.addWidget(QLabel("Opaklık:"))
+        self.wm_opacity_spin = QSpinBox()
+        self.wm_opacity_spin.setRange(10, 100)
+        self.wm_opacity_spin.setValue(85)
+        self.wm_opacity_spin.setSuffix("%")
+        self.wm_opacity_spin.setFixedWidth(70)
+        wm_opts.addWidget(self.wm_opacity_spin)
+        wm_opts.addStretch()
+        vbox.addLayout(wm_opts)
+
         return w
 
     # ── Sağ panel: önizleme + render ──────────────────────────────
@@ -916,6 +967,12 @@ class RenderPage(QWidget):
         intro_path = getattr(self, "intro_path_edit", None)
         outro_path = getattr(self, "outro_path_edit", None)
 
+        watermark_path = getattr(self, "watermark_path_edit", None)
+        wm_path = (watermark_path.text().strip() or None) if watermark_path else None
+        wm_pos = self.wm_pos_combo.currentData() if hasattr(self, "wm_pos_combo") else "br"
+        wm_scale = (self.wm_scale_spin.value() / 100.0) if hasattr(self, "wm_scale_spin") else 0.08
+        wm_opacity = (self.wm_opacity_spin.value() / 100.0) if hasattr(self, "wm_opacity_spin") else 0.85
+
         return {
             "resolution": resolution,
             "fps": fps,
@@ -934,6 +991,10 @@ class RenderPage(QWidget):
             "bgm_ducking": bgm_ducking,
             "intro_path": (intro_path.text().strip() or None) if intro_path else None,
             "outro_path": (outro_path.text().strip() or None) if outro_path else None,
+            "watermark_path": wm_path,
+            "watermark_position": wm_pos,
+            "watermark_scale": wm_scale,
+            "watermark_opacity": wm_opacity,
         }
 
     # ─────────────────────────────────────────────────────────────────────────
@@ -1147,6 +1208,13 @@ class RenderPage(QWidget):
     # ─────────────────────────────────────────────────────────────────────────
     # Browse
     # ─────────────────────────────────────────────────────────────────────────
+
+    def _browse_watermark(self) -> None:
+        path, _ = QFileDialog.getOpenFileName(
+            self, "Watermark/Logo Seç", "", "Görsel (*.png *.jpg *.jpeg *.webp)"
+        )
+        if path:
+            self.watermark_path_edit.setText(path)
 
     def _browse_bgm(self) -> None:
         path, _ = QFileDialog.getOpenFileName(

@@ -14,7 +14,7 @@ from core.settings_manager import SettingsManager
 
 logger = logging.getLogger(__name__)
 
-RATE_LIMIT_DELAY = 1.0   # saniye (istek arası bekleme)
+RATE_LIMIT_DELAY = 1.0   # saniye — ayarlar yoksa varsayılan
 
 
 def _load_vision_prompt() -> str:
@@ -213,8 +213,15 @@ class AIAnalyzer:
             chapter.analysis_data[cache_key] = result
 
             # Rate limit: istekler arası bekleme
+            delay = self._settings.get("analysis.rate_limit_delay", RATE_LIMIT_DELAY)
+            try:
+                delay = float(delay)
+                if delay < 0:
+                    delay = 0.0
+            except (TypeError, ValueError):
+                delay = RATE_LIMIT_DELAY
             if i < total - 1 and not (stop_flag and stop_flag()):
-                time.sleep(RATE_LIMIT_DELAY)
+                time.sleep(delay)
 
         return results
 

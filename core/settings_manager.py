@@ -193,4 +193,11 @@ class SettingsManager(QObject):
                 "kokoro_cache_path": "",
                 "kokoro_use_gpu": True,
             },
+            "analysis": {
+                "rate_limit_delay": 1.0,   # API istekleri arası bekleme (saniye)
+            },
+            "cache": {
+                "global_tts_cache": True,  # Uygulama genelinde tek TTS cache
+                "global_cache_dir": "./cache/tts",  # Merkezi cache klasörü
+            },
         }

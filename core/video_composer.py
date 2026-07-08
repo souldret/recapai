@@ -43,7 +43,24 @@ DEFAULT_SETTINGS: Dict[str, Any] = {
     "outro_path": None,
     "codec": "libx264",
     "bitrate": "8000k",
+    "watermark_path": None,
+    "watermark_position": "br",
+    "watermark_scale": 0.08,
+    "watermark_opacity": 0.85,
 }
+
+# ── Ken Burns pan yön ön ayarları ─────────────────────────────────────────────
+# Her tuple: (pan_x_expr, pan_y_expr) — zoom büyüdükçe görüntü bu yönde kayar
+_PAN_PRESETS = [
+    ("iw/2-(iw/zoom/2)",  "ih/2-(ih/zoom/2)"),   # 0: merkez (statik)
+    ("iw*(1-1/zoom)",     "ih*(1-1/zoom)"),        # 1: sağ-alt → sol-üst
+    ("0",                 "0"),                    # 2: sol-üst → sağ-alt
+    ("iw*(1-1/zoom)",     "0"),                    # 3: sağ-üst → sol-alt
+    ("0",                 "ih*(1-1/zoom)"),         # 4: sol-alt → sağ-üst
+    ("iw/2-(iw/zoom/2)",  "0"),                    # 5: üst-orta → alt
+    ("iw/2-(iw/zoom/2)",  "ih*(1-1/zoom)"),        # 6: alt-orta → üst
+    ("0",                 "ih/2-(ih/zoom/2)"),      # 7: sol-orta → sağ
+]
 
 
 class VideoComposer:
@@ -288,7 +305,7 @@ class VideoComposer:
 
             # Klip oluştur
             clip_out = str(tmp_dir / f"clip_{idx:04d}.mp4")
-            self._make_clip(img_path, audio_path, duration, clip_out)
+            self._make_clip(img_path, audio_path, duration, clip_out, clip_index=idx)
 
             if Path(clip_out).exists() and Path(clip_out).stat().st_size > 0:
                 clip_paths.append(clip_out)
@@ -303,6 +320,7 @@ class VideoComposer:
         audio_path: Optional[str],
         duration: float,
         output_path: str,
+        clip_index: int = 0,
     ) -> None:
         """
         Tek bir görsel + ses'ten MP4 klip üretir.
@@ -330,9 +348,8 @@ class VideoComposer:
         # Titreşimsiz zoom: ilk frame'de 1.0'dan başla, sonraki her frame'de delta ekle
         zoom_expr = f"if(eq(on\\,1)\\,1.0\\,zoom)+{zoom_delta:.6f}"
         zoom_clamp = f"min({zoom_expr}\\,{max_zoom:.4f})"
-        # Pan: her zaman görüntüyü ortala (sarsıntısız)
-        pan_x = "iw/2-(iw/zoom/2)"
-        pan_y = "ih/2-(ih/zoom/2)"
+        # Pan: klip index'ine göre 8 farklı yönden seç
+        pan_x, pan_y = _PAN_PRESETS[clip_index % len(_PAN_PRESETS)]
 
         # bg_effect "blur" ise blur_bg de açık say
         use_blur = blur_bg or bg_effect in ("blur", "vignette_blur", "cinematic")
@@ -407,13 +424,42 @@ class VideoComposer:
                     f"pad={w}:{h}:(ow-iw)/2:(oh-ih)/2:black[vout]"
                 )
 
+        # Watermark overlay
+        watermark_path = self.settings.get("watermark_path")
+        has_watermark = watermark_path and Path(watermark_path).exists()
+        if has_watermark:
+            wm_pos = self.settings.get("watermark_position", "br")
+            wm_scale = self.settings.get("watermark_scale", 0.08)
+            wm_opacity = self.settings.get("watermark_opacity", 0.85)
+            wm_w = int(w * wm_scale)
+            margin = 20
+            pos_map = {
+                "tl": f"x={margin}:y={margin}",
+                "tr": f"x=W-w-{margin}:y={margin}",
+                "bl": f"x={margin}:y=H-h-{margin}",
+                "br": f"x=W-w-{margin}:y=H-h-{margin}",
+            }
+            overlay_pos = pos_map.get(wm_pos, pos_map["br"])
+            # [vout] etiketini ara katmana al; watermark son adım olarak eklenir
+            vf = vf.replace("[vout]", "[pre_wm]")
+            vf += (
+                f";[1:v]scale={wm_w}:-1,format=rgba,"
+                f"colorchannelmixer=aa={wm_opacity:.2f}[wm];"
+                f"[pre_wm][wm]overlay={overlay_pos}[vout]"
+            )
+
         cmd = ["-y"]
 
         # Giriş: görsel (loop ile duration kadar)
         cmd += ["-loop", "1", "-framerate", str(fps), "-i", image_path]
 
-        # Giriş: ses (varsa)
+        # Giriş: watermark (varsa) — index 1
+        if has_watermark:
+            cmd += ["-i", watermark_path]
+
+        # Giriş: ses (varsa) — watermark yoksa index 1, varsa index 2
         has_audio = audio_path and Path(audio_path).exists()
+        audio_index = 2 if has_watermark else 1
         if has_audio:
             cmd += ["-i", audio_path]
 
@@ -431,26 +477,37 @@ class VideoComposer:
         ]
 
         if has_audio:
-            cmd += ["-map", "1:a", "-c:a", "aac", "-b:a", "192k", "-shortest"]
+            cmd += ["-map", f"{audio_index}:a", "-c:a", "aac", "-b:a", "192k", "-shortest"]
         else:
             # Sessiz audio ekle
-            cmd = self._build_silent_clip_cmd(image_path, duration, vf)
+            cmd = self._build_silent_clip_cmd(image_path, duration, vf, watermark_path if has_watermark else None)
 
         cmd.append(output_path)
         ret = self._run(cmd)
         if ret != 0:
             logger.error("Klip oluşturulamadı: %s", output_path)
 
-    def _build_silent_clip_cmd(self, image_path: str, duration: float, vf: str) -> List[str]:
+    def _build_silent_clip_cmd(
+        self,
+        image_path: str,
+        duration: float,
+        vf: str,
+        watermark_path: Optional[str] = None,
+    ) -> List[str]:
         """Sessiz video klibi için FFmpeg komutu."""
-        w, h = self._width, self._height
         fps = self._fps
-        return [
+        cmd = [
             "-y",
             "-loop", "1", "-framerate", str(fps), "-i", image_path,
-            "-f", "lavfi", "-i", f"aevalsrc=0:c=stereo:r=44100",
+        ]
+        if watermark_path and Path(watermark_path).exists():
+            cmd += ["-i", watermark_path]
+        # Sessiz ses kaynağı her zaman son input
+        cmd += ["-f", "lavfi", "-i", "aevalsrc=0:c=stereo:r=44100"]
+        silent_audio_index = 2 if (watermark_path and Path(watermark_path).exists()) else 1
+        cmd += [
             "-filter_complex", vf,
-            "-map", "[vout]", "-map", "1:a",
+            "-map", "[vout]", "-map", f"{silent_audio_index}:a",
             "-c:v", self._codec, "-preset", "fast", "-crf", "23",
             "-c:a", "aac", "-b:a", "128k",
             "-t", str(duration),
@@ -458,6 +515,7 @@ class VideoComposer:
             "-r", str(fps),
             "-shortest",
         ]
+        return cmd
 
     # ─────────────────────────────────────────────────────────────────────────
     # Birleştirme ve post-process
@@ -603,10 +661,21 @@ class VideoComposer:
             self._simple_concat(clip_paths, output_path)
             return
 
+        # Ses normalizasyonu — her klibi normalize et
+        norm_dir = Path(output_path).parent
+        normalized_clips: List[str] = []
+        for i, cp in enumerate(clip_paths):
+            norm_out = str(norm_dir / f"norm_{i:04d}.mp4")
+            if self._normalize_clip_audio(cp, norm_out):
+                normalized_clips.append(norm_out)
+            else:
+                normalized_clips.append(cp)  # başarısız olursa orijinali kullan
+        clip_paths_to_use = normalized_clips
+
         # Yığımlı birleştirme: 2'li xfade zinciri
         use_pool = (transition == "random") or isinstance(transition, list)
         result = self._xfade_chain(
-            clip_paths, durations, xf_transition or "fade", t_dur,
+            clip_paths_to_use, durations, xf_transition or "fade", t_dur,
             random_pool=_random_transitions if use_pool else None,
         )
         cmd = ["-y"] + result["inputs"]
@@ -629,7 +698,15 @@ class VideoComposer:
         ret = self._run(cmd)
         if ret != 0:
             logger.warning("xfade başarısız, basit concat'e geçiliyor.")
-            self._simple_concat(clip_paths, output_path)
+            self._simple_concat(clip_paths_to_use, output_path)
+
+        # Normalizasyon geçici dosyalarını temizle
+        for norm_file in normalized_clips:
+            try:
+                if norm_file not in clip_paths and Path(norm_file).exists():
+                    Path(norm_file).unlink()
+            except Exception:
+                pass
 
     def _xfade_chain(
         self,
@@ -680,6 +757,17 @@ class VideoComposer:
             "inputs": inputs,
             "filter": ";".join(fc_parts),
         }
+
+    def _normalize_clip_audio(self, clip_path: str, output_path: str) -> bool:
+        """Ses seviyesini loudnorm filtresi ile normalize eder (titreme önleme)."""
+        ret = self._run([
+            "-y", "-i", clip_path,
+            "-af", "loudnorm=I=-16:TP=-1.5:LRA=11",
+            "-c:v", "copy",
+            "-c:a", "aac", "-b:a", "192k",
+            output_path,
+        ])
+        return ret == 0 and Path(output_path).exists() and Path(output_path).stat().st_size > 0
 
     def _burn_subtitles(self, input_path: str, sub_path: str, output_path: str) -> None:
         """ASS altyazıları video üzerine yazar (FFmpeg subtitles filtresi)."""
@@ -777,12 +865,15 @@ class VideoComposer:
     # FFmpeg çalıştırma
     # ─────────────────────────────────────────────────────────────────────────
 
-    def _run(self, args: List[str]) -> int:
-        """FFmpeg komutunu çalıştırır, çıkış kodunu döndürür."""
+    def _run(self, args: List[str], cancel_check: Optional[Callable[[], bool]] = None) -> int:
+        """FFmpeg komutunu çalıştırır. cancel_check ile gerçek iptal desteği."""
+        import threading
+        import time as _time
+
         cmd = [self._ffmpeg] + args
         logger.debug("FFmpeg: %s", " ".join(str(a) for a in cmd))
         try:
-            result = subprocess.run(
+            process = subprocess.Popen(
                 cmd,
                 stdout=subprocess.DEVNULL,
                 stderr=subprocess.PIPE,
@@ -790,9 +881,29 @@ class VideoComposer:
                 encoding="utf-8",
                 errors="replace",
             )
-            if result.returncode != 0:
-                logger.debug("FFmpeg stderr:\n%s", result.stderr[-2000:])
-            return result.returncode
+            stderr_lines: List[str] = []
+
+            def _read_stderr() -> None:
+                for line in process.stderr:
+                    stderr_lines.append(line)
+
+            t = threading.Thread(target=_read_stderr, daemon=True)
+            t.start()
+
+            while process.poll() is None:
+                if cancel_check and cancel_check():
+                    process.kill()
+                    process.wait()
+                    logger.info("FFmpeg iptal edildi (kill).")
+                    return -1
+                _time.sleep(0.1)
+
+            t.join(timeout=2.0)
+            ret = process.returncode
+            if ret != 0:
+                tail = "".join(stderr_lines[-20:])
+                logger.debug("FFmpeg stderr:\n%s", tail[-2000:])
+            return ret
         except Exception as exc:
             logger.error("FFmpeg çalıştırma hatası: %s", exc)
             return -1

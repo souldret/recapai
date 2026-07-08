@@ -94,6 +94,21 @@ class RenderWorker(QThread):
                 cancel_check=cancel_check,
             )
 
+            if not self._cancelled:
+                # Eksik segmentleri raporla
+                missing = [
+                    i for i, seg in enumerate(chapter.segments)
+                    if not seg.audio_path or not Path(seg.audio_path).exists()
+                ]
+                if missing:
+                    self.log.emit(
+                        f"<span style='color:#f59e0b;'><b>UYARI:</b> "
+                        f"{len(missing)} segment ses dosyası bulunamadı "
+                        f"(index: {', '.join(str(x) for x in missing[:5])}"
+                        f"{'...' if len(missing) > 5 else ''}). "
+                        f"Bu segmentler sessiz render edildi.</span>"
+                    )
+
             if self._cancelled:
                 self.log.emit("Render iptal edildi.")
                 self.error.emit("Render kullanıcı tarafından iptal edildi.")

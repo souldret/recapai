@@ -106,3 +106,24 @@ class TTSCache:
     def entry_count(self) -> int:
         """Cache'deki giriş sayısı."""
         return len(self._index)
+
+    @classmethod
+    def get_global_cache(cls) -> "TTSCache":
+        """
+        Uygulama genelinde merkezi TTS cache döner.
+        SettingsManager'dan cache dizinini okur.
+        """
+        try:
+            from core.settings_manager import SettingsManager
+            sm = SettingsManager.instance()
+            if sm.get("cache.global_tts_cache", True):
+                cache_dir = sm.get("cache.global_cache_dir", "./cache/tts")
+                from pathlib import Path
+                from core.constants import BASE_DIR
+                cache_path = BASE_DIR / cache_dir if not Path(cache_dir).is_absolute() else Path(cache_dir)
+                return cls(str(cache_path))
+        except Exception:
+            pass
+        # Fallback: geçici dizin
+        import tempfile
+        return cls(str(Path(tempfile.gettempdir()) / "recapai_tts_cache"))
