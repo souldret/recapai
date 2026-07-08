@@ -281,7 +281,7 @@ class OpenRouterClient:
             pass
 
         # Genel fallback
-        return "google/gemini-flash-1.5"
+        return "google/gemini-2.5-flash"
 
     def _track_tokens(self, data: Dict) -> None:
         usage = data.get("usage", {})

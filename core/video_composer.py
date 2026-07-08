@@ -308,6 +308,12 @@ class VideoComposer:
         Tek bir görsel + ses'ten MP4 klip üretir.
         Ken Burns efekti FFmpeg zoompan filtresi ile uygulanır.
         Arka plan efektleri: none, blur, gradient_tb, gradient_lr, vignette_blur, cinematic
+
+        TİTREME NOTU: zoompan filtresinde titreşimi önlemek için:
+        - z ifadesinde if(eq(on,1),1.0,zoom)+delta kullanılır (başlangıç zoom'u açıkça 1.0)
+        - fps parametresi zoompan'a verilmez; klip fps'i encoding aşamasında -r ile ayarlanır
+        - zoompan çıktısından sonra ikinci scale KULLANILMAZ (sıçrama yaratır)
+        - İki aşamalı scale: önce büyük, sonra zoompan; final boyut zoompan'ın s= parametresiyle
         """
         w, h = self._width, self._height
         fps = self._fps
@@ -320,8 +326,13 @@ class VideoComposer:
         w2, h2 = w * 2, h * 2
 
         zoom_delta = intensity / total_frames
-        pan_x = f"iw/2-(iw/zoom/2)"
-        pan_y = f"ih/2-(ih/zoom/2)"
+        max_zoom = 1.0 + intensity
+        # Titreşimsiz zoom: ilk frame'de 1.0'dan başla, sonraki her frame'de delta ekle
+        zoom_expr = f"if(eq(on\\,1)\\,1.0\\,zoom)+{zoom_delta:.6f}"
+        zoom_clamp = f"min({zoom_expr}\\,{max_zoom:.4f})"
+        # Pan: her zaman görüntüyü ortala (sarsıntısız)
+        pan_x = "iw/2-(iw/zoom/2)"
+        pan_y = "ih/2-(ih/zoom/2)"
 
         # bg_effect "blur" ise blur_bg de açık say
         use_blur = blur_bg or bg_effect in ("blur", "vignette_blur", "cinematic")
@@ -343,9 +354,8 @@ class VideoComposer:
             )
             if ken_burns:
                 vf += (
-                    f"[comp]zoompan=z='min(zoom+{zoom_delta:.6f},{1.0 + intensity:.3f})':"
-                    f"x='{pan_x}':y='{pan_y}':d={total_frames}:s={w}x{h}:fps={fps},"
-                    f"scale={w}:{h}[vout]"
+                    f"[comp]zoompan=z='{zoom_clamp}':"
+                    f"x='{pan_x}':y='{pan_y}':d={total_frames}:s={w}x{h}[vout]"
                 )
             else:
                 vf += f"[comp]scale={w}:{h}[vout]"
@@ -360,9 +370,8 @@ class VideoComposer:
             )
             if ken_burns:
                 vf += (
-                    f"[comp]zoompan=z='min(zoom+{zoom_delta:.6f},{1.0 + intensity:.3f})':"
-                    f"x='{pan_x}':y='{pan_y}':d={total_frames}:s={w}x{h}:fps={fps},"
-                    f"scale={w}:{h}[vout]"
+                    f"[comp]zoompan=z='{zoom_clamp}':"
+                    f"x='{pan_x}':y='{pan_y}':d={total_frames}:s={w}x{h}[vout]"
                 )
             else:
                 vf += f"[comp]scale={w}:{h}[vout]"
@@ -377,9 +386,8 @@ class VideoComposer:
             )
             if ken_burns:
                 vf += (
-                    f"[comp]zoompan=z='min(zoom+{zoom_delta:.6f},{1.0 + intensity:.3f})':"
-                    f"x='{pan_x}':y='{pan_y}':d={total_frames}:s={w}x{h}:fps={fps},"
-                    f"scale={w}:{h}[vout]"
+                    f"[comp]zoompan=z='{zoom_clamp}':"
+                    f"x='{pan_x}':y='{pan_y}':d={total_frames}:s={w}x{h}[vout]"
                 )
             else:
                 vf += f"[comp]scale={w}:{h}[vout]"
@@ -390,9 +398,8 @@ class VideoComposer:
                 vf = (
                     f"[0:v]scale={w2}:{h2}:force_original_aspect_ratio=decrease,"
                     f"pad={w2}:{h2}:(ow-iw)/2:(oh-ih)/2:black,"
-                    f"zoompan=z='min(zoom+{zoom_delta:.6f},{1.0 + intensity:.3f})':"
-                    f"x='{pan_x}':y='{pan_y}':d={total_frames}:s={w}x{h}:fps={fps},"
-                    f"scale={w}:{h}[vout]"
+                    f"zoompan=z='{zoom_clamp}':"
+                    f"x='{pan_x}':y='{pan_y}':d={total_frames}:s={w}x{h}[vout]"
                 )
             else:
                 vf = (
