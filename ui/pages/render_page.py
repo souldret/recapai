@@ -497,11 +497,6 @@ class RenderPage(QWidget):
         self.chk_ken_burns.stateChanged.connect(self._on_ken_burns_toggled)
         vbox.addWidget(self.chk_ken_burns)
 
-        # Arka plan blur
-        self.chk_blur_bg = QCheckBox("Arka planı blur yap (siyah boşluk yerine)")
-        self.chk_blur_bg.setChecked(False)
-        vbox.addWidget(self.chk_blur_bg)
-
         # Yoğunluk (zoom/pan kuvveti)
         kb_row = QHBoxLayout()
         self.kb_intensity = QSlider(Qt.Orientation.Horizontal)
@@ -992,8 +987,9 @@ class RenderPage(QWidget):
         ken_burns = self.chk_ken_burns.isChecked()
         kb_intensity = self.kb_intensity.value() / 100.0
         image_motion = getattr(self, "_current_motion", "zoom_in")
-        blur_bg = self.chk_blur_bg.isChecked()
         bg_effect = self.bg_effect_combo.currentData() if hasattr(self, "bg_effect_combo") else "none"
+        # blur_background: arka plan efekti dropdown'dan belirleniyor
+        blur_bg = (bg_effect == "blur")
 
         subtitles = self.chk_subtitles.isChecked()
         pos_map = {0: "bottom", 1: "middle", 2: "top"}

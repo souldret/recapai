@@ -449,6 +449,15 @@ class VideoComposer:
                     f"{input_label}zoompan=z='{zoom_clamp_lp}':"
                     f"x='{pan_x_lp}':y='{pan_y_lp}':d={total_frames}:s={w}x{h}[vout]"
                 )
+            elif image_motion == "full_pan":
+                # Tam ekran yavaş yatay pan: sabit zoom=1.3, soldan sağa lineer
+                fp_zoom = 1.30
+                # x: frame 0'da 0, son frame'de iw*(1-1/zoom) — soldan sağa
+                fp_x = f"(on-1)/({total_frames}-1)*iw*(1-1/{fp_zoom:.2f})"
+                return (
+                    f"{input_label}zoompan=z='{fp_zoom:.2f}':"
+                    f"x='{fp_x}':y='ih/2-(ih/{fp_zoom:.2f}/2)':d={total_frames}:s={w}x{h}[vout]"
+                )
             else:
                 # zoom_in (varsayılan): 1.0'dan başlayıp büyüyor, merkeze sabit
                 zoom_expr_in = f"if(eq(on\\,1)\\,1.0\\,zoom)+{zoom_delta:.6f}"
@@ -460,7 +469,7 @@ class VideoComposer:
 
         # ── Slide mod mu? ──────────────────────────────────────────────────────
         is_slide = image_motion in ("slide_top", "slide_bot", "slide_right", "slide_left")
-        is_full_pan = image_motion == "full_pan"
+        is_full_pan = False  # artık kullanılmıyor, full_pan _build_zoompan_vf ile işleniyor
 
         # ── VF zinciri oluştur ─────────────────────────────────────────────────
         if use_blur:
@@ -503,22 +512,8 @@ class VideoComposer:
                 else:  # slide_left
                     slide_expr = f"if(gte(t\\,0)\\,-{w}+(t/{duration:.4f})*{w}\\,-{w})"
                     vf += f"[bg_blur][fg]overlay=x={slide_expr}:y=0[vout]"
-            elif is_full_pan:
-                scale_factor = 1.5
-                sw = int(w * scale_factor)
-                sh = int(h * scale_factor)
-                pan_progress = f"(t/{duration})*({sw}-{w})"
-                vf = (
-                    f"[0:v]split=2[bg_in][fg_in];"
-                    f"[bg_in]scale={w2}:{h2}:force_original_aspect_ratio=increase,"
-                    f"crop={w2}:{h2},{blur_str}[bg];"
-                    f"[fg_in]scale={sw}:{sh}:force_original_aspect_ratio=decrease,"
-                    f"pad={sw}:{sh}:(ow-iw)/2:(oh-ih)/2:black,"
-                    f"crop={w}:{h}:x={pan_progress}:y=0[comp];"
-                    f"[bg][comp]overlay=(W-w)/2:(H-h)/2[vout]"
-                )
             else:
-                # zoom_in, zoom_out, large_pan — blur arka plan + zoompan
+                # zoom_in, zoom_out, large_pan, full_pan — blur arka plan + zoompan
                 vf = blur_base + _build_zoompan_vf("[comp]")
 
         elif bg_effect == "gradient_tb":
@@ -548,19 +543,8 @@ class VideoComposer:
                 else:
                     slide_expr = f"if(gte(t\\,0)\\,-{w}+(t/{duration:.4f})*{w}\\,-{w})"
                     vf += f"[grad_bg][fg]overlay=x={slide_expr}:y=0[vout]"
-            elif is_full_pan:
-                scale_factor = 1.5
-                sw = int(w * scale_factor)
-                sh = int(h * scale_factor)
-                pan_progress = f"(t/{duration:.4f})*({sw}-{w})"
-                vf = (
-                    f"[0:v]scale={sw}:{sh}:force_original_aspect_ratio=decrease,"
-                    f"pad={sw}:{sh}:(ow-iw)/2:(oh-ih)/2:black,"
-                    f"crop={w}:{h}:x={pan_progress}:y=0[comp];"
-                    f"color=c=0x0d1117:s={w}x{h}:rate={fps}:duration={duration}[grad];"
-                    f"[grad][comp]overlay=(W-w)/2:(H-h)/2[vout]"
-                )
             else:
+                # zoom_in, zoom_out, large_pan, full_pan — gradient_tb + zoompan
                 vf = grad_base + _build_zoompan_vf("[comp]")
 
         elif bg_effect == "gradient_lr":
@@ -590,19 +574,8 @@ class VideoComposer:
                 else:
                     slide_expr = f"if(gte(t\\,0)\\,-{w}+(t/{duration:.4f})*{w}\\,-{w})"
                     vf += f"[grad_bg][fg]overlay=x={slide_expr}:y=0[vout]"
-            elif is_full_pan:
-                scale_factor = 1.5
-                sw = int(w * scale_factor)
-                sh = int(h * scale_factor)
-                pan_progress = f"(t/{duration:.4f})*({sw}-{w})"
-                vf = (
-                    f"[0:v]scale={sw}:{sh}:force_original_aspect_ratio=decrease,"
-                    f"pad={sw}:{sh}:(ow-iw)/2:(oh-ih)/2:black,"
-                    f"crop={w}:{h}:x={pan_progress}:y=0[comp];"
-                    f"color=c=0x1a1a2e:s={w}x{h}:rate={fps}:duration={duration}[grad];"
-                    f"[grad][comp]overlay=(W-w)/2:(H-h)/2[vout]"
-                )
             else:
+                # zoom_in, zoom_out, large_pan, full_pan — gradient_lr + zoompan
                 vf = grad_base + _build_zoompan_vf("[comp]")
 
         else:
@@ -614,18 +587,8 @@ class VideoComposer:
                 )
             elif is_slide:
                 vf = _build_slide_vf(None)
-            elif is_full_pan:
-                scale_factor = 1.5
-                sw = int(w * scale_factor)
-                sh = int(h * scale_factor)
-                pan_progress = f"(t/{duration:.4f})*({sw}-{w})"
-                vf = (
-                    f"[0:v]scale={sw}:{sh}:force_original_aspect_ratio=decrease,"
-                    f"pad={sw}:{sh}:(ow-iw)/2:(oh-ih)/2:black,"
-                    f"crop={w}:{h}:x={pan_progress}:y=0[vout]"
-                )
             else:
-                # zoom_in, zoom_out, large_pan — standart siyah arka plan
+                # zoom_in, zoom_out, large_pan, full_pan — standart siyah arka plan
                 vf = (
                     f"[0:v]scale={w2}:{h2}:force_original_aspect_ratio=decrease,"
                     f"pad={w2}:{h2}:(ow-iw)/2:(oh-ih)/2:black,"
