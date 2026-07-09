@@ -392,12 +392,36 @@ class VideoComposer:
                     f"{bg_label}[fg]overlay={overlay_xy}[vout]"
                 )
             else:
-                return (
-                    f"[0:v]scale={w}:{h}:force_original_aspect_ratio=decrease,"
-                    f"pad={w}:{h}:(ow-iw)/2:(oh-ih)/2:black[fg];"
-                    f"color=c=black:s={w}x{h}:rate={fps}:duration={duration}[bg];"
-                    f"[bg][fg]overlay={overlay_xy}[vout]"
-                )
+                # color source yerine pad ile siyah arka plan — daha güvenilir
+                if image_motion == "slide_top":
+                    # Görsel w x h, ama pad alanı w x 2h: görsel altta; y=-h ile başlar
+                    return (
+                        f"[0:v]scale={w}:{h}:force_original_aspect_ratio=decrease,"
+                        f"pad={w}:{h}:(ow-iw)/2:(oh-ih)/2:black,"
+                        f"pad={w}:{h*2}:0:0:black,"
+                        f"crop={w}:{h}:0:if(gte(t\\,0)\\,{h}-(t/{duration:.4f})*{h}\\,{h})[vout]"
+                    )
+                elif image_motion == "slide_bot":
+                    return (
+                        f"[0:v]scale={w}:{h}:force_original_aspect_ratio=decrease,"
+                        f"pad={w}:{h}:(ow-iw)/2:(oh-ih)/2:black,"
+                        f"pad={w}:{h*2}:0:{h}:black,"
+                        f"crop={w}:{h}:0:if(gte(t\\,0)\\,(t/{duration:.4f})*{h}\\,0)[vout]"
+                    )
+                elif image_motion == "slide_right":
+                    return (
+                        f"[0:v]scale={w}:{h}:force_original_aspect_ratio=decrease,"
+                        f"pad={w}:{h}:(ow-iw)/2:(oh-ih)/2:black,"
+                        f"pad={w*2}:{h}:{w}:0:black,"
+                        f"crop={w}:{h}:if(gte(t\\,0)\\,{w}-(t/{duration:.4f})*{w}\\,{w}):0[vout]"
+                    )
+                else:  # slide_left
+                    return (
+                        f"[0:v]scale={w}:{h}:force_original_aspect_ratio=decrease,"
+                        f"pad={w}:{h}:(ow-iw)/2:(oh-ih)/2:black,"
+                        f"pad={w*2}:{h}:0:0:black,"
+                        f"crop={w}:{h}:if(gte(t\\,0)\\,{w}-(t/{duration:.4f})*{w}\\,{w}):0[vout]"
+                    )
 
         # ── Zoompan ifadesi oluştur (image_motion'a göre) ─────────────────────
         def _build_zoompan_vf(input_label: str) -> str:
