@@ -365,21 +365,23 @@ class VideoComposer:
             """
             # Slide yön mantığı: isim görselin GELDİĞİ yönü belirtir.
             # overlay y/x: t=0'da ekran dışı başlar, t=duration'da yerleşir (y/x=0).
+            # overlay x/y ifadelerinde tırnak ve ters slash KULLANILMAZ
+            # (subprocess list'te shell escape gerekmez, FFmpeg doğrudan parse eder)
             if image_motion == "slide_top":
-                # Görsel yukarıdan aşağıya iner: y=-h → 0
-                slide_expr = f"'if(gte(t\\,0)\\,-{h}+(t/{duration})*{h}\\,-{h})'"
+                # Görsel yukarıdan iner: y=-h → 0
+                slide_expr = f"if(gte(t,0),-{h}+(t/{duration:.4f})*{h},-{h})"
                 overlay_xy = f"x=0:y={slide_expr}"
             elif image_motion == "slide_bot":
-                # Görsel aşağıdan yukarıya çıkar: y=h → 0
-                slide_expr = f"'if(gte(t\\,0)\\,{h}-(t/{duration})*{h}\\,{h})'"
+                # Görsel aşağıdan çıkar: y=h → 0
+                slide_expr = f"if(gte(t,0),{h}-(t/{duration:.4f})*{h},{h})"
                 overlay_xy = f"x=0:y={slide_expr}"
             elif image_motion == "slide_right":
-                # Görsel sağdan sola kayar: x=w → 0
-                slide_expr = f"'if(gte(t\\,0)\\,{w}-(t/{duration})*{w}\\,{w})'"
+                # Görsel sağdan gelir: x=w → 0
+                slide_expr = f"if(gte(t,0),{w}-(t/{duration:.4f})*{w},{w})"
                 overlay_xy = f"x={slide_expr}:y=0"
             else:  # slide_left
-                # Görsel soldan sağa kayar: x=-w → 0
-                slide_expr = f"'if(gte(t\\,0)\\,-{w}+(t/{duration})*{w}\\,-{w})'"
+                # Görsel soldan gelir: x=-w → 0
+                slide_expr = f"if(gte(t,0),-{w}+(t/{duration:.4f})*{w},-{w})"
                 overlay_xy = f"x={slide_expr}:y=0"
 
             if bg_label:
@@ -466,16 +468,16 @@ class VideoComposer:
                     f"pad={w}:{h}:(ow-iw)/2:(oh-ih)/2:black[fg];"
                 )
                 if image_motion == "slide_top":
-                    slide_expr = f"'if(gte(t\\,0)\\,-{h}+(t/{duration})*{h}\\,-{h})'"
+                    slide_expr = f"if(gte(t,0),-{h}+(t/{duration:.4f})*{h},-{h})"
                     vf += f"[bg_blur][fg]overlay=x=0:y={slide_expr}[vout]"
                 elif image_motion == "slide_bot":
-                    slide_expr = f"'if(gte(t\\,0)\\,{h}-(t/{duration})*{h}\\,{h})'"
+                    slide_expr = f"if(gte(t,0),{h}-(t/{duration:.4f})*{h},{h})"
                     vf += f"[bg_blur][fg]overlay=x=0:y={slide_expr}[vout]"
                 elif image_motion == "slide_right":
-                    slide_expr = f"'if(gte(t\\,0)\\,{w}-(t/{duration})*{w}\\,{w})'"
+                    slide_expr = f"if(gte(t,0),{w}-(t/{duration:.4f})*{w},{w})"
                     vf += f"[bg_blur][fg]overlay=x={slide_expr}:y=0[vout]"
                 else:  # slide_left
-                    slide_expr = f"'if(gte(t\\,0)\\,-{w}+(t/{duration})*{w}\\,-{w})'"
+                    slide_expr = f"if(gte(t,0),-{w}+(t/{duration:.4f})*{w},-{w})"
                     vf += f"[bg_blur][fg]overlay=x={slide_expr}:y=0[vout]"
             elif is_full_pan:
                 scale_factor = 1.5
@@ -488,7 +490,7 @@ class VideoComposer:
                     f"crop={w2}:{h2},{blur_str}[bg];"
                     f"[fg_in]scale={sw}:{sh}:force_original_aspect_ratio=decrease,"
                     f"pad={sw}:{sh}:(ow-iw)/2:(oh-ih)/2:black,"
-                    f"crop={w}:{h}:x='{pan_progress}':y=0[comp];"
+                    f"crop={w}:{h}:x={pan_progress}:y=0[comp];"
                     f"[bg][comp]overlay=(W-w)/2:(H-h)/2[vout]"
                 )
             else:
@@ -511,26 +513,26 @@ class VideoComposer:
                     f"color=c=0x0d1117:s={w}x{h}:r={fps}:d={duration}[grad_bg];"
                 )
                 if image_motion == "slide_top":
-                    slide_expr = f"'if(gte(t\\,0)\\,-{h}+(t/{duration})*{h}\\,-{h})'"
+                    slide_expr = f"if(gte(t,0),-{h}+(t/{duration:.4f})*{h},-{h})"
                     vf += f"[grad_bg][fg]overlay=x=0:y={slide_expr}[vout]"
                 elif image_motion == "slide_bot":
-                    slide_expr = f"'if(gte(t\\,0)\\,{h}-(t/{duration})*{h}\\,{h})'"
+                    slide_expr = f"if(gte(t,0),{h}-(t/{duration:.4f})*{h},{h})"
                     vf += f"[grad_bg][fg]overlay=x=0:y={slide_expr}[vout]"
                 elif image_motion == "slide_right":
-                    slide_expr = f"'if(gte(t\\,0)\\,{w}-(t/{duration})*{w}\\,{w})'"
+                    slide_expr = f"if(gte(t,0),{w}-(t/{duration:.4f})*{w},{w})"
                     vf += f"[grad_bg][fg]overlay=x={slide_expr}:y=0[vout]"
                 else:
-                    slide_expr = f"'if(gte(t\\,0)\\,-{w}+(t/{duration})*{w}\\,-{w})'"
+                    slide_expr = f"if(gte(t,0),-{w}+(t/{duration:.4f})*{w},-{w})"
                     vf += f"[grad_bg][fg]overlay=x={slide_expr}:y=0[vout]"
             elif is_full_pan:
                 scale_factor = 1.5
                 sw = int(w * scale_factor)
                 sh = int(h * scale_factor)
-                pan_progress = f"(t/{duration})*({sw}-{w})"
+                pan_progress = f"(t/{duration:.4f})*({sw}-{w})"
                 vf = (
                     f"[0:v]scale={sw}:{sh}:force_original_aspect_ratio=decrease,"
                     f"pad={sw}:{sh}:(ow-iw)/2:(oh-ih)/2:black,"
-                    f"crop={w}:{h}:x='{pan_progress}':y=0[comp];"
+                    f"crop={w}:{h}:x={pan_progress}:y=0[comp];"
                     f"color=c=0x0d1117:s={w}x{h}:r={fps}:d={duration}[grad];"
                     f"[grad][comp]overlay=(W-w)/2:(H-h)/2[vout]"
                 )
@@ -553,26 +555,26 @@ class VideoComposer:
                     f"color=c=0x1a1a2e:s={w}x{h}:r={fps}:d={duration}[grad_bg];"
                 )
                 if image_motion == "slide_top":
-                    slide_expr = f"'if(gte(t\\,0)\\,-{h}+(t/{duration})*{h}\\,-{h})'"
+                    slide_expr = f"if(gte(t,0),-{h}+(t/{duration:.4f})*{h},-{h})"
                     vf += f"[grad_bg][fg]overlay=x=0:y={slide_expr}[vout]"
                 elif image_motion == "slide_bot":
-                    slide_expr = f"'if(gte(t\\,0)\\,{h}-(t/{duration})*{h}\\,{h})'"
+                    slide_expr = f"if(gte(t,0),{h}-(t/{duration:.4f})*{h},{h})"
                     vf += f"[grad_bg][fg]overlay=x=0:y={slide_expr}[vout]"
                 elif image_motion == "slide_right":
-                    slide_expr = f"'if(gte(t\\,0)\\,{w}-(t/{duration})*{w}\\,{w})'"
+                    slide_expr = f"if(gte(t,0),{w}-(t/{duration:.4f})*{w},{w})"
                     vf += f"[grad_bg][fg]overlay=x={slide_expr}:y=0[vout]"
                 else:
-                    slide_expr = f"'if(gte(t\\,0)\\,-{w}+(t/{duration})*{w}\\,-{w})'"
+                    slide_expr = f"if(gte(t,0),-{w}+(t/{duration:.4f})*{w},-{w})"
                     vf += f"[grad_bg][fg]overlay=x={slide_expr}:y=0[vout]"
             elif is_full_pan:
                 scale_factor = 1.5
                 sw = int(w * scale_factor)
                 sh = int(h * scale_factor)
-                pan_progress = f"(t/{duration})*({sw}-{w})"
+                pan_progress = f"(t/{duration:.4f})*({sw}-{w})"
                 vf = (
                     f"[0:v]scale={sw}:{sh}:force_original_aspect_ratio=decrease,"
                     f"pad={sw}:{sh}:(ow-iw)/2:(oh-ih)/2:black,"
-                    f"crop={w}:{h}:x='{pan_progress}':y=0[comp];"
+                    f"crop={w}:{h}:x={pan_progress}:y=0[comp];"
                     f"color=c=0x1a1a2e:s={w}x{h}:r={fps}:d={duration}[grad];"
                     f"[grad][comp]overlay=(W-w)/2:(H-h)/2[vout]"
                 )
@@ -592,11 +594,11 @@ class VideoComposer:
                 scale_factor = 1.5
                 sw = int(w * scale_factor)
                 sh = int(h * scale_factor)
-                pan_progress = f"(t/{duration})*({sw}-{w})"
+                pan_progress = f"(t/{duration:.4f})*({sw}-{w})"
                 vf = (
                     f"[0:v]scale={sw}:{sh}:force_original_aspect_ratio=decrease,"
                     f"pad={sw}:{sh}:(ow-iw)/2:(oh-ih)/2:black,"
-                    f"crop={w}:{h}:x='{pan_progress}':y=0[vout]"
+                    f"crop={w}:{h}:x={pan_progress}:y=0[vout]"
                 )
             else:
                 # zoom_in, zoom_out, large_pan — standart siyah arka plan
