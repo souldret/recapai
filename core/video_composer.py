@@ -363,17 +363,23 @@ class VideoComposer:
                       None ise siyah renk kaynağı kullanılır.
             Slide modlar: slide_top, slide_bot, slide_right, slide_left
             """
+            # Slide yön mantığı: isim görselin GELDİĞİ yönü belirtir.
+            # overlay y/x: t=0'da ekran dışı başlar, t=duration'da yerleşir (y/x=0).
             if image_motion == "slide_top":
-                slide_expr = f"'if(gte(t\\,0)\\,{h}-(t/{duration})*{h}\\,{h})'"
-                overlay_xy = f"x=0:y={slide_expr}"
-            elif image_motion == "slide_bot":
+                # Görsel yukarıdan aşağıya iner: y=-h → 0
                 slide_expr = f"'if(gte(t\\,0)\\,-{h}+(t/{duration})*{h}\\,-{h})'"
                 overlay_xy = f"x=0:y={slide_expr}"
+            elif image_motion == "slide_bot":
+                # Görsel aşağıdan yukarıya çıkar: y=h → 0
+                slide_expr = f"'if(gte(t\\,0)\\,{h}-(t/{duration})*{h}\\,{h})'"
+                overlay_xy = f"x=0:y={slide_expr}"
             elif image_motion == "slide_right":
-                slide_expr = f"'if(gte(t\\,0)\\,-{w}+(t/{duration})*{w}\\,-{w})'"
+                # Görsel sağdan sola kayar: x=w → 0
+                slide_expr = f"'if(gte(t\\,0)\\,{w}-(t/{duration})*{w}\\,{w})'"
                 overlay_xy = f"x={slide_expr}:y=0"
             else:  # slide_left
-                slide_expr = f"'if(gte(t\\,0)\\,{w}-(t/{duration})*{w}\\,{w})'"
+                # Görsel soldan sağa kayar: x=-w → 0
+                slide_expr = f"'if(gte(t\\,0)\\,-{w}+(t/{duration})*{w}\\,-{w})'"
                 overlay_xy = f"x={slide_expr}:y=0"
 
             if bg_label:
@@ -460,16 +466,16 @@ class VideoComposer:
                     f"pad={w}:{h}:(ow-iw)/2:(oh-ih)/2:black[fg];"
                 )
                 if image_motion == "slide_top":
-                    slide_expr = f"'if(gte(t\\,0)\\,{h}-(t/{duration})*{h}\\,{h})'"
-                    vf += f"[bg_blur][fg]overlay=x=0:y={slide_expr}[vout]"
-                elif image_motion == "slide_bot":
                     slide_expr = f"'if(gte(t\\,0)\\,-{h}+(t/{duration})*{h}\\,-{h})'"
                     vf += f"[bg_blur][fg]overlay=x=0:y={slide_expr}[vout]"
+                elif image_motion == "slide_bot":
+                    slide_expr = f"'if(gte(t\\,0)\\,{h}-(t/{duration})*{h}\\,{h})'"
+                    vf += f"[bg_blur][fg]overlay=x=0:y={slide_expr}[vout]"
                 elif image_motion == "slide_right":
-                    slide_expr = f"'if(gte(t\\,0)\\,-{w}+(t/{duration})*{w}\\,-{w})'"
+                    slide_expr = f"'if(gte(t\\,0)\\,{w}-(t/{duration})*{w}\\,{w})'"
                     vf += f"[bg_blur][fg]overlay=x={slide_expr}:y=0[vout]"
                 else:  # slide_left
-                    slide_expr = f"'if(gte(t\\,0)\\,{w}-(t/{duration})*{w}\\,{w})'"
+                    slide_expr = f"'if(gte(t\\,0)\\,-{w}+(t/{duration})*{w}\\,-{w})'"
                     vf += f"[bg_blur][fg]overlay=x={slide_expr}:y=0[vout]"
             elif is_full_pan:
                 scale_factor = 1.5
@@ -505,16 +511,16 @@ class VideoComposer:
                     f"color=size={w}x{h}:color=0x0d1117:rate={fps}[grad_bg];"
                 )
                 if image_motion == "slide_top":
-                    slide_expr = f"'if(gte(t\\,0)\\,{h}-(t/{duration})*{h}\\,{h})'"
-                    vf += f"[grad_bg][fg]overlay=x=0:y={slide_expr}[vout]"
-                elif image_motion == "slide_bot":
                     slide_expr = f"'if(gte(t\\,0)\\,-{h}+(t/{duration})*{h}\\,-{h})'"
                     vf += f"[grad_bg][fg]overlay=x=0:y={slide_expr}[vout]"
+                elif image_motion == "slide_bot":
+                    slide_expr = f"'if(gte(t\\,0)\\,{h}-(t/{duration})*{h}\\,{h})'"
+                    vf += f"[grad_bg][fg]overlay=x=0:y={slide_expr}[vout]"
                 elif image_motion == "slide_right":
-                    slide_expr = f"'if(gte(t\\,0)\\,-{w}+(t/{duration})*{w}\\,-{w})'"
+                    slide_expr = f"'if(gte(t\\,0)\\,{w}-(t/{duration})*{w}\\,{w})'"
                     vf += f"[grad_bg][fg]overlay=x={slide_expr}:y=0[vout]"
                 else:
-                    slide_expr = f"'if(gte(t\\,0)\\,{w}-(t/{duration})*{w}\\,{w})'"
+                    slide_expr = f"'if(gte(t\\,0)\\,-{w}+(t/{duration})*{w}\\,-{w})'"
                     vf += f"[grad_bg][fg]overlay=x={slide_expr}:y=0[vout]"
             elif is_full_pan:
                 scale_factor = 1.5
@@ -547,16 +553,16 @@ class VideoComposer:
                     f"color=size={w}x{h}:color=0x1a1a2e:rate={fps}[grad_bg];"
                 )
                 if image_motion == "slide_top":
-                    slide_expr = f"'if(gte(t\\,0)\\,{h}-(t/{duration})*{h}\\,{h})'"
-                    vf += f"[grad_bg][fg]overlay=x=0:y={slide_expr}[vout]"
-                elif image_motion == "slide_bot":
                     slide_expr = f"'if(gte(t\\,0)\\,-{h}+(t/{duration})*{h}\\,-{h})'"
                     vf += f"[grad_bg][fg]overlay=x=0:y={slide_expr}[vout]"
+                elif image_motion == "slide_bot":
+                    slide_expr = f"'if(gte(t\\,0)\\,{h}-(t/{duration})*{h}\\,{h})'"
+                    vf += f"[grad_bg][fg]overlay=x=0:y={slide_expr}[vout]"
                 elif image_motion == "slide_right":
-                    slide_expr = f"'if(gte(t\\,0)\\,-{w}+(t/{duration})*{w}\\,-{w})'"
+                    slide_expr = f"'if(gte(t\\,0)\\,{w}-(t/{duration})*{w}\\,{w})'"
                     vf += f"[grad_bg][fg]overlay=x={slide_expr}:y=0[vout]"
                 else:
-                    slide_expr = f"'if(gte(t\\,0)\\,{w}-(t/{duration})*{w}\\,{w})'"
+                    slide_expr = f"'if(gte(t\\,0)\\,-{w}+(t/{duration})*{w}\\,-{w})'"
                     vf += f"[grad_bg][fg]overlay=x={slide_expr}:y=0[vout]"
             elif is_full_pan:
                 scale_factor = 1.5
