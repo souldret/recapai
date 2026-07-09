@@ -499,7 +499,7 @@ class VideoComposer:
             grad_base = (
                 f"[0:v]scale={w}:{h}:force_original_aspect_ratio=decrease,"
                 f"pad={w}:{h}:(ow-iw)/2:(oh-ih)/2:color=black@0[fg];"
-                f"color=size={w}x{h}:color=0x0d1117:rate={fps}:duration={duration}[grad];"
+                f"color=c=0x0d1117:s={w}x{h}:r={fps}:d={duration}[grad];"
                 f"[grad][fg]overlay=(W-w)/2:(H-h)/2[comp];"
             )
             if not ken_burns:
@@ -508,7 +508,7 @@ class VideoComposer:
                 vf = (
                     f"[0:v]scale={w}:{h}:force_original_aspect_ratio=decrease,"
                     f"pad={w}:{h}:(ow-iw)/2:(oh-ih)/2:black[fg];"
-                    f"color=size={w}x{h}:color=0x0d1117:rate={fps}:duration={duration}[grad_bg];"
+                    f"color=c=0x0d1117:s={w}x{h}:r={fps}:d={duration}[grad_bg];"
                 )
                 if image_motion == "slide_top":
                     slide_expr = f"'if(gte(t\\,0)\\,-{h}+(t/{duration})*{h}\\,-{h})'"
@@ -531,7 +531,7 @@ class VideoComposer:
                     f"[0:v]scale={sw}:{sh}:force_original_aspect_ratio=decrease,"
                     f"pad={sw}:{sh}:(ow-iw)/2:(oh-ih)/2:black,"
                     f"crop={w}:{h}:x='{pan_progress}':y=0[comp];"
-                    f"color=size={w}x{h}:color=0x0d1117:rate={fps}:duration={duration}[grad];"
+                    f"color=c=0x0d1117:s={w}x{h}:r={fps}:d={duration}[grad];"
                     f"[grad][comp]overlay=(W-w)/2:(H-h)/2[vout]"
                 )
             else:
@@ -541,7 +541,7 @@ class VideoComposer:
             grad_base = (
                 f"[0:v]scale={w}:{h}:force_original_aspect_ratio=decrease,"
                 f"pad={w}:{h}:(ow-iw)/2:(oh-ih)/2:color=black@0[fg];"
-                f"color=size={w}x{h}:color=0x1a1a2e:rate={fps}:duration={duration}[grad];"
+                f"color=c=0x1a1a2e:s={w}x{h}:r={fps}:d={duration}[grad];"
                 f"[grad][fg]overlay=(W-w)/2:(H-h)/2[comp];"
             )
             if not ken_burns:
@@ -550,7 +550,7 @@ class VideoComposer:
                 vf = (
                     f"[0:v]scale={w}:{h}:force_original_aspect_ratio=decrease,"
                     f"pad={w}:{h}:(ow-iw)/2:(oh-ih)/2:black[fg];"
-                    f"color=size={w}x{h}:color=0x1a1a2e:rate={fps}:duration={duration}[grad_bg];"
+                    f"color=c=0x1a1a2e:s={w}x{h}:r={fps}:d={duration}[grad_bg];"
                 )
                 if image_motion == "slide_top":
                     slide_expr = f"'if(gte(t\\,0)\\,-{h}+(t/{duration})*{h}\\,-{h})'"
@@ -573,7 +573,7 @@ class VideoComposer:
                     f"[0:v]scale={sw}:{sh}:force_original_aspect_ratio=decrease,"
                     f"pad={sw}:{sh}:(ow-iw)/2:(oh-ih)/2:black,"
                     f"crop={w}:{h}:x='{pan_progress}':y=0[comp];"
-                    f"color=size={w}x{h}:color=0x1a1a2e:rate={fps}:duration={duration}[grad];"
+                    f"color=c=0x1a1a2e:s={w}x{h}:r={fps}:d={duration}[grad];"
                     f"[grad][comp]overlay=(W-w)/2:(H-h)/2[vout]"
                 )
             else:
