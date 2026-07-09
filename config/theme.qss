@@ -222,6 +222,32 @@ QPushButton#secondaryBtn {
     border-radius: 6px;
 }
 
+/* Görsel animasyon modu butonları */
+QPushButton#motionBtn {
+    background-color: #1e1f24;
+    color: #a1a1aa;
+    border: 1px solid #3f3f46;
+    border-radius: 6px;
+    padding: 4px 8px;
+    font-size: 12px;
+}
+QPushButton#motionBtn:hover {
+    background-color: #27272a;
+    border-color: #6366f1;
+    color: #e4e4e7;
+}
+QPushButton#motionBtn:checked {
+    background-color: #312e81;
+    border: 2px solid #6366f1;
+    color: #ffffff;
+    font-weight: 600;
+}
+QPushButton#motionBtn:disabled {
+    color: #52525b;
+    border-color: #27272a;
+    background-color: #18181b;
+}
+
 QPushButton#secondaryBtn:hover {
     background-color: #2a2b30;
     border-color: #52525b;

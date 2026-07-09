@@ -455,8 +455,44 @@ class RenderPage(QWidget):
         trans_row.addWidget(self.transition_dur_lbl)
         vbox.addLayout(row("Geçiş süresi:", self._wrap(trans_row)))
 
+        # Görsel Animasyon Modu
+        motion_lbl = QLabel("Görsel Hareketi")
+        motion_lbl.setObjectName("pageSubtitle")
+        vbox.addWidget(motion_lbl)
+
+        # 8 animasyon butonu — görseldeki gibi
+        _MOTION_OPTIONS = [
+            ("zoom_in",    "Zoom In"),
+            ("zoom_out",   "Zoom Out"),
+            ("slide_top",  "Slide Top"),
+            ("slide_bot",  "Slide Bot"),
+            ("slide_right","Slide Right"),
+            ("slide_left", "Slide Left"),
+            ("large_pan",  "Large Pan"),
+            ("full_pan",   "Full Pan"),
+        ]
+        self._motion_buttons: Dict[str, QPushButton] = {}
+        motion_grid1 = QHBoxLayout()
+        motion_grid2 = QHBoxLayout()
+        for i, (val, lbl_text) in enumerate(_MOTION_OPTIONS):
+            btn = QPushButton(lbl_text)
+            btn.setCheckable(True)
+            btn.setFixedHeight(36)
+            btn.setObjectName("motionBtn")
+            btn.clicked.connect(lambda checked, v=val: self._select_motion(v))
+            self._motion_buttons[val] = btn
+            if i < 4:
+                motion_grid1.addWidget(btn)
+            else:
+                motion_grid2.addWidget(btn)
+        vbox.addLayout(motion_grid1)
+        vbox.addLayout(motion_grid2)
+        # Varsayılan: zoom_in seçili
+        self._current_motion = "zoom_in"
+        self._motion_buttons["zoom_in"].setChecked(True)
+
         # Ken Burns
-        self.chk_ken_burns = QCheckBox("Ken Burns efekti aktif")
+        self.chk_ken_burns = QCheckBox("Hareket efekti aktif")
         self.chk_ken_burns.setChecked(True)
         self.chk_ken_burns.stateChanged.connect(self._on_ken_burns_toggled)
         vbox.addWidget(self.chk_ken_burns)
@@ -466,7 +502,7 @@ class RenderPage(QWidget):
         self.chk_blur_bg.setChecked(False)
         vbox.addWidget(self.chk_blur_bg)
 
-        # Ken Burns yoğunluk
+        # Yoğunluk (zoom/pan kuvveti)
         kb_row = QHBoxLayout()
         self.kb_intensity = QSlider(Qt.Orientation.Horizontal)
         self.kb_intensity.setRange(5, 30)   # 0.05 – 0.30
@@ -480,7 +516,7 @@ class RenderPage(QWidget):
         kb_row.addWidget(self.kb_intensity, 1)
         kb_row.addWidget(self.kb_intensity_lbl)
         self._kb_row_widget = self._wrap(kb_row)
-        vbox.addLayout(row("KB yoğunluk:", self._kb_row_widget))
+        vbox.addLayout(row("Yoğunluk:", self._kb_row_widget))
 
         return w
 
@@ -955,6 +991,7 @@ class RenderPage(QWidget):
         transition_dur = self.transition_dur.value() / 100.0
         ken_burns = self.chk_ken_burns.isChecked()
         kb_intensity = self.kb_intensity.value() / 100.0
+        image_motion = getattr(self, "_current_motion", "zoom_in")
         blur_bg = self.chk_blur_bg.isChecked()
         bg_effect = self.bg_effect_combo.currentData() if hasattr(self, "bg_effect_combo") else "none"
 
@@ -991,6 +1028,7 @@ class RenderPage(QWidget):
             "transition_duration": transition_dur,
             "ken_burns": ken_burns,
             "ken_burns_intensity": kb_intensity,
+            "image_motion": image_motion,
             "blur_background": blur_bg,
             "bg_effect": bg_effect,
             "subtitles": subtitles,
@@ -1254,8 +1292,17 @@ class RenderPage(QWidget):
         is_custom = index == len(RESOLUTION_OPTIONS) - 1
         self._custom_res_row.setVisible(is_custom)
 
+    def _select_motion(self, value: str) -> None:
+        """Animasyon modu seçimi — tek buton aktif."""
+        self._current_motion = value
+        for v, btn in self._motion_buttons.items():
+            btn.setChecked(v == value)
+
     def _on_ken_burns_toggled(self, state: int) -> None:
         self._kb_row_widget.setEnabled(bool(state))
+        # Butonları da etkinleştir/devre dışı bırak
+        for btn in self._motion_buttons.values():
+            btn.setEnabled(bool(state))
 
     # ─────────────────────────────────────────────────────────────────────────
     # Helpers

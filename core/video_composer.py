@@ -25,6 +25,7 @@ DEFAULT_SETTINGS: Dict[str, Any] = {
     "transition_duration": 0.5,
     "ken_burns": True,
     "ken_burns_intensity": 0.15,
+    "image_motion": "zoom_in",   # zoom_in, zoom_out, slide_top, slide_bot, slide_right, slide_left, large_pan, full_pan
     "blur_background": False,
     "bg_effect": "none",
     "subtitles": True,
@@ -328,6 +329,8 @@ class VideoComposer:
         Tek bir görsel + ses'ten MP4 klip üretir.
         Ken Burns efekti FFmpeg zoompan filtresi ile uygulanır.
         Arka plan efektleri: none, blur, gradient_tb, gradient_lr, vignette_blur, cinematic
+        Görsel animasyon modları (image_motion): zoom_in, zoom_out, slide_top, slide_bot,
+            slide_right, slide_left, large_pan, full_pan
 
         TİTREME NOTU: zoompan filtresinde titreşimi önlemek için:
         - z ifadesinde if(eq(on,1),1.0,zoom)+delta kullanılır (başlangıç zoom'u açıkça 1.0)
@@ -341,21 +344,93 @@ class VideoComposer:
         intensity = self.settings.get("ken_burns_intensity", 0.15)
         blur_bg = self.settings.get("blur_background", False)
         bg_effect = self.settings.get("bg_effect", "none")
+        image_motion = self.settings.get("image_motion", "zoom_in")
 
         total_frames = max(1, int(duration * fps))
         w2, h2 = w * 2, h * 2
 
         zoom_delta = intensity / total_frames
         max_zoom = 1.0 + intensity
-        # Titreşimsiz zoom: ilk frame'de 1.0'dan başla, sonraki her frame'de delta ekle
-        zoom_expr = f"if(eq(on\\,1)\\,1.0\\,zoom)+{zoom_delta:.6f}"
-        zoom_clamp = f"min({zoom_expr}\\,{max_zoom:.4f})"
-        # Pan: klip index'ine göre 8 farklı yönden seç
-        pan_x, pan_y = _PAN_PRESETS[clip_index % len(_PAN_PRESETS)]
 
         # bg_effect "blur" ise blur_bg de açık say
         use_blur = blur_bg or bg_effect in ("blur", "vignette_blur", "cinematic")
 
+        # ── Slide modlar için yardımcı fonksiyon ──────────────────────────────
+        def _build_slide_vf(bg_label: Optional[str]) -> str:
+            """
+            Slide modunda vf zinciri oluşturur.
+            bg_label: blur/gradient durumunda arka planın [comp] etiketini taşıyan label.
+                      None ise siyah renk kaynağı kullanılır.
+            Slide modlar: slide_top, slide_bot, slide_right, slide_left
+            """
+            if image_motion == "slide_top":
+                slide_expr = f"'if(gte(t\\,0)\\,{h}-(t/{duration})*{h}\\,{h})'"
+                overlay_xy = f"x=0:y={slide_expr}"
+            elif image_motion == "slide_bot":
+                slide_expr = f"'if(gte(t\\,0)\\,-{h}+(t/{duration})*{h}\\,-{h})'"
+                overlay_xy = f"x=0:y={slide_expr}"
+            elif image_motion == "slide_right":
+                slide_expr = f"'if(gte(t\\,0)\\,-{w}+(t/{duration})*{w}\\,-{w})'"
+                overlay_xy = f"x={slide_expr}:y=0"
+            else:  # slide_left
+                slide_expr = f"'if(gte(t\\,0)\\,{w}-(t/{duration})*{w}\\,{w})'"
+                overlay_xy = f"x={slide_expr}:y=0"
+
+            if bg_label:
+                # Blur/gradient arka planı zaten hazır; [comp] etiketini [bg] olarak kullan
+                return (
+                    f"[0:v]scale={w}:{h}:force_original_aspect_ratio=decrease,"
+                    f"pad={w}:{h}:(ow-iw)/2:(oh-ih)/2:black[fg];"
+                    f"{bg_label}[fg]overlay={overlay_xy}[vout]"
+                )
+            else:
+                return (
+                    f"[0:v]scale={w}:{h}:force_original_aspect_ratio=decrease,"
+                    f"pad={w}:{h}:(ow-iw)/2:(oh-ih)/2:black[fg];"
+                    f"color=c=black:s={w}x{h}:r={fps}[bg];"
+                    f"[bg][fg]overlay={overlay_xy}[vout]"
+                )
+
+        # ── Zoompan ifadesi oluştur (image_motion'a göre) ─────────────────────
+        def _build_zoompan_vf(input_label: str) -> str:
+            """
+            Zoompan tabanlı vf parçası oluşturur.
+            input_label: zoompan'ın alacağı giriş etiketi, ör. "[comp]" veya boş string (chain)
+            """
+            if image_motion == "zoom_out":
+                # max_zoom'dan başlayıp küçülüyor, merkeze sabit
+                zoom_expr_out = f"if(eq(on\\,1)\\,{max_zoom:.4f}\\,zoom)-{zoom_delta:.6f}"
+                zoom_clamp_out = f"max({zoom_expr_out}\\,1.0)"
+                return (
+                    f"{input_label}zoompan=z='{zoom_clamp_out}':"
+                    f"x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)':d={total_frames}:s={w}x{h}[vout]"
+                )
+            elif image_motion == "large_pan":
+                # Güçlü pan: klip index'ine göre 8 yön, intensity*2
+                pan_x_lp, pan_y_lp = _PAN_PRESETS[clip_index % len(_PAN_PRESETS)]
+                strong_intensity = min(intensity * 2, 0.40)
+                strong_delta = strong_intensity / total_frames
+                strong_max = 1.0 + strong_intensity
+                zoom_expr_lp = f"if(eq(on\\,1)\\,1.0\\,zoom)+{strong_delta:.6f}"
+                zoom_clamp_lp = f"min({zoom_expr_lp}\\,{strong_max:.4f})"
+                return (
+                    f"{input_label}zoompan=z='{zoom_clamp_lp}':"
+                    f"x='{pan_x_lp}':y='{pan_y_lp}':d={total_frames}:s={w}x{h}[vout]"
+                )
+            else:
+                # zoom_in (varsayılan): 1.0'dan başlayıp büyüyor, merkeze sabit
+                zoom_expr_in = f"if(eq(on\\,1)\\,1.0\\,zoom)+{zoom_delta:.6f}"
+                zoom_clamp_in = f"min({zoom_expr_in}\\,{max_zoom:.4f})"
+                return (
+                    f"{input_label}zoompan=z='{zoom_clamp_in}':"
+                    f"x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)':d={total_frames}:s={w}x{h}[vout]"
+                )
+
+        # ── Slide mod mu? ──────────────────────────────────────────────────────
+        is_slide = image_motion in ("slide_top", "slide_bot", "slide_right", "slide_left")
+        is_full_pan = image_motion == "full_pan"
+
+        # ── VF zinciri oluştur ─────────────────────────────────────────────────
         if use_blur:
             # Arka plan blur filtresi
             blur_str = "boxblur=40:40"
@@ -364,66 +439,165 @@ class VideoComposer:
             elif bg_effect == "vignette_blur":
                 blur_str = "boxblur=50:50"
 
-            vf = (
+            blur_base = (
                 f"[0:v]split=2[bg_in][fg_in];"
                 f"[bg_in]scale={w2}:{h2}:force_original_aspect_ratio=increase,"
                 f"crop={w2}:{h2},{blur_str}[bg];"
                 f"[fg_in]scale={w2}:{h2}:force_original_aspect_ratio=decrease[fg];"
                 f"[bg][fg]overlay=(W-w)/2:(H-h)/2[comp];"
             )
-            if ken_burns:
-                vf += (
-                    f"[comp]zoompan=z='{zoom_clamp}':"
-                    f"x='{pan_x}':y='{pan_y}':d={total_frames}:s={w}x{h}[vout]"
+
+            if not ken_burns:
+                vf = blur_base + f"[comp]scale={w}:{h}[vout]"
+            elif is_slide:
+                # Slide: blur arka plan + hareketli fg overlay
+                # blur_base'den [comp] çıktısını bg olarak kullan
+                vf = (
+                    f"[0:v]split=2[bg_in][fg_in];"
+                    f"[bg_in]scale={w2}:{h2}:force_original_aspect_ratio=increase,"
+                    f"crop={w2}:{h2},{blur_str},scale={w}:{h}[bg_blur];"
+                    f"[fg_in]scale={w}:{h}:force_original_aspect_ratio=decrease,"
+                    f"pad={w}:{h}:(ow-iw)/2:(oh-ih)/2:black[fg];"
+                )
+                if image_motion == "slide_top":
+                    slide_expr = f"'if(gte(t\\,0)\\,{h}-(t/{duration})*{h}\\,{h})'"
+                    vf += f"[bg_blur][fg]overlay=x=0:y={slide_expr}[vout]"
+                elif image_motion == "slide_bot":
+                    slide_expr = f"'if(gte(t\\,0)\\,-{h}+(t/{duration})*{h}\\,-{h})'"
+                    vf += f"[bg_blur][fg]overlay=x=0:y={slide_expr}[vout]"
+                elif image_motion == "slide_right":
+                    slide_expr = f"'if(gte(t\\,0)\\,-{w}+(t/{duration})*{w}\\,-{w})'"
+                    vf += f"[bg_blur][fg]overlay=x={slide_expr}:y=0[vout]"
+                else:  # slide_left
+                    slide_expr = f"'if(gte(t\\,0)\\,{w}-(t/{duration})*{w}\\,{w})'"
+                    vf += f"[bg_blur][fg]overlay=x={slide_expr}:y=0[vout]"
+            elif is_full_pan:
+                scale_factor = 1.5
+                sw = int(w * scale_factor)
+                sh = int(h * scale_factor)
+                pan_progress = f"(t/{duration})*({sw}-{w})"
+                vf = (
+                    f"[0:v]split=2[bg_in][fg_in];"
+                    f"[bg_in]scale={w2}:{h2}:force_original_aspect_ratio=increase,"
+                    f"crop={w2}:{h2},{blur_str}[bg];"
+                    f"[fg_in]scale={sw}:{sh}:force_original_aspect_ratio=decrease,"
+                    f"pad={sw}:{sh}:(ow-iw)/2:(oh-ih)/2:black,"
+                    f"crop={w}:{h}:x='{pan_progress}':y=0[comp];"
+                    f"[bg][comp]overlay=(W-w)/2:(H-h)/2[vout]"
                 )
             else:
-                vf += f"[comp]scale={w}:{h}[vout]"
+                # zoom_in, zoom_out, large_pan — blur arka plan + zoompan
+                vf = blur_base + _build_zoompan_vf("[comp]")
 
         elif bg_effect == "gradient_tb":
-            # Üstten alta gradient arka plan
-            vf = (
+            grad_base = (
                 f"[0:v]scale={w}:{h}:force_original_aspect_ratio=decrease,"
                 f"pad={w}:{h}:(ow-iw)/2:(oh-ih)/2:color=black@0[fg];"
                 f"color=size={w}x{h}:color=0x0d1117:rate={fps}[grad];"
                 f"[grad][fg]overlay=(W-w)/2:(H-h)/2[comp];"
             )
-            if ken_burns:
-                vf += (
-                    f"[comp]zoompan=z='{zoom_clamp}':"
-                    f"x='{pan_x}':y='{pan_y}':d={total_frames}:s={w}x{h}[vout]"
+            if not ken_burns:
+                vf = grad_base + f"[comp]scale={w}:{h}[vout]"
+            elif is_slide:
+                vf = (
+                    f"[0:v]scale={w}:{h}:force_original_aspect_ratio=decrease,"
+                    f"pad={w}:{h}:(ow-iw)/2:(oh-ih)/2:black[fg];"
+                    f"color=size={w}x{h}:color=0x0d1117:rate={fps}[grad_bg];"
+                )
+                if image_motion == "slide_top":
+                    slide_expr = f"'if(gte(t\\,0)\\,{h}-(t/{duration})*{h}\\,{h})'"
+                    vf += f"[grad_bg][fg]overlay=x=0:y={slide_expr}[vout]"
+                elif image_motion == "slide_bot":
+                    slide_expr = f"'if(gte(t\\,0)\\,-{h}+(t/{duration})*{h}\\,-{h})'"
+                    vf += f"[grad_bg][fg]overlay=x=0:y={slide_expr}[vout]"
+                elif image_motion == "slide_right":
+                    slide_expr = f"'if(gte(t\\,0)\\,-{w}+(t/{duration})*{w}\\,-{w})'"
+                    vf += f"[grad_bg][fg]overlay=x={slide_expr}:y=0[vout]"
+                else:
+                    slide_expr = f"'if(gte(t\\,0)\\,{w}-(t/{duration})*{w}\\,{w})'"
+                    vf += f"[grad_bg][fg]overlay=x={slide_expr}:y=0[vout]"
+            elif is_full_pan:
+                scale_factor = 1.5
+                sw = int(w * scale_factor)
+                sh = int(h * scale_factor)
+                pan_progress = f"(t/{duration})*({sw}-{w})"
+                vf = (
+                    f"[0:v]scale={sw}:{sh}:force_original_aspect_ratio=decrease,"
+                    f"pad={sw}:{sh}:(ow-iw)/2:(oh-ih)/2:black,"
+                    f"crop={w}:{h}:x='{pan_progress}':y=0[comp];"
+                    f"color=size={w}x{h}:color=0x0d1117:rate={fps}[grad];"
+                    f"[grad][comp]overlay=(W-w)/2:(H-h)/2[vout]"
                 )
             else:
-                vf += f"[comp]scale={w}:{h}[vout]"
+                vf = grad_base + _build_zoompan_vf("[comp]")
 
         elif bg_effect == "gradient_lr":
-            # Soldan sağa gradient arka plan
-            vf = (
+            grad_base = (
                 f"[0:v]scale={w}:{h}:force_original_aspect_ratio=decrease,"
                 f"pad={w}:{h}:(ow-iw)/2:(oh-ih)/2:color=black@0[fg];"
                 f"color=size={w}x{h}:color=0x1a1a2e:rate={fps}[grad];"
                 f"[grad][fg]overlay=(W-w)/2:(H-h)/2[comp];"
             )
-            if ken_burns:
-                vf += (
-                    f"[comp]zoompan=z='{zoom_clamp}':"
-                    f"x='{pan_x}':y='{pan_y}':d={total_frames}:s={w}x{h}[vout]"
+            if not ken_burns:
+                vf = grad_base + f"[comp]scale={w}:{h}[vout]"
+            elif is_slide:
+                vf = (
+                    f"[0:v]scale={w}:{h}:force_original_aspect_ratio=decrease,"
+                    f"pad={w}:{h}:(ow-iw)/2:(oh-ih)/2:black[fg];"
+                    f"color=size={w}x{h}:color=0x1a1a2e:rate={fps}[grad_bg];"
+                )
+                if image_motion == "slide_top":
+                    slide_expr = f"'if(gte(t\\,0)\\,{h}-(t/{duration})*{h}\\,{h})'"
+                    vf += f"[grad_bg][fg]overlay=x=0:y={slide_expr}[vout]"
+                elif image_motion == "slide_bot":
+                    slide_expr = f"'if(gte(t\\,0)\\,-{h}+(t/{duration})*{h}\\,-{h})'"
+                    vf += f"[grad_bg][fg]overlay=x=0:y={slide_expr}[vout]"
+                elif image_motion == "slide_right":
+                    slide_expr = f"'if(gte(t\\,0)\\,-{w}+(t/{duration})*{w}\\,-{w})'"
+                    vf += f"[grad_bg][fg]overlay=x={slide_expr}:y=0[vout]"
+                else:
+                    slide_expr = f"'if(gte(t\\,0)\\,{w}-(t/{duration})*{w}\\,{w})'"
+                    vf += f"[grad_bg][fg]overlay=x={slide_expr}:y=0[vout]"
+            elif is_full_pan:
+                scale_factor = 1.5
+                sw = int(w * scale_factor)
+                sh = int(h * scale_factor)
+                pan_progress = f"(t/{duration})*({sw}-{w})"
+                vf = (
+                    f"[0:v]scale={sw}:{sh}:force_original_aspect_ratio=decrease,"
+                    f"pad={sw}:{sh}:(ow-iw)/2:(oh-ih)/2:black,"
+                    f"crop={w}:{h}:x='{pan_progress}':y=0[comp];"
+                    f"color=size={w}x{h}:color=0x1a1a2e:rate={fps}[grad];"
+                    f"[grad][comp]overlay=(W-w)/2:(H-h)/2[vout]"
                 )
             else:
-                vf += f"[comp]scale={w}:{h}[vout]"
+                vf = grad_base + _build_zoompan_vf("[comp]")
 
         else:
             # Standart siyah arka plan
-            if ken_burns:
-                vf = (
-                    f"[0:v]scale={w2}:{h2}:force_original_aspect_ratio=decrease,"
-                    f"pad={w2}:{h2}:(ow-iw)/2:(oh-ih)/2:black,"
-                    f"zoompan=z='{zoom_clamp}':"
-                    f"x='{pan_x}':y='{pan_y}':d={total_frames}:s={w}x{h}[vout]"
-                )
-            else:
+            if not ken_burns:
                 vf = (
                     f"[0:v]scale={w}:{h}:force_original_aspect_ratio=decrease,"
                     f"pad={w}:{h}:(ow-iw)/2:(oh-ih)/2:black[vout]"
+                )
+            elif is_slide:
+                vf = _build_slide_vf(None)
+            elif is_full_pan:
+                scale_factor = 1.5
+                sw = int(w * scale_factor)
+                sh = int(h * scale_factor)
+                pan_progress = f"(t/{duration})*({sw}-{w})"
+                vf = (
+                    f"[0:v]scale={sw}:{sh}:force_original_aspect_ratio=decrease,"
+                    f"pad={sw}:{sh}:(ow-iw)/2:(oh-ih)/2:black,"
+                    f"crop={w}:{h}:x='{pan_progress}':y=0[vout]"
+                )
+            else:
+                # zoom_in, zoom_out, large_pan — standart siyah arka plan
+                vf = (
+                    f"[0:v]scale={w2}:{h2}:force_original_aspect_ratio=decrease,"
+                    f"pad={w2}:{h2}:(ow-iw)/2:(oh-ih)/2:black,"
+                    + _build_zoompan_vf("")
                 )
 
         # Watermark overlay
