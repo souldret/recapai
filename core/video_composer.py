@@ -471,77 +471,96 @@ class VideoComposer:
             elif bg_effect == "vignette_blur":
                 blur_str = "boxblur=50:50"
 
-            blur_base = (
-                f"[0:v]split=2[bg_in][fg_in];"
-                f"[bg_in]scale={w2}:{h2}:force_original_aspect_ratio=increase:flags=lanczos,"
-                f"crop={w2}:{h2},{blur_str}[bg];"
-                f"[fg_in]scale={w2}:{h2}:force_original_aspect_ratio=decrease:flags=lanczos[fg];"
-                f"[bg][fg]overlay=(W-w)/2:(H-h)/2[comp];"
-            )
-
             if not ken_burns:
-                vf = blur_base + f"[comp]scale={w}:{h}[vout]"
-            elif is_slide:
-                # Slide: blur arka plan + hareketli fg overlay
-                # blur_base'den [comp] çıktısını bg olarak kullan
+                # Sabit görsel: w x h blur arka plan + fg overlay
                 vf = (
                     f"[0:v]split=2[bg_in][fg_in];"
-                    f"[bg_in]scale={w2}:{h2}:force_original_aspect_ratio=increase:flags=lanczos,"
-                    f"crop={w2}:{h2},{blur_str},scale={w}:{h}:flags=lanczos[bg_blur];"
+                    f"[bg_in]scale={w}:{h}:force_original_aspect_ratio=increase:flags=lanczos,"
+                    f"crop={w}:{h},{blur_str},scale={w}:{h}:flags=lanczos[bg];"
                     f"[fg_in]scale={w}:{h}:force_original_aspect_ratio=decrease:flags=lanczos,"
                     f"pad={w}:{h}:(ow-iw)/2:(oh-ih)/2:black[fg];"
+                    f"[bg][fg]overlay=(W-w)/2:(H-h)/2[vout]"
                 )
-                if image_motion == "slide_top":
-                    slide_expr = f"if(gte(t\\,0)\\,-{h}+(t/{duration:.4f})*{h}\\,-{h})"
-                    vf += f"[bg_blur][fg]overlay=x=0:y={slide_expr}[vout]"
-                elif image_motion == "slide_bot":
-                    slide_expr = f"if(gte(t\\,0)\\,{h}-(t/{duration:.4f})*{h}\\,{h})"
-                    vf += f"[bg_blur][fg]overlay=x=0:y={slide_expr}[vout]"
-                elif image_motion == "slide_right":
-                    slide_expr = f"if(gte(t\\,0)\\,{w}-(t/{duration:.4f})*{w}\\,{w})"
-                    vf += f"[bg_blur][fg]overlay=x={slide_expr}:y=0[vout]"
-                else:  # slide_left
-                    slide_expr = f"if(gte(t\\,0)\\,-{w}+(t/{duration:.4f})*{w}\\,-{w})"
-                    vf += f"[bg_blur][fg]overlay=x={slide_expr}:y=0[vout]"
-            else:
-                # zoom_in, zoom_out, large_pan, full_pan — blur arka plan + zoompan
-                vf = blur_base + _build_zoompan_vf("[comp]")
-
-        elif bg_effect in ("gradient_tb", "gradient_lr"):
-            # Gradient: blur gibi split kullan — color source filter yok
-            # Arka plan: büyük scale + blur + drawbox ile gradient efekti
-            grad_blur = "boxblur=30:30"
-            grad_base = (
-                f"[0:v]split=2[bg_in][fg_in];"
-                f"[bg_in]scale={w2}:{h2}:force_original_aspect_ratio=increase:flags=lanczos,"
-                f"crop={w2}:{h2},{grad_blur},scale={w}:{h}:flags=lanczos[bg];"
-                f"[fg_in]scale={w2}:{h2}:force_original_aspect_ratio=decrease:flags=lanczos[fg];"
-                f"[bg][fg]overlay=(W-w)/2:(H-h)/2[comp];"
-            )
-            if not ken_burns:
-                vf = grad_base + f"[comp]scale={w}:{h}[vout]"
             elif is_slide:
-                vf = (
-                    f"[0:v]split=2[bg_in][fg_in];"
-                    f"[bg_in]scale={w2}:{h2}:force_original_aspect_ratio=increase:flags=lanczos,"
-                    f"crop={w2}:{h2},{grad_blur},scale={w}:{h}:flags=lanczos[bg_blur];"
-                    f"[fg_in]scale={w}:{h}:force_original_aspect_ratio=decrease:flags=lanczos,"
-                    f"pad={w}:{h}:(ow-iw)/2:(oh-ih)/2:black[fg];"
-                )
+                # Slide: blur arka plan (w x h) + fg kaydırma
                 if image_motion == "slide_top":
                     slide_expr = f"if(gte(t\\,0)\\,-{h}+(t/{duration:.4f})*{h}\\,-{h})"
-                    vf += f"[bg_blur][fg]overlay=x=0:y={slide_expr}[vout]"
+                    slide_part = f"[bg_blur][fg]overlay=x=0:y={slide_expr}[vout]"
                 elif image_motion == "slide_bot":
                     slide_expr = f"if(gte(t\\,0)\\,{h}-(t/{duration:.4f})*{h}\\,{h})"
-                    vf += f"[bg_blur][fg]overlay=x=0:y={slide_expr}[vout]"
+                    slide_part = f"[bg_blur][fg]overlay=x=0:y={slide_expr}[vout]"
                 elif image_motion == "slide_right":
                     slide_expr = f"if(gte(t\\,0)\\,{w}-(t/{duration:.4f})*{w}\\,{w})"
-                    vf += f"[bg_blur][fg]overlay=x={slide_expr}:y=0[vout]"
+                    slide_part = f"[bg_blur][fg]overlay=x={slide_expr}:y=0[vout]"
                 else:
                     slide_expr = f"if(gte(t\\,0)\\,-{w}+(t/{duration:.4f})*{w}\\,-{w})"
-                    vf += f"[bg_blur][fg]overlay=x={slide_expr}:y=0[vout]"
+                    slide_part = f"[bg_blur][fg]overlay=x={slide_expr}:y=0[vout]"
+                vf = (
+                    f"[0:v]split=2[bg_in][fg_in];"
+                    f"[bg_in]scale={w}:{h}:force_original_aspect_ratio=increase:flags=lanczos,"
+                    f"crop={w}:{h},{blur_str},scale={w}:{h}:flags=lanczos[bg_blur];"
+                    f"[fg_in]scale={w}:{h}:force_original_aspect_ratio=decrease:flags=lanczos,"
+                    f"pad={w}:{h}:(ow-iw)/2:(oh-ih)/2:black[fg];"
+                    + slide_part
+                )
             else:
-                vf = grad_base + _build_zoompan_vf("[comp]")
+                # zoom modlar: bg=blur w x h, fg=w2 x h2 zoompan → w x h, sonra bg üstüne overlay
+                zp = _build_zoompan_vf("[fg_big]").replace("[vout]", "[fg_zoomed]")
+                vf = (
+                    f"[0:v]split=2[bg_in][fg_in];"
+                    f"[bg_in]scale={w}:{h}:force_original_aspect_ratio=increase:flags=lanczos,"
+                    f"crop={w}:{h},{blur_str},scale={w}:{h}:flags=lanczos[bg];"
+                    f"[fg_in]scale={w2}:{h2}:force_original_aspect_ratio=decrease:flags=lanczos,"
+                    f"pad={w2}:{h2}:(ow-iw)/2:(oh-ih)/2:black[fg_big];"
+                    + zp +
+                    f"[bg][fg_zoomed]overlay=(W-w)/2:(H-h)/2[vout]"
+                )
+
+        elif bg_effect in ("gradient_tb", "gradient_lr"):
+            # Gradient: blur gibi split+overlay — color source filter yok
+            grad_blur = "boxblur=30:30"
+            if not ken_burns:
+                vf = (
+                    f"[0:v]split=2[bg_in][fg_in];"
+                    f"[bg_in]scale={w}:{h}:force_original_aspect_ratio=increase:flags=lanczos,"
+                    f"crop={w}:{h},{grad_blur},scale={w}:{h}:flags=lanczos[bg];"
+                    f"[fg_in]scale={w}:{h}:force_original_aspect_ratio=decrease:flags=lanczos,"
+                    f"pad={w}:{h}:(ow-iw)/2:(oh-ih)/2:black[fg];"
+                    f"[bg][fg]overlay=(W-w)/2:(H-h)/2[vout]"
+                )
+            elif is_slide:
+                if image_motion == "slide_top":
+                    slide_expr = f"if(gte(t\\,0)\\,-{h}+(t/{duration:.4f})*{h}\\,-{h})"
+                    slide_part = f"[bg_blur][fg]overlay=x=0:y={slide_expr}[vout]"
+                elif image_motion == "slide_bot":
+                    slide_expr = f"if(gte(t\\,0)\\,{h}-(t/{duration:.4f})*{h}\\,{h})"
+                    slide_part = f"[bg_blur][fg]overlay=x=0:y={slide_expr}[vout]"
+                elif image_motion == "slide_right":
+                    slide_expr = f"if(gte(t\\,0)\\,{w}-(t/{duration:.4f})*{w}\\,{w})"
+                    slide_part = f"[bg_blur][fg]overlay=x={slide_expr}:y=0[vout]"
+                else:
+                    slide_expr = f"if(gte(t\\,0)\\,-{w}+(t/{duration:.4f})*{w}\\,-{w})"
+                    slide_part = f"[bg_blur][fg]overlay=x={slide_expr}:y=0[vout]"
+                vf = (
+                    f"[0:v]split=2[bg_in][fg_in];"
+                    f"[bg_in]scale={w}:{h}:force_original_aspect_ratio=increase:flags=lanczos,"
+                    f"crop={w}:{h},{grad_blur},scale={w}:{h}:flags=lanczos[bg_blur];"
+                    f"[fg_in]scale={w}:{h}:force_original_aspect_ratio=decrease:flags=lanczos,"
+                    f"pad={w}:{h}:(ow-iw)/2:(oh-ih)/2:black[fg];"
+                    + slide_part
+                )
+            else:
+                # zoom modlar: bg=gradient blur w x h, fg=w2 x h2 zoompan → w x h
+                zp = _build_zoompan_vf("[fg_big]").replace("[vout]", "[fg_zoomed]")
+                vf = (
+                    f"[0:v]split=2[bg_in][fg_in];"
+                    f"[bg_in]scale={w}:{h}:force_original_aspect_ratio=increase:flags=lanczos,"
+                    f"crop={w}:{h},{grad_blur},scale={w}:{h}:flags=lanczos[bg];"
+                    f"[fg_in]scale={w2}:{h2}:force_original_aspect_ratio=decrease:flags=lanczos,"
+                    f"pad={w2}:{h2}:(ow-iw)/2:(oh-ih)/2:black[fg_big];"
+                    + zp +
+                    f"[bg][fg_zoomed]overlay=(W-w)/2:(H-h)/2[vout]"
+                )
 
         else:
             # Standart siyah arka plan
