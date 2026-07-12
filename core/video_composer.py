@@ -350,10 +350,8 @@ class VideoComposer:
         zoom_delta = intensity / total_frames
         max_zoom = 1.0 + intensity
 
-        # zoompan için kaynak çözünürlük: max_zoom kadar büyütülmüş, en az w+30%
-        _scale_factor = max(max_zoom + 0.05, 1.30)
-        w2 = int(w * _scale_factor / 2) * 2   # çift sayıya yuvarla
-        h2 = int(h * _scale_factor / 2) * 2
+        # zoompan için kaynak çözünürlük: 2x — zoompan sınır dışı kırpmayı önler
+        w2, h2 = w * 2, h * 2
 
         # bg_effect "blur" ise blur_bg de açık say
         use_blur = blur_bg or bg_effect in ("blur", "vignette_blur", "cinematic")
@@ -438,7 +436,7 @@ class VideoComposer:
                 zoom_clamp_out = f"max({zoom_expr_out}\\,1.0)"
                 return (
                     f"{input_label}zoompan=z='{zoom_clamp_out}':"
-                    f"x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)':d={total_frames}:s={w}x{h}[vout]"
+                    f"x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)':d=1:s={w}x{h}[vout]"
                 )
             elif image_motion == "large_pan":
                 # Güçlü pan: klip index'ine göre 8 yön, intensity*2
@@ -450,16 +448,15 @@ class VideoComposer:
                 zoom_clamp_lp = f"min({zoom_expr_lp}\\,{strong_max:.4f})"
                 return (
                     f"{input_label}zoompan=z='{zoom_clamp_lp}':"
-                    f"x='{pan_x_lp}':y='{pan_y_lp}':d={total_frames}:s={w}x{h}[vout]"
+                    f"x='{pan_x_lp}':y='{pan_y_lp}':d=1:s={w}x{h}[vout]"
                 )
             elif image_motion == "full_pan":
                 # Tam ekran yavaş yatay pan: sabit zoom=1.3, soldan sağa lineer
                 fp_zoom = 1.30
-                # x: frame 0'da 0, son frame'de iw*(1-1/zoom) — soldan sağa
                 fp_x = f"(on-1)/({total_frames}-1)*iw*(1-1/{fp_zoom:.2f})"
                 return (
                     f"{input_label}zoompan=z='{fp_zoom:.2f}':"
-                    f"x='{fp_x}':y='ih/2-(ih/{fp_zoom:.2f}/2)':d={total_frames}:s={w}x{h}[vout]"
+                    f"x='{fp_x}':y='ih/2-(ih/{fp_zoom:.2f}/2)':d=1:s={w}x{h}[vout]"
                 )
             else:
                 # zoom_in (varsayılan): 1.0'dan başlayıp büyüyor, merkeze sabit
@@ -467,7 +464,7 @@ class VideoComposer:
                 zoom_clamp_in = f"min({zoom_expr_in}\\,{max_zoom:.4f})"
                 return (
                     f"{input_label}zoompan=z='{zoom_clamp_in}':"
-                    f"x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)':d={total_frames}:s={w}x{h}[vout]"
+                    f"x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)':d=1:s={w}x{h}[vout]"
                 )
 
         # ── Slide mod mu? ──────────────────────────────────────────────────────
