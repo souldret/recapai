@@ -347,7 +347,10 @@ class VideoComposer:
         image_motion = self.settings.get("image_motion", "zoom_in")
 
         total_frames = max(1, int(duration * fps))
-        w2, h2 = w * 2, h * 2
+        # zoompan için kaynak çözünürlük: max_zoom kadar büyütülmüş, en az w+10%
+        _scale_factor = max(max_zoom + 0.05, 1.30)
+        w2 = int(w * _scale_factor / 2) * 2   # çift sayıya yuvarla
+        h2 = int(h * _scale_factor / 2) * 2
 
         zoom_delta = intensity / total_frames
         max_zoom = 1.0 + intensity
@@ -387,7 +390,7 @@ class VideoComposer:
             if bg_label:
                 # Blur/gradient arka planı zaten hazır; [comp] etiketini [bg] olarak kullan
                 return (
-                    f"[0:v]scale={w}:{h}:force_original_aspect_ratio=decrease,"
+                    f"[0:v]scale={w}:{h}:force_original_aspect_ratio=decrease:flags=lanczos,"
                     f"pad={w}:{h}:(ow-iw)/2:(oh-ih)/2:black[fg];"
                     f"{bg_label}[fg]overlay={overlay_xy}[vout]"
                 )
@@ -396,28 +399,28 @@ class VideoComposer:
                 if image_motion == "slide_top":
                     # Görsel w x h, ama pad alanı w x 2h: görsel altta; y=-h ile başlar
                     return (
-                        f"[0:v]scale={w}:{h}:force_original_aspect_ratio=decrease,"
+                        f"[0:v]scale={w}:{h}:force_original_aspect_ratio=decrease:flags=lanczos,"
                         f"pad={w}:{h}:(ow-iw)/2:(oh-ih)/2:black,"
                         f"pad={w}:{h*2}:0:0:black,"
                         f"crop={w}:{h}:0:if(gte(t\\,0)\\,{h}-(t/{duration:.4f})*{h}\\,{h})[vout]"
                     )
                 elif image_motion == "slide_bot":
                     return (
-                        f"[0:v]scale={w}:{h}:force_original_aspect_ratio=decrease,"
+                        f"[0:v]scale={w}:{h}:force_original_aspect_ratio=decrease:flags=lanczos,"
                         f"pad={w}:{h}:(ow-iw)/2:(oh-ih)/2:black,"
                         f"pad={w}:{h*2}:0:{h}:black,"
                         f"crop={w}:{h}:0:if(gte(t\\,0)\\,(t/{duration:.4f})*{h}\\,0)[vout]"
                     )
                 elif image_motion == "slide_right":
                     return (
-                        f"[0:v]scale={w}:{h}:force_original_aspect_ratio=decrease,"
+                        f"[0:v]scale={w}:{h}:force_original_aspect_ratio=decrease:flags=lanczos,"
                         f"pad={w}:{h}:(ow-iw)/2:(oh-ih)/2:black,"
                         f"pad={w*2}:{h}:{w}:0:black,"
                         f"crop={w}:{h}:if(gte(t\\,0)\\,{w}-(t/{duration:.4f})*{w}\\,{w}):0[vout]"
                     )
                 else:  # slide_left
                     return (
-                        f"[0:v]scale={w}:{h}:force_original_aspect_ratio=decrease,"
+                        f"[0:v]scale={w}:{h}:force_original_aspect_ratio=decrease:flags=lanczos,"
                         f"pad={w}:{h}:(ow-iw)/2:(oh-ih)/2:black,"
                         f"pad={w*2}:{h}:0:0:black,"
                         f"crop={w}:{h}:if(gte(t\\,0)\\,{w}-(t/{duration:.4f})*{w}\\,{w}):0[vout]"
@@ -482,9 +485,9 @@ class VideoComposer:
 
             blur_base = (
                 f"[0:v]split=2[bg_in][fg_in];"
-                f"[bg_in]scale={w2}:{h2}:force_original_aspect_ratio=increase,"
+                f"[bg_in]scale={w2}:{h2}:force_original_aspect_ratio=increase:flags=lanczos,"
                 f"crop={w2}:{h2},{blur_str}[bg];"
-                f"[fg_in]scale={w2}:{h2}:force_original_aspect_ratio=decrease[fg];"
+                f"[fg_in]scale={w2}:{h2}:force_original_aspect_ratio=decrease:flags=lanczos[fg];"
                 f"[bg][fg]overlay=(W-w)/2:(H-h)/2[comp];"
             )
 
@@ -495,9 +498,9 @@ class VideoComposer:
                 # blur_base'den [comp] çıktısını bg olarak kullan
                 vf = (
                     f"[0:v]split=2[bg_in][fg_in];"
-                    f"[bg_in]scale={w2}:{h2}:force_original_aspect_ratio=increase,"
-                    f"crop={w2}:{h2},{blur_str},scale={w}:{h}[bg_blur];"
-                    f"[fg_in]scale={w}:{h}:force_original_aspect_ratio=decrease,"
+                    f"[bg_in]scale={w2}:{h2}:force_original_aspect_ratio=increase:flags=lanczos,"
+                    f"crop={w2}:{h2},{blur_str},scale={w}:{h}:flags=lanczos[bg_blur];"
+                    f"[fg_in]scale={w}:{h}:force_original_aspect_ratio=decrease:flags=lanczos,"
                     f"pad={w}:{h}:(ow-iw)/2:(oh-ih)/2:black[fg];"
                 )
                 if image_motion == "slide_top":
@@ -518,7 +521,7 @@ class VideoComposer:
 
         elif bg_effect == "gradient_tb":
             grad_base = (
-                f"[0:v]scale={w}:{h}:force_original_aspect_ratio=decrease,"
+                f"[0:v]scale={w}:{h}:force_original_aspect_ratio=decrease:flags=lanczos,"
                 f"pad={w}:{h}:(ow-iw)/2:(oh-ih)/2:color=black@0[fg];"
                 f"color=c=0x0d1117:s={w}x{h}:rate={fps}:duration={duration}[grad];"
                 f"[grad][fg]overlay=(W-w)/2:(H-h)/2[comp];"
@@ -527,7 +530,7 @@ class VideoComposer:
                 vf = grad_base + f"[comp]scale={w}:{h}[vout]"
             elif is_slide:
                 vf = (
-                    f"[0:v]scale={w}:{h}:force_original_aspect_ratio=decrease,"
+                    f"[0:v]scale={w}:{h}:force_original_aspect_ratio=decrease:flags=lanczos,"
                     f"pad={w}:{h}:(ow-iw)/2:(oh-ih)/2:black[fg];"
                     f"color=c=0x0d1117:s={w}x{h}:rate={fps}:duration={duration}[grad_bg];"
                 )
@@ -549,7 +552,7 @@ class VideoComposer:
 
         elif bg_effect == "gradient_lr":
             grad_base = (
-                f"[0:v]scale={w}:{h}:force_original_aspect_ratio=decrease,"
+                f"[0:v]scale={w}:{h}:force_original_aspect_ratio=decrease:flags=lanczos,"
                 f"pad={w}:{h}:(ow-iw)/2:(oh-ih)/2:color=black@0[fg];"
                 f"color=c=0x1a1a2e:s={w}x{h}:rate={fps}:duration={duration}[grad];"
                 f"[grad][fg]overlay=(W-w)/2:(H-h)/2[comp];"
@@ -558,7 +561,7 @@ class VideoComposer:
                 vf = grad_base + f"[comp]scale={w}:{h}[vout]"
             elif is_slide:
                 vf = (
-                    f"[0:v]scale={w}:{h}:force_original_aspect_ratio=decrease,"
+                    f"[0:v]scale={w}:{h}:force_original_aspect_ratio=decrease:flags=lanczos,"
                     f"pad={w}:{h}:(ow-iw)/2:(oh-ih)/2:black[fg];"
                     f"color=c=0x1a1a2e:s={w}x{h}:rate={fps}:duration={duration}[grad_bg];"
                 )
@@ -582,7 +585,7 @@ class VideoComposer:
             # Standart siyah arka plan
             if not ken_burns:
                 vf = (
-                    f"[0:v]scale={w}:{h}:force_original_aspect_ratio=decrease,"
+                    f"[0:v]scale={w}:{h}:force_original_aspect_ratio=decrease:flags=lanczos,"
                     f"pad={w}:{h}:(ow-iw)/2:(oh-ih)/2:black[vout]"
                 )
             elif is_slide:
@@ -590,7 +593,7 @@ class VideoComposer:
             else:
                 # zoom_in, zoom_out, large_pan, full_pan — standart siyah arka plan
                 vf = (
-                    f"[0:v]scale={w2}:{h2}:force_original_aspect_ratio=decrease,"
+                    f"[0:v]scale={w2}:{h2}:force_original_aspect_ratio=decrease:flags=lanczos,"
                     f"pad={w2}:{h2}:(ow-iw)/2:(oh-ih)/2:black,"
                     + _build_zoompan_vf("")
                 )
