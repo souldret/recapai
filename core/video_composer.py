@@ -505,7 +505,7 @@ class VideoComposer:
                 )
             else:
                 # zoom modlar: bg=blur w x h, fg=w2 x h2 zoompan → w x h, sonra bg üstüne overlay
-                zp = _build_zoompan_vf("[fg_big]").replace("[vout]", "[fg_zoomed]")
+                zp = _build_zoompan_vf("[fg_big]").replace("[vout]", "[fg_zoomed]") + ";"
                 vf = (
                     f"[0:v]split=2[bg_in][fg_in];"
                     f"[bg_in]scale={w}:{h}:force_original_aspect_ratio=increase:flags=lanczos,"
@@ -551,7 +551,7 @@ class VideoComposer:
                 )
             else:
                 # zoom modlar: bg=gradient blur w x h, fg=w2 x h2 zoompan → w x h
-                zp = _build_zoompan_vf("[fg_big]").replace("[vout]", "[fg_zoomed]")
+                zp = _build_zoompan_vf("[fg_big]").replace("[vout]", "[fg_zoomed]") + ";"
                 vf = (
                     f"[0:v]split=2[bg_in][fg_in];"
                     f"[bg_in]scale={w}:{h}:force_original_aspect_ratio=increase:flags=lanczos,"
