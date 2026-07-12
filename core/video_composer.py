@@ -393,36 +393,27 @@ class VideoComposer:
                     f"{bg_label}[fg]overlay={overlay_xy}[vout]"
                 )
             else:
-                # color source yerine pad ile siyah arka plan — daha güvenilir
+                # Siyah arka plan: split ile ikiye bol, fg overlay ile kaydır
+                # (crop+t desteklenmiyor; split+overlay güvenilir)
+                vf_parts = (
+                    f"[0:v]split=2[bg_s][fg_s];"
+                    f"[bg_s]scale={w}:{h}:force_original_aspect_ratio=decrease:flags=lanczos,"
+                    f"pad={w}:{h}:(ow-iw)/2:(oh-ih)/2:black[bg_black];"
+                    f"[fg_s]scale={w}:{h}:force_original_aspect_ratio=decrease:flags=lanczos,"
+                    f"pad={w}:{h}:(ow-iw)/2:(oh-ih)/2:black[fg];"
+                )
                 if image_motion == "slide_top":
-                    # Görsel w x h, ama pad alanı w x 2h: görsel altta; y=-h ile başlar
-                    return (
-                        f"[0:v]scale={w}:{h}:force_original_aspect_ratio=decrease:flags=lanczos,"
-                        f"pad={w}:{h}:(ow-iw)/2:(oh-ih)/2:black,"
-                        f"pad={w}:{h*2}:0:0:black,"
-                        f"crop={w}:{h}:0:if(gte(t\\,0)\\,{h}-(t/{duration:.4f})*{h}\\,{h})[vout]"
-                    )
+                    slide_expr = f"if(gte(t\\,0)\\,-{h}+(t/{duration:.4f})*{h}\\,-{h})"
+                    return vf_parts + f"[bg_black][fg]overlay=x=0:y={slide_expr}[vout]"
                 elif image_motion == "slide_bot":
-                    return (
-                        f"[0:v]scale={w}:{h}:force_original_aspect_ratio=decrease:flags=lanczos,"
-                        f"pad={w}:{h}:(ow-iw)/2:(oh-ih)/2:black,"
-                        f"pad={w}:{h*2}:0:{h}:black,"
-                        f"crop={w}:{h}:0:if(gte(t\\,0)\\,(t/{duration:.4f})*{h}\\,0)[vout]"
-                    )
+                    slide_expr = f"if(gte(t\\,0)\\,{h}-(t/{duration:.4f})*{h}\\,{h})"
+                    return vf_parts + f"[bg_black][fg]overlay=x=0:y={slide_expr}[vout]"
                 elif image_motion == "slide_right":
-                    return (
-                        f"[0:v]scale={w}:{h}:force_original_aspect_ratio=decrease:flags=lanczos,"
-                        f"pad={w}:{h}:(ow-iw)/2:(oh-ih)/2:black,"
-                        f"pad={w*2}:{h}:{w}:0:black,"
-                        f"crop={w}:{h}:if(gte(t\\,0)\\,{w}-(t/{duration:.4f})*{w}\\,{w}):0[vout]"
-                    )
+                    slide_expr = f"if(gte(t\\,0)\\,{w}-(t/{duration:.4f})*{w}\\,{w})"
+                    return vf_parts + f"[bg_black][fg]overlay=x={slide_expr}:y=0[vout]"
                 else:  # slide_left
-                    return (
-                        f"[0:v]scale={w}:{h}:force_original_aspect_ratio=decrease:flags=lanczos,"
-                        f"pad={w}:{h}:(ow-iw)/2:(oh-ih)/2:black,"
-                        f"pad={w*2}:{h}:0:0:black,"
-                        f"crop={w}:{h}:if(gte(t\\,0)\\,{w}-(t/{duration:.4f})*{w}\\,{w}):0[vout]"
-                    )
+                    slide_expr = f"if(gte(t\\,0)\\,-{w}+(t/{duration:.4f})*{w}\\,-{w})"
+                    return vf_parts + f"[bg_black][fg]overlay=x={slide_expr}:y=0[vout]"
 
         # ── Zoompan ifadesi oluştur (image_motion'a göre) ─────────────────────
         def _build_zoompan_vf(input_label: str) -> str:
@@ -516,66 +507,40 @@ class VideoComposer:
                 # zoom_in, zoom_out, large_pan, full_pan — blur arka plan + zoompan
                 vf = blur_base + _build_zoompan_vf("[comp]")
 
-        elif bg_effect == "gradient_tb":
+        elif bg_effect in ("gradient_tb", "gradient_lr"):
+            # Gradient: blur gibi split kullan — color source filter yok
+            # Arka plan: büyük scale + blur + drawbox ile gradient efekti
+            grad_blur = "boxblur=30:30"
             grad_base = (
-                f"[0:v]scale={w}:{h}:force_original_aspect_ratio=decrease:flags=lanczos,"
-                f"pad={w}:{h}:(ow-iw)/2:(oh-ih)/2:color=black@0[fg];"
-                f"color=c=0x0d1117:s={w}x{h}:rate={fps}:duration={duration}[grad];"
-                f"[grad][fg]overlay=(W-w)/2:(H-h)/2[comp];"
+                f"[0:v]split=2[bg_in][fg_in];"
+                f"[bg_in]scale={w2}:{h2}:force_original_aspect_ratio=increase:flags=lanczos,"
+                f"crop={w2}:{h2},{grad_blur},scale={w}:{h}:flags=lanczos[bg];"
+                f"[fg_in]scale={w2}:{h2}:force_original_aspect_ratio=decrease:flags=lanczos[fg];"
+                f"[bg][fg]overlay=(W-w)/2:(H-h)/2[comp];"
             )
             if not ken_burns:
                 vf = grad_base + f"[comp]scale={w}:{h}[vout]"
             elif is_slide:
                 vf = (
-                    f"[0:v]scale={w}:{h}:force_original_aspect_ratio=decrease:flags=lanczos,"
+                    f"[0:v]split=2[bg_in][fg_in];"
+                    f"[bg_in]scale={w2}:{h2}:force_original_aspect_ratio=increase:flags=lanczos,"
+                    f"crop={w2}:{h2},{grad_blur},scale={w}:{h}:flags=lanczos[bg_blur];"
+                    f"[fg_in]scale={w}:{h}:force_original_aspect_ratio=decrease:flags=lanczos,"
                     f"pad={w}:{h}:(ow-iw)/2:(oh-ih)/2:black[fg];"
-                    f"color=c=0x0d1117:s={w}x{h}:rate={fps}:duration={duration}[grad_bg];"
                 )
                 if image_motion == "slide_top":
                     slide_expr = f"if(gte(t\\,0)\\,-{h}+(t/{duration:.4f})*{h}\\,-{h})"
-                    vf += f"[grad_bg][fg]overlay=x=0:y={slide_expr}[vout]"
+                    vf += f"[bg_blur][fg]overlay=x=0:y={slide_expr}[vout]"
                 elif image_motion == "slide_bot":
                     slide_expr = f"if(gte(t\\,0)\\,{h}-(t/{duration:.4f})*{h}\\,{h})"
-                    vf += f"[grad_bg][fg]overlay=x=0:y={slide_expr}[vout]"
+                    vf += f"[bg_blur][fg]overlay=x=0:y={slide_expr}[vout]"
                 elif image_motion == "slide_right":
                     slide_expr = f"if(gte(t\\,0)\\,{w}-(t/{duration:.4f})*{w}\\,{w})"
-                    vf += f"[grad_bg][fg]overlay=x={slide_expr}:y=0[vout]"
+                    vf += f"[bg_blur][fg]overlay=x={slide_expr}:y=0[vout]"
                 else:
                     slide_expr = f"if(gte(t\\,0)\\,-{w}+(t/{duration:.4f})*{w}\\,-{w})"
-                    vf += f"[grad_bg][fg]overlay=x={slide_expr}:y=0[vout]"
+                    vf += f"[bg_blur][fg]overlay=x={slide_expr}:y=0[vout]"
             else:
-                # zoom_in, zoom_out, large_pan, full_pan — gradient_tb + zoompan
-                vf = grad_base + _build_zoompan_vf("[comp]")
-
-        elif bg_effect == "gradient_lr":
-            grad_base = (
-                f"[0:v]scale={w}:{h}:force_original_aspect_ratio=decrease:flags=lanczos,"
-                f"pad={w}:{h}:(ow-iw)/2:(oh-ih)/2:color=black@0[fg];"
-                f"color=c=0x1a1a2e:s={w}x{h}:rate={fps}:duration={duration}[grad];"
-                f"[grad][fg]overlay=(W-w)/2:(H-h)/2[comp];"
-            )
-            if not ken_burns:
-                vf = grad_base + f"[comp]scale={w}:{h}[vout]"
-            elif is_slide:
-                vf = (
-                    f"[0:v]scale={w}:{h}:force_original_aspect_ratio=decrease:flags=lanczos,"
-                    f"pad={w}:{h}:(ow-iw)/2:(oh-ih)/2:black[fg];"
-                    f"color=c=0x1a1a2e:s={w}x{h}:rate={fps}:duration={duration}[grad_bg];"
-                )
-                if image_motion == "slide_top":
-                    slide_expr = f"if(gte(t\\,0)\\,-{h}+(t/{duration:.4f})*{h}\\,-{h})"
-                    vf += f"[grad_bg][fg]overlay=x=0:y={slide_expr}[vout]"
-                elif image_motion == "slide_bot":
-                    slide_expr = f"if(gte(t\\,0)\\,{h}-(t/{duration:.4f})*{h}\\,{h})"
-                    vf += f"[grad_bg][fg]overlay=x=0:y={slide_expr}[vout]"
-                elif image_motion == "slide_right":
-                    slide_expr = f"if(gte(t\\,0)\\,{w}-(t/{duration:.4f})*{w}\\,{w})"
-                    vf += f"[grad_bg][fg]overlay=x={slide_expr}:y=0[vout]"
-                else:
-                    slide_expr = f"if(gte(t\\,0)\\,-{w}+(t/{duration:.4f})*{w}\\,-{w})"
-                    vf += f"[grad_bg][fg]overlay=x={slide_expr}:y=0[vout]"
-            else:
-                # zoom_in, zoom_out, large_pan, full_pan — gradient_lr + zoompan
                 vf = grad_base + _build_zoompan_vf("[comp]")
 
         else:
