@@ -347,13 +347,13 @@ class VideoComposer:
         image_motion = self.settings.get("image_motion", "zoom_in")
 
         total_frames = max(1, int(duration * fps))
-        # zoompan için kaynak çözünürlük: max_zoom kadar büyütülmüş, en az w+10%
+        zoom_delta = intensity / total_frames
+        max_zoom = 1.0 + intensity
+
+        # zoompan için kaynak çözünürlük: max_zoom kadar büyütülmüş, en az w+30%
         _scale_factor = max(max_zoom + 0.05, 1.30)
         w2 = int(w * _scale_factor / 2) * 2   # çift sayıya yuvarla
         h2 = int(h * _scale_factor / 2) * 2
-
-        zoom_delta = intensity / total_frames
-        max_zoom = 1.0 + intensity
 
         # bg_effect "blur" ise blur_bg de açık say
         use_blur = blur_bg or bg_effect in ("blur", "vignette_blur", "cinematic")
