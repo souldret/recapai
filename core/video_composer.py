@@ -623,9 +623,21 @@ class VideoComposer:
             cmd = self._build_silent_clip_cmd(image_path, duration, vf, watermark_path if has_watermark else None)
 
         cmd.append(output_path)
+        # VF debug: ilk klipte log yaz
+        try:
+            import pathlib, datetime
+            log_dir = pathlib.Path(__file__).parent.parent / "logs"
+            log_dir.mkdir(exist_ok=True)
+            ts = datetime.datetime.now().strftime("%Y%m%d_%H%M%S_%f")
+            (log_dir / f"vf_{ts}.txt").write_text(
+                f"image_motion={image_motion}\nbg_effect={bg_effect}\nuse_blur={use_blur}\n\nVF:\n{vf}\n\nCMD:\n{' '.join(str(a) for a in cmd)}",
+                encoding="utf-8"
+            )
+        except Exception:
+            pass
         ret = self._run(cmd)
         if ret != 0:
-            logger.error("Klip oluşturulamadı: %s", output_path)
+            logger.error("Klip oluşturulamadı (rc=%d): %s", ret, output_path)
 
     def _build_silent_clip_cmd(
         self,
@@ -1058,7 +1070,19 @@ class VideoComposer:
             ret = process.returncode
             if ret != 0:
                 tail = "".join(stderr_lines[-20:])
-                logger.debug("FFmpeg stderr:\n%s", tail[-2000:])
+                logger.error("FFmpeg HATA (rc=%d): %s", ret, tail[-2000:])
+                # Hata detayını debug log dosyasına yaz
+                try:
+                    import pathlib, datetime
+                    log_dir = pathlib.Path(__file__).parent.parent / "logs"
+                    log_dir.mkdir(exist_ok=True)
+                    ts = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+                    (log_dir / f"ffmpeg_error_{ts}.log").write_text(
+                        f"CMD: {' '.join(str(a) for a in cmd)}\n\nSTDERR:\n{''.join(stderr_lines)}",
+                        encoding="utf-8"
+                    )
+                except Exception:
+                    pass
             return ret
         except Exception as exc:
             logger.error("FFmpeg çalıştırma hatası: %s", exc)
