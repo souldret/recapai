@@ -353,6 +353,9 @@ class VideoComposer:
         # zoompan için kaynak çözünürlük: 2x — zoompan sınır dışı kırpmayı önler
         w2, h2 = w * 2, h * 2
 
+        # zoompan fps limiti: 30fps üzerinde çok yavaş — içeriden sabitle
+        zoompan_fps = min(fps, 30)
+
         # bg_effect "blur" ise blur_bg de açık say
         use_blur = blur_bg or bg_effect in ("blur", "vignette_blur", "cinematic")
 
@@ -416,24 +419,26 @@ class VideoComposer:
                     return vf_parts + f"[bg_black][fg]overlay=x={slide_expr}:y=0[vout]"
 
         # ── Zoompan ifadesi oluştur (image_motion'a göre) ─────────────────────
+        # zoompan için frame sayısı: max 30fps ile hesapla (60fps çok yavaş)
+        zp_total_frames = max(1, int(duration * zoompan_fps))
+        zp_zoom_delta = intensity / zp_total_frames
+
         def _build_zoompan_vf(input_label: str) -> str:
             """
             Zoompan tabanlı vf parçası oluşturur.
             input_label: zoompan'ın alacağı giriş etiketi, ör. "[comp]" veya boş string (chain)
             """
             if image_motion == "zoom_out":
-                # max_zoom'dan başlayıp küçülüyor, merkeze sabit
-                zoom_expr_out = f"if(eq(on\\,1)\\,{max_zoom:.4f}\\,zoom)-{zoom_delta:.6f}"
+                zoom_expr_out = f"if(eq(on\\,1)\\,{max_zoom:.4f}\\,zoom)-{zp_zoom_delta:.6f}"
                 zoom_clamp_out = f"max({zoom_expr_out}\\,1.0)"
                 return (
                     f"{input_label}zoompan=z='{zoom_clamp_out}':"
                     f"x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)':d=1:s={w}x{h}[vout]"
                 )
             elif image_motion == "large_pan":
-                # Güçlü pan: klip index'ine göre 8 yön, intensity*2
                 pan_x_lp, pan_y_lp = _PAN_PRESETS[clip_index % len(_PAN_PRESETS)]
                 strong_intensity = min(intensity * 2, 0.40)
-                strong_delta = strong_intensity / total_frames
+                strong_delta = strong_intensity / zp_total_frames
                 strong_max = 1.0 + strong_intensity
                 zoom_expr_lp = f"if(eq(on\\,1)\\,1.0\\,zoom)+{strong_delta:.6f}"
                 zoom_clamp_lp = f"min({zoom_expr_lp}\\,{strong_max:.4f})"
@@ -442,16 +447,15 @@ class VideoComposer:
                     f"x='{pan_x_lp}':y='{pan_y_lp}':d=1:s={w}x{h}[vout]"
                 )
             elif image_motion == "full_pan":
-                # Tam ekran yavaş yatay pan: sabit zoom=1.3, soldan sağa lineer
                 fp_zoom = 1.30
-                fp_x = f"(on-1)/({total_frames}-1)*iw*(1-1/{fp_zoom:.2f})"
+                fp_x = f"(on-1)/({zp_total_frames}-1)*iw*(1-1/{fp_zoom:.2f})"
                 return (
                     f"{input_label}zoompan=z='{fp_zoom:.2f}':"
                     f"x='{fp_x}':y='ih/2-(ih/{fp_zoom:.2f}/2)':d=1:s={w}x{h}[vout]"
                 )
             else:
-                # zoom_in (varsayılan): 1.0'dan başlayıp büyüyor, merkeze sabit
-                zoom_expr_in = f"if(eq(on\\,1)\\,1.0\\,zoom)+{zoom_delta:.6f}"
+                # zoom_in
+                zoom_expr_in = f"if(eq(on\\,1)\\,1.0\\,zoom)+{zp_zoom_delta:.6f}"
                 zoom_clamp_in = f"min({zoom_expr_in}\\,{max_zoom:.4f})"
                 return (
                     f"{input_label}zoompan=z='{zoom_clamp_in}':"
@@ -504,14 +508,15 @@ class VideoComposer:
                     + slide_part
                 )
             else:
-                # zoom modlar: bg=blur w x h, fg=w2 x h2 zoompan → w x h, sonra bg üstüne overlay
+                # zoom modlar: bg=blur w x h, fg=w x h zoompan, sonra bg üstüne overlay
+                # w2/h2 yerine w/h: blur modda zoompan kaynagi daha kucuk, daha hizli
                 zp = _build_zoompan_vf("[fg_big]").replace("[vout]", "[fg_zoomed]") + ";"
                 vf = (
                     f"[0:v]split=2[bg_in][fg_in];"
                     f"[bg_in]scale={w}:{h}:force_original_aspect_ratio=increase:flags=lanczos,"
                     f"crop={w}:{h},{blur_str},scale={w}:{h}:flags=lanczos[bg];"
-                    f"[fg_in]scale={w2}:{h2}:force_original_aspect_ratio=decrease:flags=lanczos,"
-                    f"pad={w2}:{h2}:(ow-iw)/2:(oh-ih)/2:black[fg_big];"
+                    f"[fg_in]scale={w}:{h}:force_original_aspect_ratio=decrease:flags=lanczos,"
+                    f"pad={w}:{h}:(ow-iw)/2:(oh-ih)/2:black[fg_big];"
                     + zp +
                     f"[bg][fg_zoomed]overlay=(W-w)/2:(H-h)/2[vout]"
                 )
@@ -550,14 +555,14 @@ class VideoComposer:
                     + slide_part
                 )
             else:
-                # zoom modlar: bg=gradient blur w x h, fg=w2 x h2 zoompan → w x h
+                # zoom modlar: bg=gradient blur w x h, fg=w x h zoompan → w x h
                 zp = _build_zoompan_vf("[fg_big]").replace("[vout]", "[fg_zoomed]") + ";"
                 vf = (
                     f"[0:v]split=2[bg_in][fg_in];"
                     f"[bg_in]scale={w}:{h}:force_original_aspect_ratio=increase:flags=lanczos,"
                     f"crop={w}:{h},{grad_blur},scale={w}:{h}:flags=lanczos[bg];"
-                    f"[fg_in]scale={w2}:{h2}:force_original_aspect_ratio=decrease:flags=lanczos,"
-                    f"pad={w2}:{h2}:(ow-iw)/2:(oh-ih)/2:black[fg_big];"
+                    f"[fg_in]scale={w}:{h}:force_original_aspect_ratio=decrease:flags=lanczos,"
+                    f"pad={w}:{h}:(ow-iw)/2:(oh-ih)/2:black[fg_big];"
                     + zp +
                     f"[bg][fg_zoomed]overlay=(W-w)/2:(H-h)/2[vout]"
                 )
@@ -621,14 +626,15 @@ class VideoComposer:
         # Video filtresi (filter_complex)
         cmd += ["-filter_complex", vf, "-map", "[vout]"]
 
-        # Encoding ayarları
+        # Encoding ayarları — zoompan modlarda fps'i 30 ile sınırla (hız)
+        out_fps = zoompan_fps if not is_slide else fps
         cmd += [
             "-c:v", self._codec,
             "-preset", "fast",
             "-crf", "23",
             "-t", str(duration),
             "-pix_fmt", "yuv420p",
-            "-r", str(fps),
+            "-r", str(out_fps),
         ]
 
         if has_audio:
@@ -639,7 +645,7 @@ class VideoComposer:
             ]
         else:
             # Sessiz audio ekle
-            cmd = self._build_silent_clip_cmd(image_path, duration, vf, watermark_path if has_watermark else None)
+            cmd = self._build_silent_clip_cmd(image_path, duration, vf, watermark_path if has_watermark else None, out_fps=out_fps)
 
         cmd.append(output_path)
         # VF debug: ilk klipte log yaz
@@ -664,9 +670,10 @@ class VideoComposer:
         duration: float,
         vf: str,
         watermark_path: Optional[str] = None,
+        out_fps: Optional[int] = None,
     ) -> List[str]:
         """Sessiz video klibi için FFmpeg komutu."""
-        fps = self._fps
+        fps = out_fps if out_fps is not None else self._fps
         cmd = [
             "-y",
             "-loop", "1", "-framerate", str(fps), "-i", image_path,
