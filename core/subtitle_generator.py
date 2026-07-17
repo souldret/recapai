@@ -56,8 +56,9 @@ def generate_srt(chapter, output_path: str) -> str:
 
     lines: List[str] = []
     cursor = 0.0
+    srt_index = 0
 
-    for i, seg in enumerate(segments, start=1):
+    for seg in segments:
         text = (seg.text or "").strip()
         if not text:
             continue
@@ -67,8 +68,9 @@ def generate_srt(chapter, output_path: str) -> str:
 
         start_ts = _seconds_to_srt_ts(cursor)
         end_ts = _seconds_to_srt_ts(cursor + duration)
+        srt_index += 1
 
-        lines.append(str(i))
+        lines.append(str(srt_index))
         lines.append(f"{start_ts} --> {end_ts}")
         lines.append(text)
         lines.append("")
@@ -116,16 +118,30 @@ def generate_ass(chapter, output_path: str, style: Optional[Dict[str, Any]] = No
         "magenta": "&H00FF00FF",
     }
     def _hex_to_ass(hex_color: str) -> str:
-        """#RRGGBB veya renk adını ASS &H00BBGGRR formatına çevirir."""
-        if hex_color.startswith("#") and len(hex_color) == 7:
+        """#RRGGBB / #AARRGGBB veya renk adını ASS &HAABBGGRR formatına çevirir."""
+        if not isinstance(hex_color, str):
+            return "&H00FFFFFF"
+        hx = hex_color.strip()
+        if hx.startswith("#"):
+            body = hx[1:]
             try:
-                r = int(hex_color[1:3], 16)
-                g = int(hex_color[3:5], 16)
-                b = int(hex_color[5:7], 16)
-                return f"&H00{b:02X}{g:02X}{r:02X}"
+                if len(body) == 6:
+                    r = int(body[0:2], 16)
+                    g = int(body[2:4], 16)
+                    b = int(body[4:6], 16)
+                    return f"&H00{b:02X}{g:02X}{r:02X}"
+                if len(body) == 8:
+                    # Qt HexArgb: AARRGGBB
+                    a = int(body[0:2], 16)
+                    r = int(body[2:4], 16)
+                    g = int(body[4:6], 16)
+                    b = int(body[6:8], 16)
+                    # ASS alpha ters: 00=opak, FF=şeffaf
+                    ass_a = 255 - a
+                    return f"&H{ass_a:02X}{b:02X}{g:02X}{r:02X}"
             except ValueError:
                 pass
-        return color_map.get(hex_color.lower(), "&H00FFFFFF")
+        return color_map.get(hx.lower(), "&H00FFFFFF")
 
     primary_color = _hex_to_ass(color_name)
     outline_color = _hex_to_ass(stroke_color_name)

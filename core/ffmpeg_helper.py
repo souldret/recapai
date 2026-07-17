@@ -214,10 +214,14 @@ def concat_videos(input_paths: List[str], output_path: str, codec: str = "libx26
     Birden fazla video dosyasını birleştirir (concat demuxer).
     Tüm giriş dosyaları aynı codec/çözünürlükte olmalı.
     """
-    # Geçici concat listesi dosyası
+    # Geçici concat listesi dosyası (Windows path güvenli)
     list_file = Path(output_path).with_suffix(".concat.txt")
     try:
-        lines = [f"file '{p}'\n" for p in input_paths]
+        lines = []
+        for p in input_paths:
+            safe = str(Path(p).resolve()).replace("\\", "/")
+            safe = safe.replace("'", r"'\''")
+            lines.append(f"file '{safe}'\n")
         list_file.write_text("".join(lines), encoding="utf-8")
 
         args = [

@@ -113,10 +113,15 @@ class RenderWorker(QThread):
                 self.log.emit("Render iptal edildi.")
                 self.error.emit("Render kullanıcı tarafından iptal edildi.")
             else:
-                size_mb = 0.0
-                p = Path(result)
-                if p.exists():
-                    size_mb = p.stat().st_size / 1024 / 1024
+                out = Path(result)
+                if not out.exists() or out.stat().st_size <= 0:
+                    self.error.emit(
+                        "Render tamamlandı ama çıktı dosyası bulunamadı veya boş.\n"
+                        "FFmpeg loglarına (logs/ffmpeg_error_*.log) bakın."
+                    )
+                    return
+
+                size_mb = out.stat().st_size / 1024 / 1024
 
                 self.log.emit("─" * 50)
                 self.log.emit(f"Render tamamlandı!")

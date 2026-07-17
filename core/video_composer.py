@@ -66,6 +66,24 @@ _PAN_PRESETS = [
 ]
 
 
+def _parse_resolution(value: Any) -> tuple:
+    """
+    resolution ayarını (width, height) olarak normalize eder.
+    Desteklenen: [1920, 1080], (1920, 1080), "1920x1080", "1920×1080", "1920*1080"
+    """
+    if isinstance(value, (list, tuple)) and len(value) >= 2:
+        return int(value[0]), int(value[1])
+    if isinstance(value, str):
+        cleaned = value.strip().lower().replace("×", "x").replace("*", "x")
+        if "x" in cleaned:
+            left, right = cleaned.split("x", 1)
+            return int(left.strip()), int(right.strip())
+    raise ValueError(
+        f"Geçersiz resolution ayarı: {value!r}. "
+        "Beklenen: [1920, 1080] veya '1920x1080'."
+    )
+
+
 class VideoComposer:
     """
     FFmpeg kullanarak video birleştirir.
@@ -82,13 +100,22 @@ class VideoComposer:
         self.settings: Dict[str, Any] = {**DEFAULT_SETTINGS, **settings}
         # subtitle_style içindeki eksik anahtarları doldur
         default_sub = DEFAULT_SETTINGS["subtitle_style"].copy()
-        user_sub = self.settings.get("subtitle_style", {})
+        user_sub = self.settings.get("subtitle_style", {}) or {}
+        if not isinstance(user_sub, dict):
+            user_sub = {}
         self.settings["subtitle_style"] = {**default_sub, **user_sub}
 
-        self._width, self._height = self.settings["resolution"]
-        self._fps = self.settings["fps"]
-        self._codec = self.settings["codec"]
-        self._bitrate = self.settings["bitrate"]
+        self._width, self._height = _parse_resolution(self.settings.get("resolution", [1920, 1080]))
+        # libx264 yuv420p için çift boyut zorunlu
+        if self._width % 2:
+            self._width -= 1
+        if self._height % 2:
+            self._height -= 1
+        self._fps = int(self.settings.get("fps", 30) or 30)
+        if self._fps <= 0:
+            self._fps = 30
+        self._codec = self.settings.get("codec") or "libx264"
+        self._bitrate = self.settings.get("bitrate") or "8000k"
 
         # FFmpeg yolunu doğrula
         from core.ffmpeg_helper import get_ffmpeg_path
@@ -147,6 +174,11 @@ class VideoComposer:
             clip_paths = self._build_segment_clips(chapter, tmp_dir, _cb, _cancelled)
             if _cancelled():
                 return output_path
+            if not clip_paths:
+                raise RuntimeError(
+                    "Hiçbir video klibi oluşturulamadı. "
+                    "Görsel yollarını ve ses dosyalarını kontrol edin."
+                )
 
             # 2) Klipleri birleştir
             _cb(70, "—")
@@ -155,6 +187,8 @@ class VideoComposer:
             self._concat_clips(clip_paths, merged, _cancelled)
             if _cancelled():
                 return output_path
+            if not Path(merged).exists() or Path(merged).stat().st_size <= 0:
+                raise RuntimeError("Klip birleştirme başarısız: çıktı dosyası boş.")
 
             # 3) Altyazı ekle
             with_subs = merged
@@ -308,13 +342,24 @@ class VideoComposer:
 
             # Klip oluştur
             clip_out = str(tmp_dir / f"clip_{idx:04d}.mp4")
-            self._make_clip(img_path, audio_path, duration, clip_out, clip_index=idx)
+            try:
+                self._make_clip(img_path, audio_path, duration, clip_out, clip_index=idx)
+            except Exception as exc:
+                logger.error("Klip oluşturma istisnası (segment %d): %s", idx, exc)
 
             if Path(clip_out).exists() and Path(clip_out).stat().st_size > 0:
                 clip_paths.append(clip_out)
             else:
                 logger.warning("Klip oluşturulamadı: %s", clip_out)
 
+        if not clip_paths:
+            raise RuntimeError(
+                f"0/{total} klip üretilebildi. Görseller veya FFmpeg filtresi hatalı olabilir."
+            )
+        if len(clip_paths) < total:
+            logger.warning(
+                "Bazı klipler atlandı: %d/%d başarılı.", len(clip_paths), total
+            )
         return clip_paths
 
     def _make_clip(
@@ -641,11 +686,18 @@ class VideoComposer:
             cmd += [
                 "-map", f"{audio_index}:a",
                 "-c:a", "aac", "-b:a", "192k",
+                "-ar", "44100", "-ac", "2",
                 "-shortest",
             ]
         else:
             # Sessiz audio ekle
-            cmd = self._build_silent_clip_cmd(image_path, duration, vf, watermark_path if has_watermark else None, out_fps=out_fps)
+            cmd = self._build_silent_clip_cmd(
+                image_path,
+                duration,
+                vf,
+                watermark_path if has_watermark else None,
+                out_fps=out_fps,
+            )
 
         cmd.append(output_path)
         # VF debug: ilk klipte log yaz
@@ -680,14 +732,20 @@ class VideoComposer:
         ]
         if watermark_path and Path(watermark_path).exists():
             cmd += ["-i", watermark_path]
-        # Sessiz ses kaynağı her zaman son input; duration ile sınırla
-        cmd += ["-f", "lavfi", "-i", "aevalsrc=0:c=stereo:s=44100"]
+        # anullsrc: aevalsrc=0 AAC'de NaN/+Inf üretip loudnorm/xfade'i kırıyor
+        # Çok düşük genlikli sine de kullanılabilir; anullsrc en temiz sessizlik
+        cmd += [
+            "-f", "lavfi",
+            "-t", str(max(0.1, float(duration))),
+            "-i", "anullsrc=channel_layout=stereo:sample_rate=44100",
+        ]
         silent_audio_index = 2 if (watermark_path and Path(watermark_path).exists()) else 1
         cmd += [
             "-filter_complex", vf,
             "-map", "[vout]", "-map", f"{silent_audio_index}:a",
             "-c:v", self._codec, "-preset", "fast", "-crf", "23",
             "-c:a", "aac", "-b:a", "128k",
+            "-ar", "44100", "-ac", "2",
             "-t", str(duration),
             "-pix_fmt", "yuv420p",
             "-r", str(fps),
@@ -842,7 +900,7 @@ class VideoComposer:
             self._simple_concat(clip_paths, output_path)
             return
 
-        # Ses normalizasyonu — her klibi normalize et
+        # Ses normalizasyonu — her klibi normalize et (sessiz kliplerde atlanır)
         norm_dir = Path(output_path).parent
         normalized_clips: List[str] = []
         for i, cp in enumerate(clip_paths):
@@ -853,7 +911,17 @@ class VideoComposer:
                 normalized_clips.append(cp)  # başarısız olursa orijinali kullan
         clip_paths_to_use = normalized_clips
 
-        # Yığımlı birleştirme: 2'li xfade zinciri
+        # Geçiş süresi klipten uzun olamaz — aksi halde xfade offset bozulur
+        min_dur = min(durations) if durations else t_dur
+        safe_t_dur = min(float(t_dur), max(0.05, min_dur * 0.45))
+        if safe_t_dur < t_dur:
+            logger.warning(
+                "transition_duration %.2fs çok uzun (min klip %.2fs); %.2fs kullanılıyor.",
+                t_dur, min_dur, safe_t_dur,
+            )
+            t_dur = safe_t_dur
+
+        # Yığımlı birleştirme: xfade zinciri
         use_pool = (transition == "random") or isinstance(transition, list)
         result = self._xfade_chain(
             clip_paths_to_use, durations, xf_transition or "fade", t_dur,
@@ -871,15 +939,15 @@ class VideoComposer:
             "-b:v", self._bitrate,
             "-c:a", "aac",
             "-b:a", "192k",
+            "-ar", "44100", "-ac", "2",
             "-pix_fmt", "yuv420p",
             "-r", str(self._fps),
             output_path,
         ]
 
         ret = self._run(cmd)
-        if ret != 0:
+        if ret != 0 or not Path(output_path).exists() or Path(output_path).stat().st_size <= 0:
             # xfade başarısız — orijinal kliplerle simple concat'e dön
-            # (normalize edilmiş kliplerle değil: kısmi başarısızlıkta format uyumsuzluğu olabilir)
             logger.warning("xfade başarısız, orijinal kliplerle basit concat'e geçiliyor.")
             self._simple_concat(clip_paths, output_path)
 
@@ -941,16 +1009,53 @@ class VideoComposer:
             "filter": ";".join(fc_parts),
         }
 
+    def _clip_has_audible_audio(self, clip_path: str) -> bool:
+        """Sessiz klipleri tespit eder (loudnorm NaN üretmesin diye)."""
+        try:
+            result = subprocess.run(
+                [
+                    self._ffmpeg, "-hide_banner", "-i", clip_path,
+                    "-af", "volumedetect",
+                    "-f", "null", "-",
+                ],
+                capture_output=True, text=True, encoding="utf-8",
+                errors="replace", timeout=20,
+            )
+            mean = None
+            for line in (result.stderr or "").splitlines():
+                if "mean_volume:" in line:
+                    part = line.split("mean_volume:")[-1].strip().split()[0]
+                    mean = float(part)
+                    break
+            if mean is None:
+                return True
+            return mean > -50.0
+        except Exception as exc:
+            logger.debug("Ses seviyesi ölçülemedi (%s): %s", clip_path, exc)
+            return True
+
     def _normalize_clip_audio(self, clip_path: str, output_path: str) -> bool:
         """
         Ses seviyesini loudnorm filtresi ile normalize eder.
-        linear=true: tek geçişte lineer normalizasyon (2-pass gerekmez, hız öncelikli).
+        Sessiz / neredeyse sessiz kliplerde loudnorm NaN üretir → atlanır.
         """
+        try:
+            from core.ffmpeg_helper import get_media_duration
+            if get_media_duration(clip_path) < 0.25:
+                return False
+        except Exception:
+            pass
+
+        if not self._clip_has_audible_audio(clip_path):
+            logger.debug("Sessiz klip — loudnorm atlandı: %s", clip_path)
+            return False
+
         ret = self._run([
             "-y", "-i", clip_path,
             "-af", "loudnorm=I=-16:TP=-1.5:LRA=11:linear=true",
             "-c:v", "copy",
             "-c:a", "aac", "-b:a", "192k",
+            "-ar", "44100", "-ac", "2",
             output_path,
         ])
         return ret == 0 and Path(output_path).exists() and Path(output_path).stat().st_size > 0
@@ -1035,22 +1140,41 @@ class VideoComposer:
             shutil.copy2(main_path, output_path)
             return
 
-        # Tüm klipler aynı çözünürlük/fps'e dönüştür
+        # Tüm klipler aynı çözünürlük/fps/ses'e dönüştür
         tmp_dir = Path(output_path).parent
         normalized: List[str] = []
         for i, clip in enumerate(to_concat):
             norm_out = str(tmp_dir / f"bookend_norm_{i}.mp4")
+            vf = (
+                f"scale={self._width}:{self._height}:force_original_aspect_ratio=decrease,"
+                f"pad={self._width}:{self._height}:(ow-iw)/2:(oh-ih)/2:black,"
+                f"fps={self._fps},format=yuv420p"
+            )
+            # 1) Ses varsa: video scale + ses aformat
             ret = self._run([
                 "-y", "-i", clip,
-                "-vf", f"scale={self._width}:{self._height}:force_original_aspect_ratio=decrease,"
-                       f"pad={self._width}:{self._height}:(ow-iw)/2:(oh-ih)/2:black",
-                "-r", str(self._fps),
+                "-vf", vf,
+                "-af", "aformat=sample_rates=44100:channel_layouts=stereo",
                 "-c:v", self._codec, "-preset", "fast", "-crf", "23",
                 "-c:a", "aac", "-b:a", "192k",
-                "-pix_fmt", "yuv420p",
                 "-ar", "44100", "-ac", "2",
                 norm_out,
             ])
+            # 2) Ses yoksa: anullsrc ile sessiz ses ekle
+            if ret != 0 or not Path(norm_out).exists() or Path(norm_out).stat().st_size <= 0:
+                ret = self._run([
+                    "-y",
+                    "-i", clip,
+                    "-f", "lavfi",
+                    "-i", "anullsrc=channel_layout=stereo:sample_rate=44100",
+                    "-vf", vf,
+                    "-map", "0:v:0", "-map", "1:a:0",
+                    "-c:v", self._codec, "-preset", "fast", "-crf", "23",
+                    "-c:a", "aac", "-b:a", "192k",
+                    "-ar", "44100", "-ac", "2",
+                    "-shortest",
+                    norm_out,
+                ])
             if ret == 0 and Path(norm_out).exists() and Path(norm_out).stat().st_size > 0:
                 normalized.append(norm_out)
             else:
