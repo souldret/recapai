@@ -10,7 +10,8 @@ from typing import List, Optional
 from PyQt6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel, QPushButton,
     QFrame, QComboBox, QSplitter, QScrollArea, QTextEdit,
-    QFileDialog, QMessageBox, QSizePolicy, QSlider, QAbstractItemView
+    QFileDialog, QMessageBox, QSizePolicy, QSlider, QAbstractItemView,
+    QCheckBox,
 )
 from PyQt6.QtCore import Qt, QTimer, QSize
 from PyQt6.QtGui import QPixmap, QUndoStack, QUndoCommand
@@ -22,6 +23,7 @@ from ui.utils.icons import Icons
 logger = logging.getLogger(__name__)
 
 STYLES = [
+    ("fresh",      "Manhwa Fresh"),
     ("epic",       "Epik"),
     ("casual",     "Samimi"),
     ("funny",      "Mizahi"),
@@ -32,6 +34,13 @@ STYLES = [
 LENGTHS = ["short", "medium", "long"]
 LENGTH_LABELS = {"short": "Kısa", "medium": "Orta", "long": "Uzun"}
 LANGUAGES = [("tr", "Türkçe"), ("en", "İngilizce")]
+# Niş modülleri (PDF Prompt 2) — runtime'da list_niches ile de doldurulabilir
+NICHES = [
+    ("power_fantasy", "Isekai / Power Fantasy"),
+    ("romance",       "Romantik / Duygusal"),
+    ("dark_action",   "Karanlık Aksiyon / İntikam"),
+    ("comedy",        "Komedi / Slice of Life"),
+]
 
 
 # ── Undo Command ───────────────────────────────────────────────────────────────
@@ -378,7 +387,11 @@ class ScriptPage(QWidget):
         self.style_combo = QComboBox()
         for key, label in STYLES:
             self.style_combo.addItem(label, key)
-        self.style_combo.setMinimumWidth(130)
+        self.style_combo.setMinimumWidth(140)
+        # Varsayılan: Manhwa Fresh
+        idx_fresh = self.style_combo.findData("fresh")
+        if idx_fresh >= 0:
+            self.style_combo.setCurrentIndex(idx_fresh)
         row1.addWidget(self.style_combo)
 
         row1.addStretch()
@@ -388,6 +401,26 @@ class ScriptPage(QWidget):
         row1b = QHBoxLayout()
         row1b.setContentsMargins(0, 0, 0, 0)
         row1b.setSpacing(10)
+
+        # Niş (Manhwa Fresh Prompt 2)
+        row1b.addWidget(QLabel("Niş:"))
+        self.niche_combo = QComboBox()
+        self.niche_combo.setMinimumWidth(190)
+        self.niche_combo.setToolTip(
+            "Manhwa türüne göre ton: power fantasy, romance, dark action, comedy."
+        )
+        for key, label in NICHES:
+            self.niche_combo.addItem(label, key)
+        # list_niches ile zenginleştir (varsa)
+        try:
+            from core.script_generator import list_niches
+            for n in list_niches():
+                idx = self.niche_combo.findData(n["id"])
+                if idx >= 0 and n.get("description"):
+                    self.niche_combo.setItemData(idx, n["description"], Qt.ItemDataRole.ToolTipRole)
+        except Exception:
+            pass
+        row1b.addWidget(self.niche_combo)
 
         # Uzunluk
         row1b.addWidget(QLabel("Uzunluk:"))
@@ -410,8 +443,16 @@ class ScriptPage(QWidget):
         self.lang_combo = QComboBox()
         for key, label in LANGUAGES:
             self.lang_combo.addItem(label, key)
-        self.lang_combo.setMinimumWidth(130)
+        self.lang_combo.setMinimumWidth(110)
         row1b.addWidget(self.lang_combo)
+
+        # Chapter 1 Hook (Prompt 3)
+        self.hook_check = QCheckBox("Ch.1 Hook")
+        self.hook_check.setToolTip(
+            "Serinin ilk bölümüyse açılış cümlesini güçlendirir (Prompt 3).\n"
+            "Bölüm 2+ için kapalı bırakın."
+        )
+        row1b.addWidget(self.hook_check)
 
         row1b.addStretch()
         vbox.addLayout(row1b)
@@ -574,6 +615,12 @@ class ScriptPage(QWidget):
         if chapter:
             state.current_chapter = chapter
             self._load_segments(chapter)
+            # İlk bölüm sezgisine göre hook kutusunu öner
+            try:
+                from core.script_generator import _is_first_chapter
+                self.hook_check.setChecked(_is_first_chapter(chapter))
+            except Exception:
+                pass
 
     # ── Segment Loading ────────────────────────────────────────────
 
@@ -670,12 +717,18 @@ class ScriptPage(QWidget):
             return
 
         model = self.model_combo.currentData() or "anthropic/claude-3.5-sonnet"
-        style = self.style_combo.currentData() or "epic"
+        style = self.style_combo.currentData() or "fresh"
         length = LENGTHS[self.length_slider.value()]
         language = self.lang_combo.currentData() or "tr"
+        niche = self.niche_combo.currentData() or "power_fantasy"
+        # Checkbox işaretliyse True; değilse None (otomatik sezgi)
+        use_hook = True if self.hook_check.isChecked() else None
 
         from ui.workers.script_worker import ScriptWorker
-        self._worker = ScriptWorker(chapter, model, api_key, style, length, language)
+        self._worker = ScriptWorker(
+            chapter, model, api_key, style, length, language,
+            niche=niche, use_hook=use_hook,
+        )
         self._worker.chunk_received.connect(self._on_chunk)
         self._worker.progress.connect(self._on_progress)
         self._worker.finished.connect(self._on_generation_finished)
@@ -684,7 +737,11 @@ class ScriptPage(QWidget):
         self._clear_cards()
         self.btn_generate.setEnabled(False)
         self.btn_stop.setEnabled(True)
-        self.lbl_stream.setText("<span style='color:#6366f1;'><b>ÜRETİLİYOR:</b> Script yazılıyor...</span>")
+        hook_note = " + Ch.1 Hook" if use_hook else ""
+        self.lbl_stream.setText(
+            f"<span style='color:#6366f1;'><b>ÜRETİLİYOR:</b> "
+            f"Manhwa Fresh · {self.niche_combo.currentText()}{hook_note}...</span>"
+        )
         self.ctx.app_state.status_message.emit("Script üretimi başladı…")
         self._autosave_timer.start()
         self._worker.start()
@@ -772,13 +829,16 @@ class ScriptPage(QWidget):
             return
 
         model = self.model_combo.currentData() or "anthropic/claude-3.5-sonnet"
-        style = self.style_combo.currentData() or "epic"
+        style = self.style_combo.currentData() or "fresh"
         language = self.lang_combo.currentData() or "tr"
         length = LENGTHS[self.length_slider.value()]
+        niche = self.niche_combo.currentData() or "power_fantasy"
         idx = self._cards.index(card)
 
         from ui.workers.script_worker import RegenerateSegmentWorker
-        self._regen_worker = RegenerateSegmentWorker(chapter, idx, model, api_key, style, language, length)
+        self._regen_worker = RegenerateSegmentWorker(
+            chapter, idx, model, api_key, style, language, length, niche=niche,
+        )
         self._regen_worker.finished.connect(lambda i, s: self._on_regen_done(i, s))
         self._regen_worker.error.connect(lambda m: QMessageBox.critical(self, "Hata", m))
         card.btn_regen.setEnabled(False)

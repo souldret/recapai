@@ -590,7 +590,7 @@ class HomePage(QWidget):
             project=project, chapter=chapter,
             render_settings=render_settings, render_output=render_output,
             api_key=api_key, vision_model=vision_model, script_model=script_model,
-            script_style="narrator", script_length="medium", script_language="tr",
+            script_style="fresh", script_length="medium", script_language="tr",
             tts_engine=tts_engine, tts_voice=tts_voice, audio_dir=audio_dir,
         )
         self._pipeline_worker.stage_started.connect(self._on_pipeline_stage_started)

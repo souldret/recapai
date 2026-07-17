@@ -22,6 +22,10 @@ LANGUAGE_LABELS = {"tr": "Türkçe", "en": "İngilizce"}
 # 40 panel × ~120 token = ~4800 token çıktı → her modelde güvenli.
 CHUNK_SIZE = 40
 
+# Manhwa Fresh niş modülleri (PDF Prompt 2)
+DEFAULT_NICHE = "power_fantasy"
+VALID_NICHES = ("power_fantasy", "romance", "dark_action", "comedy")
+
 
 def _load_prompts() -> dict:
     try:
@@ -29,6 +33,73 @@ def _load_prompts() -> dict:
     except Exception as exc:
         logger.warning("prompts.json yüklenemedi: %s", exc)
         return {}
+
+
+def list_niches() -> List[dict]:
+    """UI için niş modül listesi: [{id, label, description}, ...]."""
+    prompts = _load_prompts()
+    niches = prompts.get("script_niches", {})
+    result = []
+    for key in VALID_NICHES:
+        data = niches.get(key, {})
+        if isinstance(data, dict):
+            result.append({
+                "id": key,
+                "label": data.get("label", key),
+                "description": data.get("description", ""),
+            })
+        else:
+            result.append({"id": key, "label": key, "description": ""})
+    return result
+
+
+def _resolve_niche_prompt(prompts: dict, niche: str) -> str:
+    niches = prompts.get("script_niches", {})
+    key = niche if niche in niches else DEFAULT_NICHE
+    data = niches.get(key, {})
+    if isinstance(data, dict):
+        return data.get("prompt", "")
+    return str(data) if data else ""
+
+
+def _is_first_chapter(chapter: Chapter) -> bool:
+    """
+    Bölümün serinin ilk bölümü olup olmadığını tahmin eder.
+    name / order / id üzerinden basit sezgisel kontrol.
+    """
+    name = (getattr(chapter, "name", "") or "").lower()
+    # Açık isim kalıpları
+    first_patterns = (
+        r"\b(ch(apter)?\s*0*1)\b",
+        r"\b(bölüm\s*0*1)\b",
+        r"\b(bolum\s*0*1)\b",
+        r"\b(ep(isode)?\s*0*1)\b",
+        r"\b(part\s*0*1)\b",
+        r"^1\b",
+        r"\b#0*1\b",
+    )
+    for pat in first_patterns:
+        if re.search(pat, name, re.IGNORECASE):
+            return True
+
+    order = getattr(chapter, "order", None)
+    if order is not None:
+        try:
+            if int(order) <= 1:
+                return True
+        except (TypeError, ValueError):
+            pass
+
+    # index alanı
+    index = getattr(chapter, "index", None)
+    if index is not None:
+        try:
+            if int(index) <= 1:
+                return True
+        except (TypeError, ValueError):
+            pass
+
+    return False
 
 
 def _sanitize_characters(chars: List[str], language: str = "tr") -> List[str]:
@@ -136,29 +207,34 @@ class ScriptGenerator:
         self,
         chapter: Chapter,
         model: str,
-        style: str = "epic",
+        style: str = "fresh",
         length: str = "medium",
         language: str = "tr",
+        niche: str = DEFAULT_NICHE,
+        use_hook: Optional[bool] = None,
         stream_callback: Optional[Callable[[str], None]] = None,
     ) -> List[SegmentData]:
         """
         chapter.analysis_data kullanarak segment listesi üretir.
+        Manhwa Fresh 3-katmanlı prompt sistemi:
+          1) Universal Compression Engine
+          2) Niche module (power_fantasy / romance / dark_action / comedy)
+          3) Chapter-1 hook (opsiyonel)
+
         Görsel sayısı CHUNK_SIZE'ı aşarsa otomatik olarak parça parça üretir.
 
         Args:
             chapter: Hedef bölüm.
             model: LLM modeli ID.
-            style: Stil anahtarı (epic/casual/funny/mysterious/narrator).
+            style: Stil anahtarı (fresh/epic/casual/...).
             length: Uzunluk anahtarı (short/medium/long).
             language: Dil kodu (tr/en).
-            stream_callback: Her token için çağrılacak fonksiyon (metin parçası).
+            niche: Niş modül anahtarı.
+            use_hook: True/False zorla; None ise ilk bölüm sezgisi.
+            stream_callback: Durum mesajı callback'i.
 
         Returns:
             SegmentData listesi.
-
-        Raises:
-            ValueError: Analiz verisi yoksa.
-            OpenRouterError: API hatası.
         """
         if not chapter.analysis_data:
             raise ValueError(
@@ -166,22 +242,29 @@ class ScriptGenerator:
                 "Önce AI Analiz sayfasından analiz yapın."
             )
 
+        if use_hook is None:
+            use_hook = _is_first_chapter(chapter)
+
         total_images = len(chapter.images)
+        logger.info(
+            "Script üretimi: style=%s niche=%s hook=%s length=%s lang=%s images=%d",
+            style, niche, use_hook, length, language, total_images,
+        )
 
         if total_images <= CHUNK_SIZE:
-            # ── Küçük bölüm: tek çağrı ──────────────────────────────
             segments = self._generate_range(
                 chapter=chapter,
                 model=model,
                 style=style,
                 length=length,
                 language=language,
+                niche=niche,
+                use_hook=use_hook,
                 start=0,
                 end=total_images,
                 stream_callback=stream_callback,
             )
         else:
-            # ── Büyük bölüm: chunk'lara böl ─────────────────────────
             chunks = list(range(0, total_images, CHUNK_SIZE))
             total_chunks = len(chunks)
             logger.info(
@@ -199,12 +282,16 @@ class ScriptGenerator:
                     stream_callback(
                         f"\n[Bölüm {chunk_i + 1}/{total_chunks}: Panel {start + 1}-{end}]\n"
                     )
+                # Hook sadece ilk chunk'ta (seri açılışı)
+                chunk_hook = bool(use_hook) and chunk_i == 0
                 chunk_segments = self._generate_range(
                     chapter=chapter,
                     model=model,
                     style=style,
                     length=length,
                     language=language,
+                    niche=niche,
+                    use_hook=chunk_hook,
                     start=start,
                     end=end,
                     stream_callback=stream_callback,
@@ -231,6 +318,8 @@ class ScriptGenerator:
         language: str,
         start: int,
         end: int,
+        niche: str = DEFAULT_NICHE,
+        use_hook: bool = False,
         stream_callback: Optional[Callable[[str], None]] = None,
     ) -> List[SegmentData]:
         """
@@ -241,22 +330,24 @@ class ScriptGenerator:
         stream_callback varsa sadece durum mesajları için kullanılır.
         """
         panel_count = end - start
-        # Her panel için ortalama ~120 token; long stil 1.8x; min 2000, max 8000
-        length_multiplier = 1.8 if length == "long" else 1.0
+        # short daha kompakt; long daha geniş
+        length_multiplier = {"short": 0.85, "medium": 1.0, "long": 1.6}.get(length, 1.0)
         max_tokens = min(8000, max(2000, int(panel_count * 120 * length_multiplier)))
 
-        prompt = self._build_prompt_for_range(chapter, style, length, language, start, end)
+        prompt = self._build_prompt_for_range(
+            chapter, style, length, language, start, end,
+            niche=niche, use_hook=use_hook,
+        )
         messages = [{"role": "user", "content": prompt}]
 
         logger.info(
-            "Aralık üretimi: panel %d-%d, max_tokens=%d",
-            start + 1, end, max_tokens,
+            "Aralık üretimi: panel %d-%d, niche=%s hook=%s max_tokens=%d",
+            start + 1, end, niche, use_hook, max_tokens,
         )
 
         # Streaming KULLANMA — JSON chunk'lar halinde gelince parse başarısız olur.
-        # stream_callback sadece durum mesajı için çağrılır, LLM çıktısı için değil.
         result = self._client.chat_completion(
-            model, messages, temperature=0.8, max_tokens=max_tokens,
+            model, messages, temperature=0.75, max_tokens=max_tokens,
         )
         full_text = result["content"]
         logger.debug(
@@ -264,7 +355,6 @@ class ScriptGenerator:
             len(full_text), result.get("usage", {}).get("total_tokens", "?"),
         )
 
-        # Üretilen metni UI'ya aktar (JSON olduğu için çok büyük olabilir, özet yeterli)
         if stream_callback:
             stream_callback(f" [{panel_count} panel tamamlandı]\n")
 
@@ -296,12 +386,19 @@ class ScriptGenerator:
     # ── Prompt ────────────────────────────────────────────────────
 
     def _build_prompt(
-        self, chapter: Chapter, style: str, length: str, language: str
+        self,
+        chapter: Chapter,
+        style: str,
+        length: str,
+        language: str,
+        niche: str = DEFAULT_NICHE,
+        use_hook: bool = False,
     ) -> str:
         """Tüm görseller için prompt üretir (geriye dönük uyumluluk)."""
         return self._build_prompt_for_range(
             chapter, style, length, language,
             start=0, end=len(chapter.images),
+            niche=niche, use_hook=use_hook,
         )
 
     def _build_prompt_for_range(
@@ -312,9 +409,11 @@ class ScriptGenerator:
         language: str,
         start: int,
         end: int,
+        niche: str = DEFAULT_NICHE,
+        use_hook: bool = False,
     ) -> str:
         """
-        chapter.images[start:end] aralığı için prompt üretir.
+        chapter.images[start:end] aralığı için 3-katmanlı Manhwa Fresh prompt üretir.
         image_index değerleri orijinal (global) indeksleri yansıtır.
         """
         prompts = _load_prompts()
@@ -322,11 +421,16 @@ class ScriptGenerator:
         styles = prompts.get("script_styles", {})
         lengths = prompts.get("script_lengths", {})
 
+        if style not in styles:
+            style = "fresh" if "fresh" in styles else style
         style_desc = styles.get(style, style)
         length_desc = lengths.get(length, length)
         lang_label = LANGUAGE_LABELS.get(language, language)
 
-        # Sadece istenen aralıktaki panellerin analiz verisini ekle
+        prompt_1 = prompts.get("script_prompt_1_universal", "")
+        niche_module = _resolve_niche_prompt(prompts, niche)
+        hook_layer = prompts.get("script_prompt_3_hook", "") if use_hook else ""
+
         analysis_lines = []
         for i in range(start, end):
             key = str(i)
@@ -339,23 +443,30 @@ class ScriptGenerator:
             chars     = ", ".join(_sanitize_characters(data.get("characters", []), language))
             dialogues = "; ".join(data.get("dialogues", [])[:2])
             mood      = data.get("mood", "")
+            setting   = data.get("setting", "")
+            important = data.get("important", None)
             line = (
                 f'Panel {i + 1} (image_index={i}): '
                 f'Sahne: {scene}. Aksiyon: {action}. '
                 f'Karakterler: {chars}. '
                 f'Diyalog: {dialogues}. Atmosfer: {mood}.'
             )
+            if setting:
+                line += f" Mekan: {setting}."
+            if important is True:
+                line += " [ÖNEMLİ BEAT]"
             analysis_lines.append(line)
 
         analysis_data = "\n".join(analysis_lines)
 
-        # str.format() YERİNE replace() kullan —
-        # template içindeki JSON örneklerindeki {..} parantezleri
-        # str.format() tarafından placeholder olarak yorumlanır ve KeyError verir.
+        # str.format() YERİNE replace() — JSON örneklerindeki {..} KeyError vermesin
         result = template
         result = result.replace("{language}",      lang_label)
         result = result.replace("{style_desc}",    style_desc)
         result = result.replace("{length_desc}",   length_desc)
+        result = result.replace("{prompt_1}",      prompt_1)
+        result = result.replace("{niche_module}",  niche_module)
+        result = result.replace("{hook_layer}",    hook_layer)
         result = result.replace("{analysis_data}", analysis_data)
         return result
 
@@ -385,23 +496,13 @@ class ScriptGenerator:
         chapter: Chapter,
         segment_index: int,
         model: str,
-        style: str = "epic",
+        style: str = "fresh",
         language: str = "tr",
         length: str = "medium",
+        niche: str = DEFAULT_NICHE,
     ) -> SegmentData:
         """
-        Tek bir segmenti yeniden üretir.
-
-        Args:
-            chapter: Hedef bölüm.
-            segment_index: Segment listesindeki indeks.
-            model: LLM modeli ID.
-            style: Stil anahtarı.
-            language: Dil kodu.
-            length: Uzunluk seçeneği.
-
-        Returns:
-            Güncellenmiş SegmentData.
+        Tek bir segmenti yeniden üretir (Manhwa Fresh kurallarıyla).
         """
         if segment_index < 0 or segment_index >= len(chapter.segments):
             raise IndexError(f"Geçersiz segment indeksi: {segment_index}")
@@ -412,11 +513,12 @@ class ScriptGenerator:
 
         prompts = _load_prompts()
         styles = prompts.get("script_styles", {})
+        if style not in styles:
+            style = "fresh" if "fresh" in styles else style
         style_desc = styles.get(style, style)
-        
+
         lengths = prompts.get("script_lengths", {})
         length_desc = lengths.get(length, length)
-
         lang_label = LANGUAGE_LABELS.get(language, language)
 
         scene = analysis.get("scene", "")
@@ -425,59 +527,54 @@ class ScriptGenerator:
         dialogues = "; ".join(analysis.get("dialogues", [])[:2])
         mood = analysis.get("mood", "")
 
-        # Komşu segmentleri bağlam olarak al — anlatı sürekliliği için
+        # Komşu segmentler — anlatı sürekliliği
         prev_text = ""
         next_text = ""
         if segment_index > 0:
-            prev_seg = chapter.segments[segment_index - 1]
-            prev_text = prev_seg.text
+            prev_text = chapter.segments[segment_index - 1].text
         if segment_index < len(chapter.segments) - 1:
-            next_seg = chapter.segments[segment_index + 1]
-            next_text = next_seg.text
+            next_text = chapter.segments[segment_index + 1].text
 
         context_block = ""
         if prev_text:
             context_block += f"\n[ÖNCEKİ SAHNE — senin metnin bu sahnenin hemen DEVAMI olmalı]:\n\"{prev_text}\"\n"
         if next_text:
             context_block += f"\n[SONRAKİ SAHNE — senin metnin bu sahneye doğal bir köprü kurmalı]:\n\"{next_text}\"\n"
+        if not context_block:
+            context_block = "(Bağlam yok — tek segment.)"
 
-        prompt = (
-            f"Sen deneyimli, akıcı ve sürükleyici bir manhwa recap anlatıcısısın.\n"
-            f"Aşağıdaki TEK panel için {lang_label} dilinde metin yaz.\n"
-            f"\n"
-            f"STİL (HARFİYEN UY): {style_desc}\n"
-            f"UZUNLUK (HARFİYEN UY): {length_desc}\n"
-            f"\n"
-            f"━━━ EN KRİTİK KURAL: GÖRSELİ BETIMLEME, HİKAYEYİ ANLAT ━━━\n"
-            f"KÖTÜ (görsel tasvir — ASLA): 'A cloaked figure stands before an energy orb in a dim setting...'\n"
-            f"İYİ (hikaye anlatımı — BÖYLE): 'He sensed it before he saw it — they were no longer alone.'\n"
-            f"Paneldeki görseli tarif etme. O sahnenin ÖYKÜSEL ANLAMINI, gerilimini, duygusunu anlat.\n"
-            f"\n"
-            f"ANLATICI AKIŞ:\n"
-            f"Bu panel daha büyük bir hikayenin parçası. Sıfırdan başlama — önceki sahneden devam et, sonrakine köprü kur.\n"
-            f"{context_block}\n"
-            f"KURALLAR:\n"
-            f"- ÜÇÜNCÜ ŞAHIS: 'Ben'/'I' ASLA.\n"
-            f"- DOLAYLI ANLATIM: Diyalogları tırnak içinde ASLA yazma; eylem/düşünce/niyet olarak yedir.\n"
-            f"- İSİMLENDİRME: 'Bir adam', 'A man', 'A burly figure', 'A cloaked figure' KESİNLİKLE YASAK. İsim yoksa bağlamsal unvan: 'O', 'Savaşçı', 'He', 'The hooded one'.\n"
-            f"- BETİMLEME: Dış görünüş (saç, kıyafet) betimleme — sadece hikaye anlat.\n"
-            f"- SAYI: Tüm sayıları yazıyla yaz.\n"
-            f"- SFX YASAK: Ses efektleri metne girmesin.\n"
-            f"- BÜYÜK HARF: Tümü büyük harfli kelime kullanma.\n"
-            f"\nPanel:\n"
-            f"Sahne: {scene}\n"
-            f"Aksiyon: {action}\n"
-            f"Karakterler: {chars}\n"
-            f"Diyalog: {dialogues}\n"
-            f"Atmosfer: {mood}\n"
-            f"\nSADECE {lang_label} dilinde düz metin yaz. JSON veya tırnak işareti kullanma."
-        )
+        template = prompts.get("script_regenerate", "")
+        if not template:
+            # Minimal fallback
+            template = (
+                "Manhwa Fresh recap. Dil: {language}. Stil: {style_desc}. Uzunluk: {length_desc}.\n"
+                "{prompt_1}\n{niche_module}\n{context_block}\n"
+                "Sahne: {scene}\nAksiyon: {action}\nKarakterler: {chars}\n"
+                "Diyalog: {dialogues}\nAtmosfer: {mood}\nSadece düz metin."
+            )
 
+        prompt = template
+        prompt = prompt.replace("{language}", lang_label)
+        prompt = prompt.replace("{style_desc}", style_desc)
+        prompt = prompt.replace("{length_desc}", length_desc)
+        prompt = prompt.replace("{prompt_1}", prompts.get("script_prompt_1_universal", ""))
+        prompt = prompt.replace("{niche_module}", _resolve_niche_prompt(prompts, niche))
+        prompt = prompt.replace("{context_block}", context_block)
+        prompt = prompt.replace("{scene}", scene)
+        prompt = prompt.replace("{action}", action)
+        prompt = prompt.replace("{chars}", chars)
+        prompt = prompt.replace("{dialogues}", dialogues)
+        prompt = prompt.replace("{mood}", mood)
+
+        max_tokens = {"short": 180, "medium": 280, "long": 420}.get(length, 280)
         result = self._client.chat_completion(
             model, [{"role": "user", "content": prompt}],
-            temperature=0.9, max_tokens=300,
+            temperature=0.8, max_tokens=max_tokens,
         )
-        text = result["content"].strip().strip('"')
+        text = result["content"].strip().strip('"').strip("`")
+        # Model bazen "text:" öneki koyabilir
+        if text.lower().startswith("text:"):
+            text = text[5:].strip().strip('"')
         if len(text) < 5:
             raise ValueError("LLM çok kısa metin döndürdü.")
 

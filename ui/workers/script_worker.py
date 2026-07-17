@@ -3,7 +3,7 @@ RecapAI - Script üretim worker thread.
 """
 
 import logging
-from typing import List
+from typing import List, Optional
 
 from PyQt6.QtCore import QThread, pyqtSignal
 
@@ -33,9 +33,11 @@ class ScriptWorker(QThread):
         chapter: Chapter,
         model: str,
         api_key: str,
-        style: str = "epic",
+        style: str = "fresh",
         length: str = "medium",
         language: str = "tr",
+        niche: str = "power_fantasy",
+        use_hook: Optional[bool] = None,
         parent=None,
     ) -> None:
         super().__init__(parent)
@@ -45,6 +47,8 @@ class ScriptWorker(QThread):
         self._style = style
         self._length = length
         self._language = language
+        self._niche = niche
+        self._use_hook = use_hook
         self._stop = False
 
     def stop(self) -> None:
@@ -92,6 +96,8 @@ class ScriptWorker(QThread):
                 style=self._style,
                 length=self._length,
                 language=self._language,
+                niche=self._niche,
+                use_hook=self._use_hook,
                 stream_callback=on_chunk,
             )
 
@@ -122,9 +128,10 @@ class RegenerateSegmentWorker(QThread):
         segment_index: int,
         model: str,
         api_key: str,
-        style: str = "epic",
+        style: str = "fresh",
         language: str = "tr",
         length: str = "medium",
+        niche: str = "power_fantasy",
         parent=None,
     ) -> None:
         super().__init__(parent)
@@ -135,6 +142,7 @@ class RegenerateSegmentWorker(QThread):
         self._style = style
         self._language = language
         self._length = length
+        self._niche = niche
 
     def run(self) -> None:
         from core.openrouter_client import OpenRouterClient, OpenRouterError
@@ -162,7 +170,8 @@ class RegenerateSegmentWorker(QThread):
             generator = ScriptGenerator(client)
             seg = generator.regenerate_segment(
                 self._chapter, self._segment_index,
-                self._model, self._style, self._language, self._length
+                self._model, self._style, self._language, self._length,
+                niche=self._niche,
             )
             self.finished.emit(self._segment_index, seg)
         except OpenRouterError as exc:

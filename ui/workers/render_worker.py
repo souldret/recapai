@@ -251,9 +251,11 @@ class PipelineWorker(QThread):
             segments = generator.generate_script(
                 chapter,
                 self._script_model,
-                self._script_style,
-                self._script_length,
-                self._script_language,
+                style=self._script_style or "fresh",
+                length=self._script_length,
+                language=self._script_language,
+                niche="power_fantasy",
+                use_hook=None,  # ilk bölüm sezgisi
                 stream_callback=lambda chunk: self.log.emit(chunk),
             )
             chapter.segments = segments

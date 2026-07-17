@@ -5,7 +5,15 @@ RecapAI - ScriptGenerator yardımcı fonksiyon testleri.
 
 import pytest
 
-from core.script_generator import _sanitize_characters, CHUNK_SIZE
+from core.script_generator import (
+    _sanitize_characters,
+    _is_first_chapter,
+    list_niches,
+    CHUNK_SIZE,
+    DEFAULT_NICHE,
+    VALID_NICHES,
+)
+from core.models import Chapter
 
 
 class TestSanitizeCharacters:
@@ -58,10 +66,13 @@ class TestSanitizeCharacters:
 
     # ── Uzunluk koruması ─────────────────────────────────────────
 
-    def test_output_length_matches_input(self):
+    def test_output_length_not_longer_than_input(self):
+        # Jenerik etiketler fallback'e dönüşür veya çıkarılabilir; asla uzamaz
         chars = ["Ahmet", "Bir adam", "Gizemli Figür", "Fatma"]
         result = _sanitize_characters(chars, language="tr")
-        assert len(result) == len(chars)
+        assert len(result) <= len(chars)
+        assert "Ahmet" in result
+        assert "Fatma" in result
 
     def test_large_list_of_named_chars(self):
         """Jenerik olmayan isimler değiştirilmez ve korunur."""
@@ -102,3 +113,30 @@ class TestChunkSize:
         chunks = [panels[i:i + CHUNK_SIZE] for i in range(0, len(panels), CHUNK_SIZE)]
         assert len(chunks) == 1
         assert chunks[0] == panels
+
+
+class TestNichesAndHook:
+    """Manhwa Fresh niş listesi ve Chapter-1 hook sezgisi."""
+
+    def test_list_niches_has_four(self):
+        niches = list_niches()
+        ids = {n["id"] for n in niches}
+        assert set(VALID_NICHES).issubset(ids)
+        assert DEFAULT_NICHE in ids
+
+    def test_list_niches_has_labels(self):
+        for n in list_niches():
+            assert n["label"]
+            assert n["id"]
+
+    def test_is_first_chapter_by_name(self):
+        ch = Chapter(id="c1", name="Chapter 1", images=[])
+        assert _is_first_chapter(ch) is True
+
+    def test_is_first_chapter_bolum(self):
+        ch = Chapter(id="c1", name="Bölüm 1 - Başlangıç", images=[])
+        assert _is_first_chapter(ch) is True
+
+    def test_is_not_first_chapter(self):
+        ch = Chapter(id="c2", name="Chapter 12", images=[])
+        assert _is_first_chapter(ch) is False
