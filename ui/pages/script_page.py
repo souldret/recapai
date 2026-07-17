@@ -449,8 +449,9 @@ class ScriptPage(QWidget):
         # Chapter 1 Hook (Prompt 3)
         self.hook_check = QCheckBox("Ch.1 Hook")
         self.hook_check.setToolTip(
-            "Serinin ilk bölümüyse açılış cümlesini güçlendirir (Prompt 3).\n"
-            "Bölüm 2+ için kapalı bırakın."
+            "Açıkken Prompt 3 (Chapter 1 Hook) eklenir — açılış cümlesini güçlendirir.\n"
+            "Bölüm seçilince otomatik önerilir; istersen kapatabilirsin.\n"
+            "Bölüm 2+ için kapalı tut."
         )
         row1b.addWidget(self.hook_check)
 
@@ -721,8 +722,9 @@ class ScriptPage(QWidget):
         length = LENGTHS[self.length_slider.value()]
         language = self.lang_combo.currentData() or "tr"
         niche = self.niche_combo.currentData() or "power_fantasy"
-        # Checkbox işaretliyse True; değilse None (otomatik sezgi)
-        use_hook = True if self.hook_check.isChecked() else None
+        # Checkbox doğrudan True/False; None kullanma (kullanıcı kapatınca
+        # otomatik ch.1 sezgisi hook'u tekrar açmasın)
+        use_hook = self.hook_check.isChecked()
 
         from ui.workers.script_worker import ScriptWorker
         self._worker = ScriptWorker(
@@ -740,7 +742,7 @@ class ScriptPage(QWidget):
         hook_note = " + Ch.1 Hook" if use_hook else ""
         self.lbl_stream.setText(
             f"<span style='color:#6366f1;'><b>ÜRETİLİYOR:</b> "
-            f"Manhwa Fresh · {self.niche_combo.currentText()}{hook_note}...</span>"
+            f"{self.style_combo.currentText()} · {self.niche_combo.currentText()}{hook_note}...</span>"
         )
         self.ctx.app_state.status_message.emit("Script üretimi başladı…")
         self._autosave_timer.start()

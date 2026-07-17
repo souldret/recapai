@@ -65,36 +65,34 @@ def _resolve_niche_prompt(prompts: dict, niche: str) -> str:
 def _is_first_chapter(chapter: Chapter) -> bool:
     """
     Bölümün serinin ilk bölümü olup olmadığını tahmin eder.
-    name / order / id üzerinden basit sezgisel kontrol.
+    name / order üzerinden sezgisel kontrol.
+    'Chapter 12' gibi çok haneli numaralarda yanlış pozitif vermez.
     """
-    name = (getattr(chapter, "name", "") or "").lower()
-    # Açık isim kalıpları
-    first_patterns = (
-        r"\b(ch(apter)?\s*0*1)\b",
-        r"\b(bölüm\s*0*1)\b",
-        r"\b(bolum\s*0*1)\b",
-        r"\b(ep(isode)?\s*0*1)\b",
-        r"\b(part\s*0*1)\b",
-        r"^1\b",
-        r"\b#0*1\b",
+    name = (getattr(chapter, "name", "") or "").strip().lower()
+
+    # Sayıyı yakala: "chapter 1", "bölüm 01", "ep.1", "#1", başta "1 - ..."
+    # Sonra sadece 1 kabul et (01 dahil, 10/11/12 değil)
+    num_patterns = (
+        r"\b(?:ch(?:apter)?|ep(?:isode)?|part|bölüm|bolum)\s*\.?\s*0*1\b",
+        r"#\s*0*1\b",
+        r"^0*1(?:\b|[\s\-:._])",
     )
-    for pat in first_patterns:
+    for pat in num_patterns:
         if re.search(pat, name, re.IGNORECASE):
             return True
 
     order = getattr(chapter, "order", None)
     if order is not None:
         try:
-            if int(order) <= 1:
+            if int(order) == 1 or int(order) == 0:
                 return True
         except (TypeError, ValueError):
             pass
 
-    # index alanı
     index = getattr(chapter, "index", None)
     if index is not None:
         try:
-            if int(index) <= 1:
+            if int(index) == 1 or int(index) == 0:
                 return True
         except (TypeError, ValueError):
             pass

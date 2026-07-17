@@ -137,6 +137,14 @@ class TestNichesAndHook:
         ch = Chapter(id="c1", name="Bölüm 1 - Başlangıç", images=[])
         assert _is_first_chapter(ch) is True
 
-    def test_is_not_first_chapter(self):
+    def test_is_first_chapter_leading_number(self):
+        ch = Chapter(id="c1", name="1 - Prologue", images=[])
+        assert _is_first_chapter(ch) is True
+
+    def test_is_not_first_chapter_12(self):
         ch = Chapter(id="c2", name="Chapter 12", images=[])
+        assert _is_first_chapter(ch) is False
+
+    def test_is_not_first_chapter_10(self):
+        ch = Chapter(id="c10", name="Bölüm 10", images=[])
         assert _is_first_chapter(ch) is False
