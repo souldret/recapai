@@ -173,7 +173,7 @@ class VideoComposer:
             _cb(5, "—")
             clip_paths = self._build_segment_clips(chapter, tmp_dir, _cb, _cancelled)
             if _cancelled():
-                return output_path
+                raise RuntimeError("Render iptal edildi.")
             if not clip_paths:
                 raise RuntimeError(
                     "Hiçbir video klibi oluşturulamadı. "
@@ -186,7 +186,7 @@ class VideoComposer:
             merged = str(tmp_dir / "merged.mp4")
             self._concat_clips(clip_paths, merged, _cancelled)
             if _cancelled():
-                return output_path
+                raise RuntimeError("Render iptal edildi.")
             if not Path(merged).exists() or Path(merged).stat().st_size <= 0:
                 raise RuntimeError("Klip birleştirme başarısız: çıktı dosyası boş.")
 
@@ -197,11 +197,32 @@ class VideoComposer:
                 self._log("Altyazılar işleniyor...")
                 sub_path = str(tmp_dir / "subtitles.ass")
                 from core.subtitle_generator import generate_ass
-                generate_ass(chapter, sub_path, self.settings.get("subtitle_style"))
+                sub_style = dict(self.settings.get("subtitle_style") or {})
+                # PlayRes gerçek çıktı çözünürlüğüne uysun (Shorts/4K dahil)
+                sub_style["play_res_x"] = self._width
+                sub_style["play_res_y"] = self._height
+                # xfade bindirmesi varsa altyazı zamanını kaydır
+                t_name = self.settings.get("transitions", "none")
+                t_dur = float(self.settings.get("transition_duration", 0) or 0)
+                if t_name == "none" or t_dur <= 0:
+                    eff_t_dur = 0.0
+                else:
+                    # _xfade_concat ile aynı clamp mantığı (yaklaşık)
+                    segs_durs = [
+                        (s.duration if s.duration > 0 else 4.0) for s in segments
+                    ]
+                    min_d = min(segs_durs) if segs_durs else t_dur
+                    eff_t_dur = min(t_dur, max(0.05, min_d * 0.45))
+                generate_ass(
+                    chapter, sub_path, sub_style,
+                    transition_duration=eff_t_dur,
+                )
                 subs_out = str(tmp_dir / "with_subs.mp4")
                 self._burn_subtitles(merged, sub_path, subs_out)
                 if Path(subs_out).exists() and Path(subs_out).stat().st_size > 0:
                     with_subs = subs_out
+                else:
+                    logger.warning("Altyazı yakma başarısız; altyazısız devam.")
 
             # 4) BGM ekle
             with_bgm = with_subs
@@ -700,21 +721,21 @@ class VideoComposer:
             )
 
         cmd.append(output_path)
-        # VF debug: ilk klipte log yaz
-        try:
-            import pathlib, datetime
-            log_dir = pathlib.Path(__file__).parent.parent / "logs"
-            log_dir.mkdir(exist_ok=True)
-            ts = datetime.datetime.now().strftime("%Y%m%d_%H%M%S_%f")
-            (log_dir / f"vf_{ts}.txt").write_text(
-                f"image_motion={image_motion}\nbg_effect={bg_effect}\nuse_blur={use_blur}\n\nVF:\n{vf}\n\nCMD:\n{' '.join(str(a) for a in cmd)}",
-                encoding="utf-8"
-            )
-        except Exception:
-            pass
         ret = self._run(cmd)
         if ret != 0:
             logger.error("Klip oluşturulamadı (rc=%d): %s", ret, output_path)
+            # Hata ayıklama: sadece başarısız kliplerde VF log yaz
+            try:
+                log_dir = Path(__file__).resolve().parent.parent / "logs"
+                log_dir.mkdir(exist_ok=True)
+                ts = datetime.now().strftime("%Y%m%d_%H%M%S_%f")
+                (log_dir / f"vf_fail_{ts}.txt").write_text(
+                    f"image_motion={image_motion}\nbg_effect={bg_effect}\nuse_blur={use_blur}\n"
+                    f"rc={ret}\n\nVF:\n{vf}\n\nCMD:\n{' '.join(str(a) for a in cmd)}",
+                    encoding="utf-8",
+                )
+            except Exception:
+                pass
 
     def _build_silent_clip_cmd(
         self,
@@ -1094,15 +1115,17 @@ class VideoComposer:
             audio_filter = (
                 f"[1:a]volume={bgm_vol:.2f}[bgm];"
                 f"[bgm][0:a]sidechaincompress=threshold=0.02:ratio=8:attack=50:release=300[bgm_ducked];"
-                f"[0:a][bgm_ducked]amix=inputs=2:duration=first:dropout_transition=3[aout]"
+                f"[0:a][bgm_ducked]amix=inputs=2:duration=first:dropout_transition=3,"
+                f"aformat=sample_rates=44100:channel_layouts=stereo[aout]"
             )
         else:
             audio_filter = (
                 f"[1:a]volume={bgm_vol:.2f}[bgm];"
-                f"[0:a][bgm]amix=inputs=2:duration=first[aout]"
+                f"[0:a][bgm]amix=inputs=2:duration=first,"
+                f"aformat=sample_rates=44100:channel_layouts=stereo[aout]"
             )
 
-        self._run([
+        ret = self._run([
             "-y",
             "-i", input_path,
             "-stream_loop", "-1", "-i", bgm_path,
@@ -1111,9 +1134,31 @@ class VideoComposer:
             "-map", "[aout]",
             "-c:v", "copy",
             "-c:a", "aac", "-b:a", "192k",
+            "-ar", "44100", "-ac", "2",
             "-shortest",
             output_path,
         ])
+        # Ducking filtreleri yoksa veya fail olursa basit mix dene
+        if (ret != 0 or not Path(output_path).exists() or Path(output_path).stat().st_size <= 0) and ducking:
+            logger.warning("BGM ducking başarısız; basit mix deneniyor.")
+            simple = (
+                f"[1:a]volume={bgm_vol:.2f}[bgm];"
+                f"[0:a][bgm]amix=inputs=2:duration=first,"
+                f"aformat=sample_rates=44100:channel_layouts=stereo[aout]"
+            )
+            self._run([
+                "-y",
+                "-i", input_path,
+                "-stream_loop", "-1", "-i", bgm_path,
+                "-filter_complex", simple,
+                "-map", "0:v",
+                "-map", "[aout]",
+                "-c:v", "copy",
+                "-c:a", "aac", "-b:a", "192k",
+                "-ar", "44100", "-ac", "2",
+                "-shortest",
+                output_path,
+            ])
 
     def _add_bookends(
         self,

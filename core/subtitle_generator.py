@@ -37,13 +37,59 @@ def _estimate_duration(text: str, wpm: int = 150) -> float:
     return max(1.0, words / wpm * 60)
 
 
-def generate_srt(chapter, output_path: str) -> str:
+def _segment_timeline(
+    segments: List[Any],
+    transition_duration: float = 0.0,
+) -> List[tuple]:
+    """
+    Segment listesinden (start, end, text) zaman çizelgesi üretir.
+    xfade kullanıldığında her geçiş t_dur kadar bindirme yapar;
+    sonraki segment başlangıcı o kadar geri çekilir.
+    """
+    t_dur = max(0.0, float(transition_duration or 0.0))
+    events: List[tuple] = []
+    cursor = 0.0
+    written = 0
+
+    for seg in segments:
+        text = (getattr(seg, "text", None) or "").strip()
+        if not text:
+            # Boş metin yine de zamanı ilerletir (sessiz klip varsa)
+            duration = getattr(seg, "duration", 0) or 0.0
+            if duration <= 0:
+                continue
+            if written > 0 and t_dur > 0:
+                cursor = max(0.0, cursor - t_dur)
+            cursor += duration
+            written += 1
+            continue
+
+        duration = seg.duration if getattr(seg, "duration", 0) and seg.duration > 0 else _estimate_duration(text)
+        if written > 0 and t_dur > 0:
+            # Önceki kliple xfade bindirmesi
+            cursor = max(0.0, cursor - min(t_dur, duration * 0.45, cursor))
+
+        start = cursor
+        end = cursor + duration
+        events.append((start, end, text))
+        cursor = end
+        written += 1
+
+    return events
+
+
+def generate_srt(
+    chapter,
+    output_path: str,
+    transition_duration: float = 0.0,
+) -> str:
     """
     Bölümün segmentlerinden SRT altyazı dosyası üretir.
 
     Args:
         chapter: Chapter nesnesi (segments listesi içermeli)
         output_path: Çıktı .srt dosyasının yolu
+        transition_duration: xfade geçiş süresi (saniye); 0 = bindirme yok
 
     Returns:
         Oluşturulan dosyanın yolu
@@ -55,35 +101,26 @@ def generate_srt(chapter, output_path: str) -> str:
         return output_path
 
     lines: List[str] = []
-    cursor = 0.0
-    srt_index = 0
-
-    for seg in segments:
-        text = (seg.text or "").strip()
-        if not text:
-            continue
-
-        # Gerçek ses süresi varsa kullan, yoksa tahmin et
-        duration = seg.duration if seg.duration > 0 else _estimate_duration(text)
-
-        start_ts = _seconds_to_srt_ts(cursor)
-        end_ts = _seconds_to_srt_ts(cursor + duration)
-        srt_index += 1
-
-        lines.append(str(srt_index))
-        lines.append(f"{start_ts} --> {end_ts}")
+    for i, (start, end, text) in enumerate(
+        _segment_timeline(segments, transition_duration), start=1
+    ):
+        lines.append(str(i))
+        lines.append(f"{_seconds_to_srt_ts(start)} --> {_seconds_to_srt_ts(end)}")
         lines.append(text)
         lines.append("")
 
-        cursor += duration
-
     content = "\n".join(lines)
     Path(output_path).write_text(content, encoding="utf-8")
-    logger.info("SRT oluşturuldu: %s (%d segment)", output_path, len(segments))
+    logger.info("SRT oluşturuldu: %s (%d satır)", output_path, len(lines) // 4)
     return output_path
 
 
-def generate_ass(chapter, output_path: str, style: Optional[Dict[str, Any]] = None) -> str:
+def generate_ass(
+    chapter,
+    output_path: str,
+    style: Optional[Dict[str, Any]] = None,
+    transition_duration: float = 0.0,
+) -> str:
     """
     Bölümün segmentlerinden ASS altyazı dosyası üretir.
     ASS formatı daha fazla stillendirme imkanı sunar.
@@ -91,7 +128,9 @@ def generate_ass(chapter, output_path: str, style: Optional[Dict[str, Any]] = No
     Args:
         chapter: Chapter nesnesi
         output_path: Çıktı .ass dosyasının yolu
-        style: Altyazı stil sözlüğü (font, size, color, stroke_color, stroke_width, position)
+        style: Altyazı stil sözlüğü (font, size, color, stroke_color, stroke_width, position,
+               play_res_x, play_res_y)
+        transition_duration: xfade geçiş süresi (saniye)
 
     Returns:
         Oluşturulan dosyanın yolu
@@ -105,6 +144,12 @@ def generate_ass(chapter, output_path: str, style: Optional[Dict[str, Any]] = No
     stroke_color_name = style.get("stroke_color", "black")
     stroke_width = style.get("stroke_width", 2)
     position = style.get("position", "bottom")  # top | middle | bottom
+    play_res_x = int(style.get("play_res_x") or 1920)
+    play_res_y = int(style.get("play_res_y") or 1080)
+    if play_res_x <= 0:
+        play_res_x = 1920
+    if play_res_y <= 0:
+        play_res_y = 1080
 
     # Renk adını ASS BGR hex'e çevir (ASS formatı &H00BBGGRR)
     color_map = {
@@ -151,12 +196,12 @@ def generate_ass(chapter, output_path: str, style: Optional[Dict[str, Any]] = No
     alignment_map = {"bottom": 2, "middle": 5, "top": 8}
     alignment = alignment_map.get(position, 2)
 
-    margin_v = 30
+    margin_v = max(20, int(play_res_y * 0.03))
 
     header = f"""[Script Info]
 ScriptType: v4.00+
-PlayResX: 1920
-PlayResY: 1080
+PlayResX: {play_res_x}
+PlayResY: {play_res_y}
 ScaledBorderAndShadow: yes
 
 [V4+ Styles]
@@ -169,27 +214,24 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
 
     segments = chapter.segments
     event_lines: List[str] = []
-    cursor = 0.0
 
-    for seg in segments:
-        text = (seg.text or "").strip()
-        if not text:
-            continue
-
-        duration = seg.duration if seg.duration > 0 else _estimate_duration(text)
-        start_ts = _seconds_to_ass_ts(cursor)
-        end_ts = _seconds_to_ass_ts(cursor + duration)
-
-        # ASS'de satır sonları {\N} ile yapılır
-        ass_text = text.replace("\n", r"{\N}")
+    for start, end, text in _segment_timeline(segments, transition_duration):
+        start_ts = _seconds_to_ass_ts(start)
+        end_ts = _seconds_to_ass_ts(end)
+        # ASS'de satır sonları {\N} ile yapılır; süslü parantez kaçışı
+        ass_text = (
+            text.replace("\\", r"\\")
+            .replace("{", r"\{")
+            .replace("}", r"\}")
+            .replace("\n", r"{\N}")
+        )
         event_lines.append(
             f"Dialogue: 0,{start_ts},{end_ts},Default,,0,0,0,,{ass_text}"
         )
-        cursor += duration
 
     content = header + "\n".join(event_lines)
     Path(output_path).write_text(content, encoding="utf-8")
-    logger.info("ASS oluşturuldu: %s (%d segment)", output_path, len(segments))
+    logger.info("ASS oluşturuldu: %s (%d satır)", output_path, len(event_lines))
     return output_path
 
 
