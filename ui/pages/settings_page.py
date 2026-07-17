@@ -1559,8 +1559,9 @@ class SettingsPage(QWidget):
 
     def _load_current_settings(self) -> None:
         try:
-            data = json.loads(SETTINGS_PATH.read_text(encoding="utf-8"))
-        except Exception:
+            data = self.ctx.settings_manager.get_all()
+        except Exception as exc:
+            logger.error("Ayarlar yüklenemedi: %s", exc)
             return
 
         api = data.get("api", {})

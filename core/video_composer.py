@@ -725,10 +725,13 @@ class VideoComposer:
         """Geçiş efekti olmadan basit birleştirme."""
         list_file = Path(output_path).with_suffix(".list.txt")
         try:
-            list_file.write_text(
-                "\n".join(f"file '{p}'" for p in clip_paths),
-                encoding="utf-8",
-            )
+            lines = []
+            for p in clip_paths:
+                # Windows yollarını FFmpeg concat demuxer için güvenli hale getir
+                safe = str(Path(p).resolve()).replace("\\", "/")
+                safe = safe.replace("'", "'\\''")
+                lines.append(f"file '{safe}'")
+            list_file.write_text("\n".join(lines), encoding="utf-8")
             self._run([
                 "-y",
                 "-f", "concat", "-safe", "0",
@@ -982,10 +985,11 @@ class VideoComposer:
         ducking = self.settings.get("bgm_ducking", True)
 
         if ducking:
-            # Ses sıkıştırma: ana ses yükseldiğinde BGM düşer
+            # sidechaincompress: narrasyon yükselince BGM otomatik kısılır
             audio_filter = (
                 f"[1:a]volume={bgm_vol:.2f}[bgm];"
-                f"[0:a][bgm]amix=inputs=2:duration=first:dropout_transition=3[aout]"
+                f"[bgm][0:a]sidechaincompress=threshold=0.02:ratio=8:attack=50:release=300[bgm_ducked];"
+                f"[0:a][bgm_ducked]amix=inputs=2:duration=first:dropout_transition=3[aout]"
             )
         else:
             audio_filter = (

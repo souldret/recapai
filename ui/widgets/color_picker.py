@@ -64,27 +64,35 @@ class ColorPickerButton(QWidget):
         if chosen.isValid():
             self._color = chosen
             self._update_display()
-            self.color_changed.emit(self._color.name())
+            self.color_changed.emit(self._color_hex())
+
+    def _color_hex(self) -> str:
+        """Alpha dahil hex rengi döndürür (#AARRGGBB veya #RRGGBB)."""
+        if self._color.alpha() < 255:
+            return self._color.name(QColor.NameFormat.HexArgb)
+        return self._color.name(QColor.NameFormat.HexRgb)
 
     def _update_display(self) -> None:
         """Renk örneği ve hex etiketi günceller."""
-        hex_color = self._color.name()
+        hex_color = self._color.name(QColor.NameFormat.HexRgb)
         # Kontrast ön plan rengi
         lum = 0.299 * self._color.red() + 0.587 * self._color.green() + 0.114 * self._color.blue()
         fg = "#000000" if lum > 128 else "#ffffff"
+        alpha = self._color.alpha() / 255.0
         self._swatch.setStyleSheet(
-            f"QPushButton {{ background-color: {hex_color}; color: {fg}; "
+            f"QPushButton {{ background-color: rgba({self._color.red()},{self._color.green()},"
+            f"{self._color.blue()},{alpha:.2f}); color: {fg}; "
             f"border: 1px solid #414868; border-radius: 4px; }}"
             f"QPushButton:hover {{ border: 2px solid #7aa2f7; }}"
         )
-        self._hex_label.setText(hex_color.upper())
+        self._hex_label.setText(self._color_hex().upper())
 
     # ── Public API ────────────────────────────────────────────────
 
     @property
     def color(self) -> str:
-        """Seçili rengin hex kodunu döndürür."""
-        return self._color.name()
+        """Seçili rengin hex kodunu döndürür (alpha varsa dahil)."""
+        return self._color_hex()
 
     def set_color(self, color: str) -> None:
         """Rengi programatik olarak ayarlar."""
@@ -95,7 +103,7 @@ class ColorPickerButton(QWidget):
 
     def get_color_name(self) -> str:
         """Qt renk adını döndürür (örn. 'white', 'black')."""
-        return self._color.name()
+        return self._color_hex()
 
     def get_rgb_tuple(self):
         """(R, G, B) tuple döndürür."""

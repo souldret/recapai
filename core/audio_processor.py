@@ -38,9 +38,15 @@ def normalize_volume(audio_path: str, target_dbfs: float = -20.0) -> None:
     Ses dosyasını hedef dBFS seviyesine normalize eder.
     Dosyanın üzerine yazar (in-place).
     """
+    import math
+
     AudioSegment = _load_pydub()
     try:
         seg = AudioSegment.from_file(audio_path)
+        # Sessiz / boş ses dosyalarında dBFS -inf olur; gain uygulanamaz
+        if seg.dBFS == float("-inf") or math.isinf(seg.dBFS) or math.isnan(seg.dBFS):
+            logger.warning("normalize_volume atlandı (sessiz dosya): %s", audio_path)
+            return
         delta = target_dbfs - seg.dBFS
         normalized = seg.apply_gain(delta)
         suffix = Path(audio_path).suffix.lower().lstrip(".")

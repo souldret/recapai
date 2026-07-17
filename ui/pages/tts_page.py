@@ -656,8 +656,10 @@ class TtsPage(QWidget):
             idx = self._engine_combo.count() - 1
             self._engine_combo.setItemData(idx, eng.get("description", ""), Qt.ItemDataRole.ToolTipRole)
             if not eng["available"]:
-                # Devre disi yap
-                item_flags = self._engine_combo.model().item(idx).flags()
+                # Devre dışı: seçilemez hale getir
+                item = self._engine_combo.model().item(idx)
+                if item is not None:
+                    item.setFlags(item.flags() & ~Qt.ItemFlag.ItemIsEnabled)
 
         # Varsayilan engine
         default_engine = self._state.get_setting("defaults", "tts_engine") or "edge-tts"

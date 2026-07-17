@@ -1053,6 +1053,9 @@ class RenderPage(QWidget):
 
         import core.project_manager as pm_mod
         proj_dir = pm_mod.get_project_dir(project)
+        if not proj_dir:
+            logger.warning("Çıktı yolu güncellenemedi: proje dizini bulunamadı.")
+            return
         out_dir = proj_dir / "output"
         out_dir.mkdir(parents=True, exist_ok=True)
 

@@ -72,8 +72,9 @@ def export_srt(chapter: Chapter, path: str) -> None:
 
     blocks = []
     cursor = 0.0
+    srt_index = 0
 
-    for i, seg in enumerate(chapter.segments):
+    for seg in chapter.segments:
         text = seg.text.strip()
         if not text:
             continue
@@ -83,9 +84,10 @@ def export_srt(chapter: Chapter, path: str) -> None:
         start = cursor
         end = cursor + duration
         cursor = end + 0.3   # segmentler arası 300ms boşluk
+        srt_index += 1
 
         blocks.append(
-            f"{i + 1}\n"
+            f"{srt_index}\n"
             f"{_srt_timestamp(start)} --> {_srt_timestamp(end)}\n"
             f"{text}\n"
         )

@@ -550,6 +550,8 @@ class HomePage(QWidget):
         try:
             import core.project_manager as pm_mod
             proj_dir = pm_mod.get_project_dir(project)
+            if not proj_dir:
+                raise ValueError("Proje dizini bulunamadı")
             audio_dir = str(proj_dir / "audio")
             out_dir = proj_dir / "output"
             out_dir.mkdir(parents=True, exist_ok=True)

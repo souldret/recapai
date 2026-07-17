@@ -538,22 +538,76 @@ class AnalysisPage(QWidget):
         if not state.current_chapter:
             return
 
+        if self._worker and self._worker.isRunning():
+            QMessageBox.information(self, "Bilgi", "Devam eden bir analiz var. Lütfen bitmesini bekleyin.")
+            return
+
         model = self.model_combo.currentData() or "google/gemini-2.0-flash-exp:free"
-        try:
-            from core.openrouter_client import OpenRouterClient
-            from core.ai_analyzer import AIAnalyzer
-            client = OpenRouterClient.instance()
-            if api_key:
-                client.update_api_key(api_key)
-            analyzer = AIAnalyzer(client)
-            result = analyzer.reanalyze_image(state.current_chapter, item.image_index, model)
+        image_index = item.image_index
+        item.set_status("running")
+        self.btn_start.setEnabled(False)
+        self.btn_stop.setEnabled(True)
+        self._log(
+            f"<span style='color:#6366f1;'><b>YENİDEN:</b> "
+            f"Görsel {image_index + 1} arka planda tekrar analiz ediliyor...</span>"
+        )
+
+        from PyQt6.QtCore import QThread, pyqtSignal
+
+        class _ReanalyzeWorker(QThread):
+            done = pyqtSignal(int, dict)
+            failed = pyqtSignal(str)
+
+            def __init__(self, chapter, idx: int, model_name: str, key: str) -> None:
+                super().__init__()
+                self._chapter = chapter
+                self._idx = idx
+                self._model = model_name
+                self._key = key
+
+            def run(self) -> None:
+                try:
+                    from core.openrouter_client import OpenRouterClient
+                    from core.ai_analyzer import AIAnalyzer
+                    client = OpenRouterClient.instance()
+                    if self._key:
+                        client.update_api_key(self._key)
+                    analyzer = AIAnalyzer(client)
+                    result = analyzer.reanalyze_image(self._chapter, self._idx, self._model)
+                    self.done.emit(self._idx, result)
+                except Exception as exc:
+                    self.failed.emit(str(exc))
+
+        worker = _ReanalyzeWorker(state.current_chapter, image_index, model, api_key)
+        worker.done.connect(self._on_reanalyze_done)
+        worker.failed.connect(self._on_reanalyze_failed)
+        self._worker = worker
+        worker.start()
+
+    def _on_reanalyze_done(self, image_index: int, result: dict) -> None:
+        item = self.image_list.item(image_index)
+        if isinstance(item, ImageStatusItem):
             item.set_status("error" if result.get("error") else "done")
-            self.detail_panel.show_result(item.image_index, result)
+        self.detail_panel.show_result(image_index, result)
+        state = self.ctx.app_state
+        if state.current_project:
             from core.project_manager import save_project
             save_project(state.current_project)
-            self._log(f"<span style='color:#6366f1;'><b>YENİDEN:</b> Görsel {item.image_index + 1} tekrar analiz ediliyor...</span>")
-        except Exception as exc:
-            self._log(f"<span style='color:#ef4444;'><b>HATA:</b> Tekrar analiz hatası: {exc}</span>")
+        self.btn_start.setEnabled(True)
+        self.btn_stop.setEnabled(False)
+        self._log(
+            f"<span style='color:#22c55e;'><b>YENİDEN:</b> "
+            f"Görsel {image_index + 1} tekrar analizi tamamlandı.</span>"
+        )
+
+    def _on_reanalyze_failed(self, message: str) -> None:
+        row = self.image_list.currentRow()
+        item = self.image_list.item(row)
+        if isinstance(item, ImageStatusItem):
+            item.set_status("error")
+        self.btn_start.setEnabled(True)
+        self.btn_stop.setEnabled(False)
+        self._log(f"<span style='color:#ef4444;'><b>HATA:</b> Tekrar analiz hatası: {message}</span>")
 
     # ── Export ─────────────────────────────────────────────────────
 

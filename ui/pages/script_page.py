@@ -52,6 +52,20 @@ class EditSegmentCommand(QUndoCommand):
         self._card.set_text_silent(self._new)
 
 
+# ── Focus-aware TextEdit ───────────────────────────────────────────────────────
+
+class FocusAwareTextEdit(QTextEdit):
+    """focusInEvent zincirini bozmadan odak callback'i tetikleyen editör."""
+
+    def focusInEvent(self, event) -> None:  # type: ignore[override]
+        super().focusInEvent(event)
+        card = self.parent()
+        while card is not None and not isinstance(card, SegmentCard):
+            card = card.parent()
+        if card is not None and getattr(card, "_focus_callback", None):
+            card._focus_callback(card)
+
+
 # ── Segment Kartı ──────────────────────────────────────────────────────────────
 
 class SegmentCard(QFrame):
@@ -72,6 +86,7 @@ class SegmentCard(QFrame):
         self._last_text = segment.text
         self._thumb_path = thumbnail_path
         self._building = False
+        self._focus_callback = None
         self.setObjectName("segmentCard")
         self._build_ui()
 
@@ -109,7 +124,7 @@ class SegmentCard(QFrame):
         hdr.addStretch()
         mid.addLayout(hdr)
 
-        self.text_edit = QTextEdit()
+        self.text_edit = FocusAwareTextEdit(self)
         self.text_edit.setPlainText(self.segment.text)
         self.text_edit.setFixedHeight(72)
         self.text_edit.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
@@ -589,7 +604,7 @@ class ScriptPage(QWidget):
         card.btn_del.clicked.connect(lambda: self._delete_card(card))
         card.btn_regen.clicked.connect(lambda: self._regen_card(card))
         card.text_edit.textChanged.connect(self._update_stats)
-        card.text_edit.focusInEvent = lambda e, c=card: self._on_card_focus(c)
+        card._focus_callback = self._on_card_focus
         # Stretch'in önüne ekle
         stretch_idx = self._cards_layout.count() - 1
         self._cards_layout.insertWidget(stretch_idx, card)

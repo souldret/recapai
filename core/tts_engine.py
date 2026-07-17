@@ -224,6 +224,7 @@ class EdgeTTSEngine(TTSEngine):
         if not self.is_available():
             raise RuntimeError("edge-tts kurulu degil. 'pip install --upgrade edge-tts' calistirin.")
 
+        text = normalize_caps(text)
         rate   = self._fix_rate(rate)
         pitch  = self._fix_pitch(pitch)
         volume = self._fix_volume(volume)
@@ -471,6 +472,7 @@ class KokoroTTSEngine(TTSEngine):
         import numpy as np
         import soundfile as sf
 
+        text = normalize_caps(text)
         lang_code = voice[0] if voice else "a"
         if lang_code not in self.SUPPORTED_LANGS:
             logger.warning("Bilinmeyen lang_code '%s', 'a' kullaniliyor.", lang_code)

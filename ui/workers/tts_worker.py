@@ -107,15 +107,18 @@ class TTSWorker(QThread):
             if self._stop_flag or not seg.text.strip():
                 return
 
+            from core.tts_engine import normalize_caps
+
             voice    = self.voice
             out_path = str(self.audio_dir / f"segment_{idx:04d}.mp3")
             params   = self.params.copy()
+            tts_text = normalize_caps(seg.text)
 
             # Cache kontrolü
             cache_key = None
             if self.cache:
                 cp = {"engine": self.engine_name, "voice": voice, **params}
-                cache_key = self.cache.get_cache_key(seg.text, voice, cp)
+                cache_key = self.cache.get_cache_key(tts_text, voice, cp)
                 cached = self.cache.get(cache_key)
                 if cached:
                     seg.audio_path = cached
@@ -136,7 +139,7 @@ class TTSWorker(QThread):
                 try:
                     import edge_tts
                     comm = edge_tts.Communicate(
-                        text=seg.text,
+                        text=tts_text,
                         voice=voice,
                         rate=params.get("rate", "+0%"),
                         pitch=params.get("pitch", "+0Hz"),
@@ -215,15 +218,18 @@ class TTSWorker(QThread):
             if not seg.text.strip():
                 continue
 
+            from core.tts_engine import normalize_caps
+
             voice    = self.voice
             out_path = str(self.audio_dir / f"segment_{idx:04d}.mp3")
             params   = self.params.copy()
+            tts_text = normalize_caps(seg.text)
 
             # Cache kontrolü
             cache_key = None
             if self.cache:
                 cp = {"engine": self.engine_name, "voice": voice, **params}
-                cache_key = self.cache.get_cache_key(seg.text, voice, cp)
+                cache_key = self.cache.get_cache_key(tts_text, voice, cp)
                 cached = self.cache.get(cache_key)
                 if cached:
                     seg.audio_path = cached
@@ -238,7 +244,7 @@ class TTSWorker(QThread):
 
             try:
                 duration = engine.synthesize(
-                    text=seg.text,
+                    text=tts_text,
                     voice=voice,
                     output_path=out_path,
                     **params,
