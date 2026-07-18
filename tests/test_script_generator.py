@@ -5,6 +5,8 @@ RecapAI - ScriptGenerator yardımcı fonksiyon testleri.
 
 import pytest
 
+import re
+
 from core.script_generator import (
     _sanitize_characters,
     _scrub_generic_labels,
@@ -78,15 +80,25 @@ class TestScrubGenericLabels:
         t = _scrub_generic_labels("The protagonist walks in. Main character fights.", "en")
         assert "protagonist" not in t.lower()
         assert "main character" not in t.lower()
+        assert "he" in t.lower()
 
     def test_scrub_tr_ana_karakter(self):
         t = _scrub_generic_labels("Ana karakter kapıyı açar. Protagonist kaçar.", "tr")
         assert "ana karakter" not in t.lower()
         assert "protagonist" not in t.lower()
+        # TR dilinde İngilizce 'he' enjekte edilmemeli
+        assert re.search(r"\bhe\b", t, re.I) is None
 
     def test_keeps_real_names(self):
         t = _scrub_generic_labels("Jin-Woo draws his blade.", "en")
         assert "Jin-Woo" in t
+
+    def test_keeps_visual_hints(self):
+        # Kısa görsel ipucu silinmemeli
+        result = _sanitize_characters(["kırmızı pelerinli", "saçlı kız", "Protagonist"], "tr")
+        assert "Protagonist" not in result
+        assert "kırmızı pelerinli" in result
+        assert "saçlı kız" in result
 
 
 class TestChunkSize:

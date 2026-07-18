@@ -103,7 +103,7 @@ def _is_first_chapter(chapter: Chapter) -> bool:
 # İtici / jenerik etiketler — prompt'a ve metne girmemeli
 _BANNED_LABEL_RE = re.compile(
     r"\b("
-    r"protagonist|main\s*character|main\s*char|mc\b"
+    r"protagonist|main\s*character|main\s*char|\bmc\b"
     r"|ana\s*karakter|baş\s*karakter|bas\s*karakter|kahramanımız|our\s*hero"
     r"|the\s*hero|the\s*mc|gizemli\s*yabancı|mysterious\s*stranger"
     r"|gizemli\s*figür|mysterious\s*figure|cloaked\s*figure"
@@ -111,24 +111,48 @@ _BANNED_LABEL_RE = re.compile(
     re.IGNORECASE | re.UNICODE,
 )
 
-_GENERIC_CHAR_RE = re.compile(
-    r"\b("
+# Tamamı jenerik olan etiket. Görsel ipuçlarını düşürmez.
+_FULL_GENERIC_LABEL_RE = re.compile(
+    r"^(?:"
+    r"(?:(?:bir|a|an|the|some|iki|bu|that|this)\s+)?"
+    r"(?:"
     r"figür|figure|adam|kadın|kişi|kız|erkek|çocuk|yaşlı|genç|insan"
-    r"|man|woman|person|girl|boy|child|elder|young|human"
+    r"|man|woman|person|girl|boy|child|elder|human"
     r"|karakter|character|birisi|someone|biri"
     r"|protagonist|hero|heroine|mc"
-    r")\b",
+    r"|young\s+man|young\s+woman|old\s+man|old\s+woman"
+    r")s?"
+    r")$",
     re.IGNORECASE | re.UNICODE,
 )
+
+_GENERIC_SINGLE_WORDS = {
+    "protagonist", "hero", "heroine", "mc", "character", "karakter",
+    "someone", "birisi", "biri", "figure", "figür", "adam", "kadın",
+    "man", "woman", "person", "girl", "boy", "kişi", "kız", "erkek",
+}
+
+
+def _is_generic_character_label(name: str) -> bool:
+    """İsim etiketi script'e girmemeli mi?"""
+    low = (name or "").strip().lower()
+    if not low:
+        return True
+    if low in _GENERIC_SINGLE_WORDS:
+        return True
+    if _BANNED_LABEL_RE.search(name):
+        return True
+    if _FULL_GENERIC_LABEL_RE.match(low):
+        return True
+    return False
 
 
 def _sanitize_characters(chars: List[str], language: str = "tr") -> List[str]:
     """
     Vision modelinin ürettiği jenerik karakter etiketlerini temizler.
 
-    'Protagonist', 'main character', 'bir adam', 'Gizemli Figür' gibi
-    etiketler ATIRENİN DIŞINA atılır. Script motoru doğal zamir kullanır.
-    Gerçek isimler (Jin-Woo, Ahmet, Varkas…) korunur.
+    'Protagonist', 'main character', 'bir adam' silinir.
+    Gerçek isimler ve kısa görsel ipuçları ('kırmızı pelerinli') korunur.
     """
     result: List[str] = []
     seen = set()
@@ -136,17 +160,9 @@ def _sanitize_characters(chars: List[str], language: str = "tr") -> List[str]:
         name = (raw or "").strip()
         if not name:
             continue
-        # Yasaklı / jenerik etiketleri tamamen çıkar — "Protagonist" ile DEĞİŞTİRME
-        if _BANNED_LABEL_RE.search(name) or _GENERIC_CHAR_RE.search(name):
+        if _is_generic_character_label(name):
             continue
-        # Çok genel tek kelimeler
-        low = name.lower().strip()
-        if low in {
-            "protagonist", "hero", "heroine", "mc", "character", "karakter",
-            "someone", "birisi", "biri", "figure", "figür",
-        }:
-            continue
-        key = low
+        key = name.lower()
         if key in seen:
             continue
         seen.add(key)
@@ -154,49 +170,56 @@ def _sanitize_characters(chars: List[str], language: str = "tr") -> List[str]:
     return result
 
 
+def _clause_text(value: str) -> str:
+    """Prompt satırı için metni sadeleştir; sondaki noktalamayı kırp."""
+    return (value or "").strip().rstrip(" .;:")
+
+
 def _scrub_generic_labels(text: str, language: str = "tr") -> str:
     """
     Üretilmiş script metninden itici etiketleri temizler.
-    'the protagonist', 'ana karakter', 'main character' vb.
+    Dil bilincine göre zamir seçer (tr→o, en→he).
     """
     if not text:
         return text
 
-    # Yaygın kalıplar → doğal zamir / boş
+    lang = (language or "tr").lower()
+    pronoun = "o" if lang.startswith("tr") else "he"
+
     replacements = [
-        # EN
-        (r"\bthe\s+main\s+character\b", "he"),
-        (r"\bour\s+main\s+character\b", "he"),
-        (r"\bmain\s+character\b", "he"),
-        (r"\bthe\s+protagonist\b", "he"),
-        (r"\bour\s+protagonist\b", "he"),
-        (r"\bprotagonist\b", "he"),
-        (r"\bthe\s+MC\b", "he"),
-        (r"\bMC\b", "he"),
-        (r"\bour\s+hero\b", "he"),
-        (r"\bthe\s+hero\b", "he"),
-        # TR
-        (r"\bana\s+karakter(?:imiz|i|in)?\b", "o"),
-        (r"\bbaş\s+karakter(?:imiz|i|in)?\b", "o"),
-        (r"\bbas\s+karakter(?:imiz|i|in)?\b", "o"),
-        (r"\bkahramanımız\b", "o"),
-        (r"\bkahramanı\b", "o"),
-        (r"\bprotagonist(?:imiz|i)?\b", "o"),
-        (r"\bmain\s+character\b", "o"),
+        (r"\bthe\s+main\s+character\b", pronoun),
+        (r"\bour\s+main\s+character\b", pronoun),
+        (r"\bmain\s+character\b", pronoun),
+        (r"\bthe\s+protagonist\b", pronoun),
+        (r"\bour\s+protagonist\b", pronoun),
+        (r"\bprotagonist(?:imiz|i)?\b", pronoun),
+        (r"\bthe\s+MC\b", pronoun),
+        (r"\bMC\b", pronoun),
+        (r"\bour\s+hero\b", pronoun),
+        (r"\bthe\s+hero\b", pronoun),
+        (r"\bana\s+karakter(?:imiz|i|in)?\b", pronoun),
+        (r"\bbaş\s+karakter(?:imiz|i|in)?\b", pronoun),
+        (r"\bbas\s+karakter(?:imiz|i|in)?\b", pronoun),
+        (r"\bkahramanımız\b", pronoun),
+        (r"\bkahramanı\b", pronoun),
     ]
     out = text
     for pat, repl in replacements:
         out = re.sub(pat, repl, out, flags=re.IGNORECASE)
 
-    # Çift boşluk / garip "he he" temizliği
     out = re.sub(r"\s{2,}", " ", out)
-    out = re.sub(r"\b(he|she|they|o)\s+\1\b", r"\1", out, flags=re.IGNORECASE)
-    # Cümle başı küçük harf düzeltmesi (basit)
-    def _cap(m: re.Match) -> str:
-        s = m.group(0)
-        return s[0] + s[1:].capitalize() if len(s) > 1 else s.upper()
-
-    out = re.sub(r"(^|[.!?]\s+)([a-z])", lambda m: m.group(1) + m.group(2).upper(), out)
+    out = re.sub(
+        rf"\b({re.escape(pronoun)}|he|she|they|o)\s+\1\b",
+        r"\1",
+        out,
+        flags=re.IGNORECASE,
+    )
+    out = re.sub(
+        r"(^|[.!?]\s+)([a-zçğıöşü])",
+        lambda m: m.group(1) + m.group(2).upper(),
+        out,
+        flags=re.UNICODE,
+    )
     return out.strip()
 
 
@@ -493,28 +516,32 @@ class ScriptGenerator:
             if data.get("error") or data.get("parse_error"):
                 analysis_lines.append(f"Panel {i + 1}: [analiz başarısız]")
                 continue
-            scene     = _scrub_generic_labels(data.get("scene", "") or "", language)
-            action    = _scrub_generic_labels(data.get("action", "") or "", language)
+            scene     = _clause_text(_scrub_generic_labels(data.get("scene", "") or "", language))
+            action    = _clause_text(_scrub_generic_labels(data.get("action", "") or "", language))
             clean_chars = _sanitize_characters(data.get("characters", []), language)
             if clean_chars:
                 chars = ", ".join(clean_chars)
             else:
                 chars = "(isim yok — zamir kullan, protagonist/main character deme)"
             dialogues = "; ".join(data.get("dialogues", [])[:2])
-            mood      = data.get("mood", "")
-            setting   = data.get("setting", "")
+            mood      = _clause_text(data.get("mood", "") or "")
+            setting   = _clause_text(data.get("setting", "") or "")
             important = data.get("important", None)
-            line = (
-                f'Panel {i + 1} (image_index={i}): '
-                f'Sahne: {scene}. Aksiyon: {action}. '
-                f'Karakterler: {chars}. '
-                f'Diyalog: {dialogues}. Atmosfer: {mood}.'
-            )
+            parts = [f"Panel {i + 1} (image_index={i}):"]
+            if scene:
+                parts.append(f"Sahne: {scene}.")
+            if action:
+                parts.append(f"Aksiyon: {action}.")
+            parts.append(f"Karakterler: {chars}.")
+            if dialogues:
+                parts.append(f"Diyalog: {dialogues}.")
+            if mood:
+                parts.append(f"Atmosfer: {mood}.")
             if setting:
-                line += f" Mekan: {setting}."
+                parts.append(f"Mekan: {setting}.")
             if important is True:
-                line += " [ÖNEMLİ BEAT]"
-            analysis_lines.append(line)
+                parts.append("[ÖNEMLİ BEAT]")
+            analysis_lines.append(" ".join(parts))
 
         analysis_data = "\n".join(analysis_lines)
 
@@ -583,8 +610,8 @@ class ScriptGenerator:
         length_desc = lengths.get(length, length)
         lang_label = LANGUAGE_LABELS.get(language, language)
 
-        scene = _scrub_generic_labels(analysis.get("scene", "") or "", language)
-        action = _scrub_generic_labels(analysis.get("action", "") or "", language)
+        scene = _clause_text(_scrub_generic_labels(analysis.get("scene", "") or "", language))
+        action = _clause_text(_scrub_generic_labels(analysis.get("action", "") or "", language))
         clean_chars = _sanitize_characters(analysis.get("characters", []), language)
         chars = (
             ", ".join(clean_chars)
@@ -592,7 +619,7 @@ class ScriptGenerator:
             else "(isim yok — zamir kullan, protagonist/main character deme)"
         )
         dialogues = "; ".join(analysis.get("dialogues", [])[:2])
-        mood = analysis.get("mood", "")
+        mood = _clause_text(analysis.get("mood", "") or "")
 
         # Komşu segmentler — anlatı sürekliliği
         prev_text = ""
