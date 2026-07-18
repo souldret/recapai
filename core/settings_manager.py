@@ -184,7 +184,7 @@ class SettingsManager(QObject):
             },
             "defaults": {
                 "vision_model": "google/gemini-2.5-flash",
-                "script_model": "google/gemini-2.5-flash",
+                "script_model": "anthropic/claude-sonnet-4",
                 "tts_engine": "edge-tts",
                 "tts_voice": "tr-TR-AhmetNeural",
             },

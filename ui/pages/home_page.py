@@ -542,8 +542,8 @@ class HomePage(QWidget):
 
         app = self._app_state
         api_key      = app.get_setting("api", "openrouter_api_key", default="")
-        vision_model = app.get_setting("defaults", "vision_model",  default="google/gemini-2.0-flash-exp:free")
-        script_model = app.get_setting("defaults", "script_model",  default="anthropic/claude-3.5-sonnet")
+        vision_model = app.get_setting("defaults", "vision_model",  default="google/gemini-2.5-flash")
+        script_model = app.get_setting("defaults", "script_model",  default="anthropic/claude-sonnet-4")
         tts_engine   = app.get_setting("defaults", "tts_engine",    default="edge-tts")
         tts_voice    = app.get_setting("defaults", "tts_voice",     default="tr-TR-AhmetNeural")
 

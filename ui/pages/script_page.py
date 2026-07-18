@@ -563,15 +563,35 @@ class ScriptPage(QWidget):
     def _populate_model_combo(self) -> None:
         self.model_combo.clear()
         try:
-            data = json.loads(Path("config/models.json").read_text(encoding="utf-8"))
-            for m in data.get("script_models", []):
-                label = m["name"]
-                if m.get("recommended"):
-                    label += " (Tavsiye Edilen)"
+            from core.model_catalog import get_models, format_model_label, model_tooltip, default_model_id
+            models = get_models("script_models")
+            if not models:
+                raise ValueError("boş katalog")
+            for m in models:
+                label = format_model_label(m)
                 self.model_combo.addItem(label, m["id"])
-        except Exception as exc:
-            logger.error("Model listesi yüklenemedi: %s", exc)
-            self.model_combo.addItem("Claude 3.5 Sonnet", "anthropic/claude-3.5-sonnet")
+                idx = self.model_combo.count() - 1
+                tip = model_tooltip(m)
+                if tip:
+                    self.model_combo.setItemData(idx, tip, Qt.ItemDataRole.ToolTipRole)
+            pref = default_model_id("script_models")
+            if pref:
+                i = self.model_combo.findData(pref)
+                if i >= 0:
+                    self.model_combo.setCurrentIndex(i)
+        except Exception:
+            self.model_combo.addItem(
+                "Claude Sonnet 4  ·  Fiyat/Performans  [$$$]",
+                "anthropic/claude-sonnet-4",
+            )
+            self.model_combo.addItem(
+                "DeepSeek V3  ·  Bütçe  [$]",
+                "deepseek/deepseek-chat-v3-0324",
+            )
+            self.model_combo.addItem(
+                "Gemini 2.5 Flash  ·  Fiyat/Performans  [$]",
+                "google/gemini-2.5-flash",
+            )
 
     def _get_api_key(self) -> str:
         return self.ctx.app_state.get_setting("api", "openrouter_api_key", default="")

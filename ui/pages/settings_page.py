@@ -93,10 +93,14 @@ class ModelTestWorker(QThread):
 
 def _load_models_list(category: str) -> list:
     try:
-        data = json.loads(Path("config/models.json").read_text(encoding="utf-8"))
-        return data.get(category, [])
+        from core.model_catalog import get_models
+        return get_models(category)
     except Exception:
-        return []
+        try:
+            data = json.loads(Path("config/models.json").read_text(encoding="utf-8"))
+            return data.get(category, [])
+        except Exception:
+            return []
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -753,17 +757,21 @@ class ModelTestTab(QWidget):
         """Combo kutusunu config/models.json ile doldurur."""
         self.model_combo.clear()
         try:
-            data = json.loads(Path("config/models.json").read_text(encoding="utf-8"))
+            from core.model_catalog import get_models, format_model_label, model_tooltip
             self.model_combo.addItem("── Vision Modelleri ──", None)
-            for m in data.get("vision_models", []):
-                cost = m.get("cost", "")
-                label = f"{m['name']}  [{cost}]" if cost else m["name"]
-                self.model_combo.addItem(label, m["id"])
+            for m in get_models("vision_models"):
+                self.model_combo.addItem(format_model_label(m), m["id"])
+                idx = self.model_combo.count() - 1
+                tip = model_tooltip(m)
+                if tip:
+                    self.model_combo.setItemData(idx, tip, Qt.ItemDataRole.ToolTipRole)
             self.model_combo.addItem("── Script Modelleri ──", None)
-            for m in data.get("script_models", []):
-                cost = m.get("cost", "")
-                label = f"{m['name']}  [{cost}]" if cost else m["name"]
-                self.model_combo.addItem(label, m["id"])
+            for m in get_models("script_models"):
+                self.model_combo.addItem(format_model_label(m), m["id"])
+                idx = self.model_combo.count() - 1
+                tip = model_tooltip(m)
+                if tip:
+                    self.model_combo.setItemData(idx, tip, Qt.ItemDataRole.ToolTipRole)
         except Exception as exc:
             logger.error("Model combo doldurulamadı: %s", exc)
 
@@ -1090,25 +1098,34 @@ class SettingsPage(QWidget):
 
         fv.addWidget(self._field_label("Vision Modeli (gorsel analiz):"))
         self.vision_model_combo = QComboBox()
-        self.vision_model_combo.setFixedWidth(360)
-        for m in _load_models_list("vision_models"):
-            label = m["name"]
-            if m.get("recommended"):
-                label += "  [Onerilen]"
-            cost = m.get("cost", "")
-            if cost:
-                label += f"  [{cost}]"
-            self.vision_model_combo.addItem(label, m["id"])
+        self.vision_model_combo.setFixedWidth(420)
+        try:
+            from core.model_catalog import format_model_label, model_tooltip
+            for m in _load_models_list("vision_models"):
+                self.vision_model_combo.addItem(format_model_label(m), m["id"])
+                idx = self.vision_model_combo.count() - 1
+                tip = model_tooltip(m)
+                if tip:
+                    self.vision_model_combo.setItemData(idx, tip, Qt.ItemDataRole.ToolTipRole)
+        except Exception:
+            for m in _load_models_list("vision_models"):
+                self.vision_model_combo.addItem(m.get("name", m.get("id", "?")), m["id"])
         fv.addWidget(self.vision_model_combo)
 
         fv.addWidget(self._field_label("Script Modeli (metin olusturma):"))
         self.script_model_combo = QComboBox()
-        self.script_model_combo.setFixedWidth(360)
-        for m in _load_models_list("script_models"):
-            label = m["name"]
-            if m.get("recommended"):
-                label += "  [Onerilen]"
-            self.script_model_combo.addItem(label, m["id"])
+        self.script_model_combo.setFixedWidth(420)
+        try:
+            from core.model_catalog import format_model_label, model_tooltip
+            for m in _load_models_list("script_models"):
+                self.script_model_combo.addItem(format_model_label(m), m["id"])
+                idx = self.script_model_combo.count() - 1
+                tip = model_tooltip(m)
+                if tip:
+                    self.script_model_combo.setItemData(idx, tip, Qt.ItemDataRole.ToolTipRole)
+        except Exception:
+            for m in _load_models_list("script_models"):
+                self.script_model_combo.addItem(m.get("name", m.get("id", "?")), m["id"])
         fv.addWidget(self.script_model_combo)
 
         v.addWidget(frame)

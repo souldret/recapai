@@ -335,20 +335,32 @@ class AnalysisPage(QWidget):
 
     def _populate_model_combo(self) -> None:
         self.model_combo.clear()
-        from pathlib import Path
         try:
-            data = json.loads(Path("config/models.json").read_text(encoding="utf-8"))
-            for m in data.get("vision_models", []):
-                label = m["name"]
-                if m.get("recommended"):
-                    label += " (Tavsiye Edilen)"
-                cost = m.get("cost", "")
-                if cost:
-                    label += f"  [{cost}]"
+            from core.model_catalog import get_models, format_model_label, model_tooltip, default_model_id
+            models = get_models("vision_models")
+            if not models:
+                raise ValueError("boş katalog")
+            for m in models:
+                label = format_model_label(m)
                 self.model_combo.addItem(label, m["id"])
+                idx = self.model_combo.count() - 1
+                tip = model_tooltip(m)
+                if tip:
+                    self.model_combo.setItemData(idx, tip, Qt.ItemDataRole.ToolTipRole)
+            # Varsayılan: fiyat/performans önerisi
+            pref = default_model_id("vision_models")
+            if pref:
+                i = self.model_combo.findData(pref)
+                if i >= 0:
+                    self.model_combo.setCurrentIndex(i)
         except Exception as exc:
             logger.error("Model listesi yüklenemedi: %s", exc)
-            self.model_combo.addItem("Gemini 2.0 Flash", "google/gemini-2.0-flash-exp:free")
+            self.model_combo.addItem(
+                "Gemini 2.5 Flash  ·  Fiyat/Performans  [$]",
+                "google/gemini-2.5-flash",
+            )
+            self.model_combo.addItem("GPT-4o Mini  ·  Bütçe  [$]", "openai/gpt-4o-mini")
+            self.model_combo.addItem("Claude Sonnet 4  ·  Performans  [$$$]", "anthropic/claude-sonnet-4")
 
     def _log(self, message: str) -> None:
         self.log_view.append(message)
