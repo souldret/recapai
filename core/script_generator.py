@@ -100,47 +100,104 @@ def _is_first_chapter(chapter: Chapter) -> bool:
     return False
 
 
+# İtici / jenerik etiketler — prompt'a ve metne girmemeli
+_BANNED_LABEL_RE = re.compile(
+    r"\b("
+    r"protagonist|main\s*character|main\s*char|mc\b"
+    r"|ana\s*karakter|baş\s*karakter|bas\s*karakter|kahramanımız|our\s*hero"
+    r"|the\s*hero|the\s*mc|gizemli\s*yabancı|mysterious\s*stranger"
+    r"|gizemli\s*figür|mysterious\s*figure|cloaked\s*figure"
+    r")\b",
+    re.IGNORECASE | re.UNICODE,
+)
+
+_GENERIC_CHAR_RE = re.compile(
+    r"\b("
+    r"figür|figure|adam|kadın|kişi|kız|erkek|çocuk|yaşlı|genç|insan"
+    r"|man|woman|person|girl|boy|child|elder|young|human"
+    r"|karakter|character|birisi|someone|biri"
+    r"|protagonist|hero|heroine|mc"
+    r")\b",
+    re.IGNORECASE | re.UNICODE,
+)
+
+
 def _sanitize_characters(chars: List[str], language: str = "tr") -> List[str]:
     """
     Vision modelinin ürettiği jenerik karakter etiketlerini temizler.
-    'Gizemli Figür', 'Mantar Figürü', 'bir adam' gibi görsel tasvirler
-    yerine anlatıcının doğal kullanabileceği rol/zamir döndürür.
 
-    Gerçek isimler (tek kelimeli özel isim veya bilinen isim kalıbı) dokunulmadan bırakılır.
+    'Protagonist', 'main character', 'bir adam', 'Gizemli Figür' gibi
+    etiketler ATIRENİN DIŞINA atılır. Script motoru doğal zamir kullanır.
+    Gerçek isimler (Jin-Woo, Ahmet, Varkas…) korunur.
     """
-    # Jenerik kelime kalıpları — bunları içeren etiketler temizlenir
-    GENERIC_PATTERNS = re.compile(
-        r"\b(figür|figure|adam|kadın|kişi|kız|erkek|çocuk|yaşlı|genç|insan"
-        r"|man|woman|person|girl|boy|child|elder|young|human"
-        r"|karakter|character|birisi|someone|biri)\b",
-        re.IGNORECASE | re.UNICODE,
-    )
-
-    # Dile göre yedek unvanlar (sırayla tüketilir)
-    FALLBACKS = {
-        "tr": ["Protagonist", "Savaşçı", "Gizemli Yabancı", "Rakip", "Müttefik",
-               "Lider", "Düşman", "Yardımcı", "Gizli Güç"],
-        "en": ["Protagonist", "Warrior", "Mysterious Stranger", "Rival", "Ally",
-               "Leader", "Enemy", "Companion", "Hidden Power"],
-    }
-    fallback_pool = list(FALLBACKS.get(language, FALLBACKS["tr"]))
-    fallback_idx = 0
-
-    result = []
-    for name in chars:
-        name = name.strip()
+    result: List[str] = []
+    seen = set()
+    for raw in chars or []:
+        name = (raw or "").strip()
         if not name:
             continue
-        if GENERIC_PATTERNS.search(name):
-            # Jenerik — fallback unvan ata (aynı jenerik etiket tekrar gelirse
-            # aynı unvanı korumak için basit cache kullanmıyoruz; sırayla ver)
-            if fallback_idx < len(fallback_pool):
-                result.append(fallback_pool[fallback_idx])
-                fallback_idx += 1
-            # Fallback bittiyse karakteri tamamen çıkar (anlatıcı zamir kullanır)
-        else:
-            result.append(name)
+        # Yasaklı / jenerik etiketleri tamamen çıkar — "Protagonist" ile DEĞİŞTİRME
+        if _BANNED_LABEL_RE.search(name) or _GENERIC_CHAR_RE.search(name):
+            continue
+        # Çok genel tek kelimeler
+        low = name.lower().strip()
+        if low in {
+            "protagonist", "hero", "heroine", "mc", "character", "karakter",
+            "someone", "birisi", "biri", "figure", "figür",
+        }:
+            continue
+        key = low
+        if key in seen:
+            continue
+        seen.add(key)
+        result.append(name)
     return result
+
+
+def _scrub_generic_labels(text: str, language: str = "tr") -> str:
+    """
+    Üretilmiş script metninden itici etiketleri temizler.
+    'the protagonist', 'ana karakter', 'main character' vb.
+    """
+    if not text:
+        return text
+
+    # Yaygın kalıplar → doğal zamir / boş
+    replacements = [
+        # EN
+        (r"\bthe\s+main\s+character\b", "he"),
+        (r"\bour\s+main\s+character\b", "he"),
+        (r"\bmain\s+character\b", "he"),
+        (r"\bthe\s+protagonist\b", "he"),
+        (r"\bour\s+protagonist\b", "he"),
+        (r"\bprotagonist\b", "he"),
+        (r"\bthe\s+MC\b", "he"),
+        (r"\bMC\b", "he"),
+        (r"\bour\s+hero\b", "he"),
+        (r"\bthe\s+hero\b", "he"),
+        # TR
+        (r"\bana\s+karakter(?:imiz|i|in)?\b", "o"),
+        (r"\bbaş\s+karakter(?:imiz|i|in)?\b", "o"),
+        (r"\bbas\s+karakter(?:imiz|i|in)?\b", "o"),
+        (r"\bkahramanımız\b", "o"),
+        (r"\bkahramanı\b", "o"),
+        (r"\bprotagonist(?:imiz|i)?\b", "o"),
+        (r"\bmain\s+character\b", "o"),
+    ]
+    out = text
+    for pat, repl in replacements:
+        out = re.sub(pat, repl, out, flags=re.IGNORECASE)
+
+    # Çift boşluk / garip "he he" temizliği
+    out = re.sub(r"\s{2,}", " ", out)
+    out = re.sub(r"\b(he|she|they|o)\s+\1\b", r"\1", out, flags=re.IGNORECASE)
+    # Cümle başı küçük harf düzeltmesi (basit)
+    def _cap(m: re.Match) -> str:
+        s = m.group(0)
+        return s[0] + s[1:].capitalize() if len(s) > 1 else s.upper()
+
+    out = re.sub(r"(^|[.!?]\s+)([a-z])", lambda m: m.group(1) + m.group(2).upper(), out)
+    return out.strip()
 
 
 def _parse_segments(text: str) -> List[dict]:
@@ -436,9 +493,13 @@ class ScriptGenerator:
             if data.get("error") or data.get("parse_error"):
                 analysis_lines.append(f"Panel {i + 1}: [analiz başarısız]")
                 continue
-            scene     = data.get("scene", "")
-            action    = data.get("action", "")
-            chars     = ", ".join(_sanitize_characters(data.get("characters", []), language))
+            scene     = _scrub_generic_labels(data.get("scene", "") or "", language)
+            action    = _scrub_generic_labels(data.get("action", "") or "", language)
+            clean_chars = _sanitize_characters(data.get("characters", []), language)
+            if clean_chars:
+                chars = ", ".join(clean_chars)
+            else:
+                chars = "(isim yok — zamir kullan, protagonist/main character deme)"
             dialogues = "; ".join(data.get("dialogues", [])[:2])
             mood      = data.get("mood", "")
             setting   = data.get("setting", "")
@@ -476,6 +537,9 @@ class ScriptGenerator:
         segments = []
         for item in raw:
             text = item.get("text", "").strip()
+            if len(text) < 5:
+                continue
+            text = _scrub_generic_labels(text, language)
             if len(text) < 5:
                 continue
             idx = int(item.get("image_index", len(segments)))
@@ -519,9 +583,14 @@ class ScriptGenerator:
         length_desc = lengths.get(length, length)
         lang_label = LANGUAGE_LABELS.get(language, language)
 
-        scene = analysis.get("scene", "")
-        action = analysis.get("action", "")
-        chars = ", ".join(_sanitize_characters(analysis.get("characters", []), language))
+        scene = _scrub_generic_labels(analysis.get("scene", "") or "", language)
+        action = _scrub_generic_labels(analysis.get("action", "") or "", language)
+        clean_chars = _sanitize_characters(analysis.get("characters", []), language)
+        chars = (
+            ", ".join(clean_chars)
+            if clean_chars
+            else "(isim yok — zamir kullan, protagonist/main character deme)"
+        )
         dialogues = "; ".join(analysis.get("dialogues", [])[:2])
         mood = analysis.get("mood", "")
 
@@ -573,6 +642,7 @@ class ScriptGenerator:
         # Model bazen "text:" öneki koyabilir
         if text.lower().startswith("text:"):
             text = text[5:].strip().strip('"')
+        text = _scrub_generic_labels(text, language)
         if len(text) < 5:
             raise ValueError("LLM çok kısa metin döndürdü.")
 

@@ -7,6 +7,7 @@ import pytest
 
 from core.script_generator import (
     _sanitize_characters,
+    _scrub_generic_labels,
     _is_first_chapter,
     list_niches,
     CHUNK_SIZE,
@@ -17,18 +18,24 @@ from core.models import Chapter
 
 
 class TestSanitizeCharacters:
-    """_sanitize_characters — jenerik etiketleri rol tabanlı isimlerle değiştirir."""
+    """_sanitize_characters — jenerik etiketleri SİLER (Protagonist ile değiştirmez)."""
 
-    # ── Türkçe jenerik etiketler ──────────────────────────────────
-
-    def test_replaces_bir_adam(self):
+    def test_drops_bir_adam(self):
         result = _sanitize_characters(["Bir adam"], language="tr")
-        assert "Bir adam" not in result
-        assert len(result) == 1
+        assert result == []
 
-    def test_replaces_gizemli_figur(self):
+    def test_drops_gizemli_figur(self):
         result = _sanitize_characters(["Gizemli Figür"], language="tr")
         assert "Gizemli Figür" not in result
+        assert "Protagonist" not in result
+
+    def test_drops_protagonist(self):
+        result = _sanitize_characters(["Protagonist", "Main Character", "MC"], language="en")
+        assert result == []
+
+    def test_drops_ana_karakter(self):
+        result = _sanitize_characters(["Ana Karakter", "Kahramanımız"], language="tr")
+        assert result == []
 
     def test_keeps_named_characters(self):
         result = _sanitize_characters(["Ahmet", "Mehmet"], language="tr")
@@ -36,51 +43,50 @@ class TestSanitizeCharacters:
         assert "Mehmet" in result
 
     def test_mixed_list(self):
-        chars = ["Ahmet", "Bir adam", "Gizemli Figür"]
+        chars = ["Ahmet", "Bir adam", "Protagonist", "Gizemli Figür"]
         result = _sanitize_characters(chars, language="tr")
-        assert "Ahmet" in result
-        assert "Bir adam" not in result
+        assert result == ["Ahmet"]
 
     def test_empty_list(self):
-        result = _sanitize_characters([], language="tr")
-        assert result == []
+        assert _sanitize_characters([], language="tr") == []
 
     def test_single_named_char(self):
-        result = _sanitize_characters(["Leyla"], language="tr")
-        assert result == ["Leyla"]
-
-    # ── İngilizce jenerik etiketler ──────────────────────────────
+        assert _sanitize_characters(["Leyla"], language="tr") == ["Leyla"]
 
     def test_replaces_a_man_english(self):
-        result = _sanitize_characters(["A man"], language="en")
-        assert "A man" not in result
-
-    def test_replaces_mysterious_figure_english(self):
-        result = _sanitize_characters(["Mysterious Figure"], language="en")
-        assert "Mysterious Figure" not in result
+        assert "A man" not in _sanitize_characters(["A man"], language="en")
 
     def test_keeps_english_named_chars(self):
         result = _sanitize_characters(["John", "Sarah"], language="en")
-        assert "John" in result
-        assert "Sarah" in result
-
-    # ── Uzunluk koruması ─────────────────────────────────────────
+        assert "John" in result and "Sarah" in result
 
     def test_output_length_not_longer_than_input(self):
-        # Jenerik etiketler fallback'e dönüşür veya çıkarılabilir; asla uzamaz
         chars = ["Ahmet", "Bir adam", "Gizemli Figür", "Fatma"]
         result = _sanitize_characters(chars, language="tr")
         assert len(result) <= len(chars)
-        assert "Ahmet" in result
-        assert "Fatma" in result
+        assert "Ahmet" in result and "Fatma" in result
 
     def test_large_list_of_named_chars(self):
-        """Jenerik olmayan isimler değiştirilmez ve korunur."""
-        # "Karakter X" jenerik etiket sayılmaz; dolayısıyla tüm liste korunmalı
         chars = ["Ahmet", "Fatma", "Leyla", "Can", "Ali", "Zeynep",
                  "Hasan", "Ayşe", "Mehmet", "Selin"]
         result = _sanitize_characters(chars, language="tr")
         assert len(result) == len(chars)
+
+
+class TestScrubGenericLabels:
+    def test_scrub_en_protagonist(self):
+        t = _scrub_generic_labels("The protagonist walks in. Main character fights.", "en")
+        assert "protagonist" not in t.lower()
+        assert "main character" not in t.lower()
+
+    def test_scrub_tr_ana_karakter(self):
+        t = _scrub_generic_labels("Ana karakter kapıyı açar. Protagonist kaçar.", "tr")
+        assert "ana karakter" not in t.lower()
+        assert "protagonist" not in t.lower()
+
+    def test_keeps_real_names(self):
+        t = _scrub_generic_labels("Jin-Woo draws his blade.", "en")
+        assert "Jin-Woo" in t
 
 
 class TestChunkSize:
