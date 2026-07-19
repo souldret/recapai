@@ -308,7 +308,7 @@ class PipelineWorker(QThread):
                 try:
                     from core.settings_manager import SettingsManager
                     default_speed = float(
-                        SettingsManager.instance().get("tts", "default_speed", 1.0)
+                        SettingsManager.instance().get("tts.default_speed", 1.0)
                     )
                 except Exception:
                     default_speed = 1.0
