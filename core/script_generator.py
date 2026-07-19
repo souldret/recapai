@@ -147,17 +147,92 @@ def _is_generic_character_label(name: str) -> bool:
     return False
 
 
-def _sanitize_characters(chars: List[str], language: str = "tr") -> List[str]:
+def _character_name_from_item(raw) -> str:
+    """
+    Vision çıktısındaki karakter öğesini string isme çevirir.
+    Desteklenen: "Jin-Woo", {"name": "..."}, {"character": "..."}, {"role": "..."}
+    """
+    if raw is None:
+        return ""
+    if isinstance(raw, str):
+        return raw.strip()
+    if isinstance(raw, dict):
+        for key in ("name", "character", "char", "label", "id", "role", "title"):
+            val = raw.get(key)
+            if isinstance(val, str) and val.strip():
+                return val.strip()
+        # Tek string değer varsa onu dene
+        for val in raw.values():
+            if isinstance(val, str) and val.strip():
+                return val.strip()
+        return ""
+    if isinstance(raw, (list, tuple)):
+        # ["Jin-Woo"] gibi
+        for item in raw:
+            name = _character_name_from_item(item)
+            if name:
+                return name
+        return ""
+    return str(raw).strip()
+
+
+def _normalize_string_list(items) -> List[str]:
+    """dialogues vb. alanları string listesine çevirir."""
+    if items is None:
+        return []
+    if isinstance(items, str):
+        s = items.strip()
+        return [s] if s else []
+    if not isinstance(items, (list, tuple)):
+        s = str(items).strip()
+        return [s] if s else []
+    out: List[str] = []
+    for it in items:
+        if it is None:
+            continue
+        if isinstance(it, str):
+            s = it.strip()
+            if s:
+                out.append(s)
+        elif isinstance(it, dict):
+            # {"text": "..."} / {"dialogue": "..."}
+            for key in ("text", "dialogue", "line", "content", "speech"):
+                val = it.get(key)
+                if isinstance(val, str) and val.strip():
+                    out.append(val.strip())
+                    break
+            else:
+                for val in it.values():
+                    if isinstance(val, str) and val.strip():
+                        out.append(val.strip())
+                        break
+        else:
+            s = str(it).strip()
+            if s:
+                out.append(s)
+    return out
+
+
+def _sanitize_characters(chars, language: str = "tr") -> List[str]:
     """
     Vision modelinin ürettiği jenerik karakter etiketlerini temizler.
 
     'Protagonist', 'main character', 'bir adam' silinir.
     Gerçek isimler ve kısa görsel ipuçları ('kırmızı pelerinli') korunur.
+    characters alanı string listesi veya dict listesi olabilir.
     """
     result: List[str] = []
     seen = set()
-    for raw in chars or []:
-        name = (raw or "").strip()
+    if chars is None:
+        return result
+    # Tek string / dict gelirse sarmala
+    if isinstance(chars, (str, dict)):
+        chars = [chars]
+    if not isinstance(chars, (list, tuple)):
+        chars = [chars]
+
+    for raw in chars:
+        name = _character_name_from_item(raw)
         if not name:
             continue
         if _is_generic_character_label(name):
@@ -170,9 +245,24 @@ def _sanitize_characters(chars: List[str], language: str = "tr") -> List[str]:
     return result
 
 
-def _clause_text(value: str) -> str:
+def _clause_text(value) -> str:
     """Prompt satırı için metni sadeleştir; sondaki noktalamayı kırp."""
-    return (value or "").strip().rstrip(" .;:")
+    if value is None:
+        return ""
+    if not isinstance(value, str):
+        if isinstance(value, dict):
+            # {"text": "..."} gibi
+            for key in ("text", "description", "scene", "action", "summary"):
+                if isinstance(value.get(key), str):
+                    value = value[key]
+                    break
+            else:
+                value = " ".join(str(v) for v in value.values() if v)
+        elif isinstance(value, (list, tuple)):
+            value = " ".join(str(v) for v in value if v)
+        else:
+            value = str(value)
+    return value.strip().rstrip(" .;:")
 
 
 def _scrub_generic_labels(text: str, language: str = "tr") -> str:
@@ -516,16 +606,20 @@ class ScriptGenerator:
             if data.get("error") or data.get("parse_error"):
                 analysis_lines.append(f"Panel {i + 1}: [analiz başarısız]")
                 continue
-            scene     = _clause_text(_scrub_generic_labels(data.get("scene", "") or "", language))
-            action    = _clause_text(_scrub_generic_labels(data.get("action", "") or "", language))
+            scene = _clause_text(
+                _scrub_generic_labels(_clause_text(data.get("scene", "")), language)
+            )
+            action = _clause_text(
+                _scrub_generic_labels(_clause_text(data.get("action", "")), language)
+            )
             clean_chars = _sanitize_characters(data.get("characters", []), language)
             if clean_chars:
                 chars = ", ".join(clean_chars)
             else:
                 chars = "(isim yok — zamir kullan, protagonist/main character deme)"
-            dialogues = "; ".join(data.get("dialogues", [])[:2])
-            mood      = _clause_text(data.get("mood", "") or "")
-            setting   = _clause_text(data.get("setting", "") or "")
+            dialogues = "; ".join(_normalize_string_list(data.get("dialogues", []))[:2])
+            mood      = _clause_text(data.get("mood", ""))
+            setting   = _clause_text(data.get("setting", ""))
             important = data.get("important", None)
             parts = [f"Panel {i + 1} (image_index={i}):"]
             if scene:
@@ -610,16 +704,20 @@ class ScriptGenerator:
         length_desc = lengths.get(length, length)
         lang_label = LANGUAGE_LABELS.get(language, language)
 
-        scene = _clause_text(_scrub_generic_labels(analysis.get("scene", "") or "", language))
-        action = _clause_text(_scrub_generic_labels(analysis.get("action", "") or "", language))
+        scene = _clause_text(
+            _scrub_generic_labels(_clause_text(analysis.get("scene", "")), language)
+        )
+        action = _clause_text(
+            _scrub_generic_labels(_clause_text(analysis.get("action", "")), language)
+        )
         clean_chars = _sanitize_characters(analysis.get("characters", []), language)
         chars = (
             ", ".join(clean_chars)
             if clean_chars
             else "(isim yok — zamir kullan, protagonist/main character deme)"
         )
-        dialogues = "; ".join(analysis.get("dialogues", [])[:2])
-        mood = _clause_text(analysis.get("mood", "") or "")
+        dialogues = "; ".join(_normalize_string_list(analysis.get("dialogues", []))[:2])
+        mood = _clause_text(analysis.get("mood", ""))
 
         # Komşu segmentler — anlatı sürekliliği
         prev_text = ""

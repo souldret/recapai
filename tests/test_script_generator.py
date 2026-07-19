@@ -22,6 +22,20 @@ from core.models import Chapter
 class TestSanitizeCharacters:
     """_sanitize_characters — jenerik etiketleri SİLER (Protagonist ile değiştirmez)."""
 
+    def test_dict_characters_do_not_crash(self):
+        # Vision bazen {"name": "..."} döndürür
+        result = _sanitize_characters(
+            [{"name": "Jin-Woo"}, {"name": "Protagonist"}, {"role": "bir adam"}, "Ahmet"],
+            language="en",
+        )
+        assert "Jin-Woo" in result
+        assert "Ahmet" in result
+        assert "Protagonist" not in result
+
+    def test_single_dict(self):
+        result = _sanitize_characters({"name": "Varkas"}, language="en")
+        assert result == ["Varkas"]
+
     def test_drops_bir_adam(self):
         result = _sanitize_characters(["Bir adam"], language="tr")
         assert result == []
