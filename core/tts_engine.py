@@ -464,6 +464,50 @@ class KokoroTTSEngine(TTSEngine):
                                 "lang_code": lang_code, "gender": v["gender"], "engine": "kokoro"})
         return result
 
+    @staticmethod
+    def _coerce_speed(speed=None, **kwargs) -> float:
+        """
+        Hız parametresini float'a çevirir.
+        Kabul: speed=1.2, speed='1.2', rate='+20%' (Edge formatı yedek).
+        """
+        val = speed
+        if val is None:
+            val = kwargs.get("speed", None)
+        if val is None and "rate" in kwargs:
+            # Edge-TTS rate: '+20%' → 1.20
+            rate = str(kwargs.get("rate", "+0%")).strip().replace("%", "")
+            try:
+                val = 1.0 + (float(rate) / 100.0)
+            except (TypeError, ValueError):
+                val = 1.0
+        try:
+            val = float(val)
+        except (TypeError, ValueError):
+            val = 1.0
+        # Kokoro pratik aralık
+        if val < 0.5:
+            val = 0.5
+        if val > 2.0:
+            val = 2.0
+        return val
+
+    @staticmethod
+    def _chunk_to_numpy(audio, np):
+        """Kokoro Result/tensor/ndarray ses parçasını numpy float32'ye çevirir."""
+        if audio is None:
+            return None
+        # torch tensor
+        if hasattr(audio, "detach"):
+            audio = audio.detach().cpu().numpy()
+        elif hasattr(audio, "cpu") and hasattr(audio, "numpy"):
+            audio = audio.cpu().numpy()
+        arr = np.asarray(audio, dtype=np.float32)
+        if arr.ndim > 1:
+            arr = arr.reshape(-1)
+        if arr.size == 0:
+            return None
+        return arr
+
     def synthesize(self, text: str, voice: str, output_path: str, speed: float = 1.0, **kwargs) -> float:
         if not KokoroTTSEngine._cls_available:
             error = KokoroTTSEngine._cls_error or "Kokoro kullanamıyor."
@@ -473,6 +517,7 @@ class KokoroTTSEngine(TTSEngine):
         import soundfile as sf
 
         text = normalize_caps(text)
+        speed = self._coerce_speed(speed, **kwargs)
         lang_code = voice[0] if voice else "a"
         if lang_code not in self.SUPPORTED_LANGS:
             logger.warning("Bilinmeyen lang_code '%s', 'a' kullaniliyor.", lang_code)
@@ -481,10 +526,19 @@ class KokoroTTSEngine(TTSEngine):
         pipeline = self._get_pipeline(lang_code)
         audio_chunks = []
         try:
-            generator = pipeline(text=text, voice=voice, speed=speed)
-            for _gs, _ps, audio in generator:
-                if audio is not None and len(audio) > 0:
-                    audio_chunks.append(audio)
+            logger.info("Kokoro synthesize: voice=%s speed=%.2f text_len=%d", voice, speed, len(text))
+            generator = pipeline(text=text, voice=voice, speed=float(speed))
+            for item in generator:
+                # Result.audio veya (gs, ps, audio) uyumu
+                if hasattr(item, "audio"):
+                    audio = item.audio
+                elif isinstance(item, (tuple, list)) and len(item) >= 3:
+                    audio = item[2]
+                else:
+                    audio = item
+                arr = self._chunk_to_numpy(audio, np)
+                if arr is not None:
+                    audio_chunks.append(arr)
         except Exception as exc:
             raise RuntimeError(f"Kokoro sentez hatasi: {exc}") from exc
 
@@ -509,7 +563,10 @@ class KokoroTTSEngine(TTSEngine):
 
         from core.audio_processor import get_duration
         duration = get_duration(output_path)
-        logger.debug("Kokoro: '%s...' -> %s (%.1fs)", text[:30], output_path, duration)
+        logger.info(
+            "Kokoro: speed=%.2f '%s...' -> %s (%.1fs)",
+            speed, text[:30], output_path, duration,
+        )
         return duration
 
     def download_model(self, progress_callback: Optional[Callable[[str], None]] = None) -> bool:

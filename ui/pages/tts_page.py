@@ -294,12 +294,29 @@ class SettingsPanel(QFrame):
         }
 
     def get_kokoro_params(self) -> Dict:
-        return {"speed": self._kokoro_speed.value()}
+        # float garanti + cache anahtarı için yuvarla
+        speed = round(float(self._kokoro_speed.value()), 2)
+        return {"speed": speed}
 
     def get_params(self, engine_name: str) -> Dict:
         if engine_name == "edge-tts":
             return self.get_edge_params()
         return self.get_kokoro_params()
+
+    def apply_default_speed(self, speed: float = 1.0) -> None:
+        """Ayarlar sayfasındaki varsayılan hızı panellere uygular."""
+        try:
+            speed = float(speed)
+        except (TypeError, ValueError):
+            speed = 1.0
+        speed = max(0.5, min(2.0, speed))
+        self._kokoro_speed.setValue(speed)
+        # Edge rate: 1.0x → +0%, 1.2x → +20%
+        rate_pct = int(round((speed - 1.0) * 100))
+        rate_pct = max(-50, min(50, rate_pct))
+        self._edge_rate_slider.setValue(rate_pct)
+        if hasattr(self, "_edge_rate_lbl") and self._edge_rate_lbl is not None:
+            self._edge_rate_lbl.setText(f"{rate_pct:+d}%")
 
 
 # ── Ses filtresi ──────────────────────────────────────────────────────────────
@@ -667,6 +684,13 @@ class TtsPage(QWidget):
         if idx >= 0:
             self._engine_combo.setCurrentIndex(idx)
 
+        # Varsayılan hız (Ayarlar > TTS) → Kokoro/Edge paneline yansıt
+        try:
+            default_speed = self._state.get_setting("tts", "default_speed", default=1.0)
+            self._settings_panel.apply_default_speed(default_speed)
+        except Exception:
+            pass
+
         self._engine_combo.blockSignals(False)
         self._on_engine_changed(self._engine_combo.currentIndex())
 
@@ -912,6 +936,13 @@ class TtsPage(QWidget):
                 pass
 
         params = self._settings_panel.get_params(engine_name)
+        # Log: kullanıcı hız ayarının worker'a gittiğini doğrula
+        import logging as _logging
+        _logging.getLogger(__name__).info(
+            "TTS başlatılıyor: engine=%s params=%s", engine_name, params
+        )
+        if engine_name == "kokoro":
+            self._set_status(f"Kokoro hız: {params.get('speed', 1.0)}x — sentezleniyor…")
 
         project = self._state.current_project
         if project:
@@ -1100,7 +1131,8 @@ class TtsPage(QWidget):
         pass
 
     def _open_voice_preview(self) -> None:
-        engine_name  = self._engine_combo.currentData() or "edge-tts"
+        engine_name = self._engine_combo.currentData() or "edge-tts"
+        preview_params = self._settings_panel.get_params(engine_name)
         current_voice = self._voice_selector.current_voice_id()
         try:
             from core.tts_engine import TTSManager
@@ -1117,7 +1149,7 @@ class TtsPage(QWidget):
         from ui.widgets.voice_preview import VoicePreviewDialog
         dlg = VoicePreviewDialog(
             engine_name=engine_name, voices=voices,
-            current_voice=current_voice, parent=self,
+            current_voice=current_voice, params=preview_params, parent=self,
         )
         dlg.voice_selected.connect(self._voice_selector.set_voice)
         dlg.exec()

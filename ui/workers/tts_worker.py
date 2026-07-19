@@ -243,11 +243,22 @@ class TTSWorker(QThread):
             self.progress.emit(idx + 1, total, f"Sentezleniyor: Segment {idx+1}/{total}")
 
             try:
+                # Kokoro: speed açıkça geçir (kwargs kaybına karşı)
+                synth_kwargs = dict(params)
+                if self.engine_name == "kokoro" and "speed" in synth_kwargs:
+                    try:
+                        synth_kwargs["speed"] = float(synth_kwargs["speed"])
+                    except (TypeError, ValueError):
+                        synth_kwargs["speed"] = 1.0
+                    logger.info(
+                        "TTSWorker Kokoro segment %d speed=%.2f",
+                        idx, synth_kwargs["speed"],
+                    )
                 duration = engine.synthesize(
                     text=tts_text,
                     voice=voice,
                     output_path=out_path,
-                    **params,
+                    **synth_kwargs,
                 )
                 seg.audio_path = out_path
                 seg.duration   = duration

@@ -36,12 +36,20 @@ class _SynthWorker(QThread):
     done  = pyqtSignal(str)   # output_path
     error = pyqtSignal(str)
 
-    def __init__(self, engine_name: str, voice_id: str, text: str, out_path: str):
+    def __init__(
+        self,
+        engine_name: str,
+        voice_id: str,
+        text: str,
+        out_path: str,
+        params: Optional[dict] = None,
+    ):
         super().__init__()
         self.engine_name = engine_name
         self.voice_id    = voice_id
         self.text        = text
         self.out_path    = out_path
+        self.params      = params or {}
 
     def run(self) -> None:
         try:
@@ -51,6 +59,7 @@ class _SynthWorker(QThread):
                 text=self.text,
                 voice=self.voice_id,
                 output_path=self.out_path,
+                **self.params,
             )
             self.done.emit(self.out_path)
         except Exception as exc:
@@ -71,6 +80,7 @@ class VoicePreviewDialog(QDialog):
         engine_name: str,
         voices: list,
         current_voice: Optional[str] = None,
+        params: Optional[dict] = None,
         parent=None,
     ) -> None:
         super().__init__(parent)
@@ -81,6 +91,7 @@ class VoicePreviewDialog(QDialog):
         self._engine_name = engine_name
         self._voices      = voices
         self._current_voice = current_voice
+        self._params = params or {}
         self._worker: Optional[_SynthWorker] = None
         self._tmp_path: Optional[str] = None
 
@@ -220,6 +231,7 @@ class VoicePreviewDialog(QDialog):
             voice_id=voice_id,
             text=text,
             out_path=self._tmp_path,
+            params=self._params,
         )
         self._worker.done.connect(self._on_synth_done)
         self._worker.error.connect(self._on_synth_error)

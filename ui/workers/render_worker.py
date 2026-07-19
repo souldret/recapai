@@ -304,9 +304,25 @@ class PipelineWorker(QThread):
 
                 out_path = str(audio_dir / f"segment_{i:04d}.mp3")
 
-                # Cache kontrolü — TTSCache.get_cache_key() ile tutarlı key
-                tts_params = {"engine": self._tts_engine}
-                cache_key = cache.get_cache_key(seg.text, self._tts_voice, tts_params)
+                # Varsayılan TTS hızını settings'ten al
+                try:
+                    from core.settings_manager import SettingsManager
+                    default_speed = float(
+                        SettingsManager.instance().get("tts", "default_speed", 1.0)
+                    )
+                except Exception:
+                    default_speed = 1.0
+
+                synth_params = {"engine": self._tts_engine}
+                if self._tts_engine == "kokoro":
+                    synth_params["speed"] = default_speed
+                elif self._tts_engine == "edge-tts":
+                    rate_pct = int(round((default_speed - 1.0) * 100))
+                    rate_pct = max(-50, min(50, rate_pct))
+                    synth_params["rate"] = f"{rate_pct:+d}%"
+
+                # Cache kontrolü — hız parametresi dahil
+                cache_key = cache.get_cache_key(seg.text, self._tts_voice, synth_params)
                 cached = cache.get(cache_key)
                 if cached and Path(cached).exists():
                     seg.audio_path = cached
@@ -315,10 +331,14 @@ class PipelineWorker(QThread):
                     continue
 
                 try:
+                    call_kwargs = {
+                        k: v for k, v in synth_params.items() if k != "engine"
+                    }
                     duration = engine.synthesize(
                         text=seg.text,
                         voice=self._tts_voice,
                         output_path=out_path,
+                        **call_kwargs,
                     )
                     if Path(out_path).exists():
                         cache.put(cache_key, out_path)
