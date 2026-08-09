@@ -3,11 +3,8 @@ RecapAI - Render worker (QThread).
 """
 
 import logging
-import re
-import subprocess
-from datetime import datetime
 from pathlib import Path
-from typing import Any, Dict, Optional
+from typing import Any, Dict
 
 from PyQt6.QtCore import QThread, pyqtSignal
 
@@ -124,7 +121,7 @@ class RenderWorker(QThread):
                 size_mb = out.stat().st_size / 1024 / 1024
 
                 self.log.emit("─" * 50)
-                self.log.emit(f"Render tamamlandı!")
+                self.log.emit("Render tamamlandı!")
                 self.log.emit(f"Dosya boyutu: {size_mb:.1f} MB")
                 self.log.emit(f"Konum: {result}")
                 self.progress.emit(100, "0s")
@@ -214,8 +211,6 @@ class PipelineWorker(QThread):
             if self._api_key:
                 client.update_api_key(self._api_key)
             analyzer = AIAnalyzer(client)
-
-            total_imgs = len(chapter.images)
 
             def analysis_progress(done: int, total: int, msg: str) -> None:
                 pct = int(done / max(total, 1) * 100)
@@ -377,7 +372,7 @@ class PipelineWorker(QThread):
                 if pct % 10 == 0:
                     self.log.emit(f"  [Render] %{pct}  ETA: {eta}")
 
-            result = composer.compose_chapter(
+            composer.compose_chapter(
                 chapter,
                 self._render_output,
                 progress_callback=render_progress,

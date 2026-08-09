@@ -3,9 +3,7 @@ RecapAI - Video besteci (FFmpeg tabanlı).
 Görseller + ses segmentlerini alarak MP4 video oluşturur.
 """
 
-import json
 import logging
-import os
 import shutil
 import subprocess
 import tempfile
@@ -412,8 +410,6 @@ class VideoComposer:
         bg_effect = self.settings.get("bg_effect", "none")
         image_motion = self.settings.get("image_motion", "zoom_in")
 
-        total_frames = max(1, int(duration * fps))
-        zoom_delta = intensity / total_frames
         max_zoom = 1.0 + intensity
 
         # zoompan için kaynak çözünürlük: 2x — zoompan sınır dışı kırpmayı önler
@@ -530,7 +526,6 @@ class VideoComposer:
 
         # ── Slide mod mu? ──────────────────────────────────────────────────────
         is_slide = image_motion in ("slide_top", "slide_bot", "slide_right", "slide_left")
-        is_full_pan = False  # artık kullanılmıyor, full_pan _build_zoompan_vf ile işleniyor
 
         # ── VF zinciri oluştur ─────────────────────────────────────────────────
         if use_blur:
@@ -584,7 +579,7 @@ class VideoComposer:
                     f"[fg_in]scale={w}:{h}:force_original_aspect_ratio=decrease:flags=lanczos,"
                     f"pad={w}:{h}:(ow-iw)/2:(oh-ih)/2:black[fg_big];"
                     + zp +
-                    f"[bg][fg_zoomed]overlay=(W-w)/2:(H-h)/2[vout]"
+                    "[bg][fg_zoomed]overlay=(W-w)/2:(H-h)/2[vout]"
                 )
 
         elif bg_effect in ("gradient_tb", "gradient_lr"):
@@ -630,7 +625,7 @@ class VideoComposer:
                     f"[fg_in]scale={w}:{h}:force_original_aspect_ratio=decrease:flags=lanczos,"
                     f"pad={w}:{h}:(ow-iw)/2:(oh-ih)/2:black[fg_big];"
                     + zp +
-                    f"[bg][fg_zoomed]overlay=(W-w)/2:(H-h)/2[vout]"
+                    "[bg][fg_zoomed]overlay=(W-w)/2:(H-h)/2[vout]"
                 )
 
         else:

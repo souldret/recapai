@@ -295,7 +295,7 @@ class KokoroSetupDialog(QDialog):
             self._set_status("torch", False, "PyTorch kurulu degil")
             self._set_status("torch_run", False, "PyTorch kurulu degil")
         except OSError as e:
-            self._set_status("torch", False, f"PyTorch DLL hatasi")
+            self._set_status("torch", False, "PyTorch DLL hatasi")
             self._set_status("torch_run", False, f"DLL hatasi: {str(e)[:60]}")
 
         # Kokoro
@@ -1524,7 +1524,6 @@ class SettingsPage(QWidget):
             theme_file = _Path("config/theme.qss")
         try:
             qss = theme_file.read_text(encoding="utf-8")
-            from PyQt6.QtWidgets import QApplication
             QApplication.instance().setStyleSheet(qss)
             # Ayara kaydet
             try:

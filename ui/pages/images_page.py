@@ -26,6 +26,7 @@ from PyQt6.QtWidgets import (
     QFileDialog, QSplitter, QAbstractItemView, QMenu, QMessageBox,
     QSizePolicy, QSpinBox, QDoubleSpinBox, QGroupBox,
     QStackedWidget, QDialog, QDialogButtonBox, QSlider, QGridLayout,
+    QCheckBox, QScrollArea,
 )
 from PyQt6.QtCore import Qt, QSize, QThread, pyqtSignal, QPoint, QRect, QPointF, QRectF
 from PyQt6.QtGui import (
@@ -325,7 +326,6 @@ class PanelCanvas(QWidget):
         if len(sel) < 2:
             return False
 
-        import copy
         boxes_to_merge = [self._panels[i] for i in sel if i < len(self._panels)]
         if len(boxes_to_merge) < 2:
             return False
@@ -1565,9 +1565,6 @@ class MangaPanelEditor(QWidget):
         panels = self.canvas.get_panels()
         if index < 0 or index >= len(panels):
             return
-        x, y, w, h = panels[index]
-        cx = x + w / 2
-        cy = y + h / 2
         # Canvas'ı seç ve paneli ortala
         self.canvas.select_panel(index)
         self.thumb_strip.set_selected(index)
@@ -2423,7 +2420,6 @@ class PanelCropPreviewDialog(QDialog):
         self._build_ui()
 
     def _build_ui(self) -> None:
-        from PyQt6.QtWidgets import QCheckBox, QScrollArea, QGroupBox
         layout = QVBoxLayout(self)
         layout.setContentsMargins(20, 16, 20, 16)
         layout.setSpacing(12)
@@ -2487,7 +2483,6 @@ class PanelCropPreviewDialog(QDialog):
                 img_lbl.setPixmap(pm)
             cv.addWidget(img_lbl)
 
-            from PyQt6.QtWidgets import QCheckBox
             cb = QCheckBox(f"Panel {i+1}  ({w}×{h})")
             cb.setChecked(True)
             self._checks.append(cb)

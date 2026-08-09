@@ -369,8 +369,8 @@ class ZipExportWorker(QThread):
             for item in self._items:
                 if "chapter_name" not in item or "panels" not in item:
                     self.error.emit(
-                        f"ZipExportWorker: geçersiz export_items formatı. "
-                        f"Her öğe 'chapter_name' ve 'panels' anahtarı içermelidir."
+                        "ZipExportWorker: geçersiz export_items formatı. "
+                        "Her öğe 'chapter_name' ve 'panels' anahtarı içermelidir."
                     )
                     return
                 for entry in item["panels"]:
