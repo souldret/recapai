@@ -2336,7 +2336,7 @@ class ShortcutsDialog(QDialog):
         title.setObjectName("headingLabel")
         layout.addWidget(title)
 
-        from PyQt6.QtWidgets import QScrollArea, QTableWidget, QTableWidgetItem, QHeaderView
+        from PyQt6.QtWidgets import QTableWidget, QTableWidgetItem, QHeaderView
         table = QTableWidget()
         table.setColumnCount(2)
         table.setHorizontalHeaderLabels(["Kısayol", "İşlev"])
