@@ -100,10 +100,10 @@ TRANSITION_OPTIONS = [
     ("Diagonal ↙ Sol Alt",          "diagbl"),
     ("Diagonal ↘ Sağ Alt",          "diagbr"),
     # Kutu efekti
-    ("Kutu İçeri (Yatay)",          "hboxin"),
-    ("Kutu Dışarı (Yatay)",         "hboxout"),
-    ("Kutu İçeri (Dikey)",          "vboxin"),
-    ("Kutu Dışarı (Dikey)",         "vboxout"),
+    ("Kutu İçeri (Yatay)",          "horzopen"),
+    ("Kutu Dışarı (Yatay)",         "horzclose"),
+    ("Kutu İçeri (Dikey)",          "vertopen"),
+    ("Kutu Dışarı (Dikey)",         "vertclose"),
     # Zoom / Daire
     ("Zoom İçeri",                  "zoom"),
     ("Daire Açılır",                "circleopen"),

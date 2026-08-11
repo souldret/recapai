@@ -861,10 +861,10 @@ class VideoComposer:
             "diagbl":      "diagbl",
             "diagbr":      "diagbr",
             # ── Kutu Efekti ────────────────────────────────────────
-            "hboxin":      "hboxin",
-            "hboxout":     "hboxout",
-            "vboxin":      "vboxin",
-            "vboxout":     "vboxout",
+            "horzopen":    "horzopen",
+            "horzclose":   "horzclose",
+            "vertopen":    "vertopen",
+            "vertclose":   "vertclose",
             # ── Zoom / Daire ───────────────────────────────────────
             "zoom":        "zoomin",
             "circleopen":  "circleopen",
@@ -883,7 +883,7 @@ class VideoComposer:
             "wiperight", "wipeleft", "wipeup", "wipedown",
             "wipetl", "wipetr", "wipebl", "wipebr",
             "diagtl", "diagtr", "diagbl", "diagbr",
-            "hboxin", "vboxin",
+            "horzopen", "vertopen",
             "zoomin", "circleopen", "circleclose",
             "radial",
         ]

@@ -1239,6 +1239,16 @@ class SettingsPage(QWidget):
         speed_row.addWidget(QLabel("x"))
         speed_row.addStretch()
         gv.addLayout(speed_row)
+
+        remove_silence_row = QHBoxLayout()
+        self.remove_silence_check = QCheckBox("Sessiz bolumleri otomatik kirp (Silence Remover)")
+        self.remove_silence_check.setToolTip(
+            "Seslendirme sirasinda olusan uzun sessiz araliklari kisaltir.\n"
+            "Cumle basi/sonu ve kelimeler arasi kucuk bosluklar korunur."
+        )
+        remove_silence_row.addWidget(self.remove_silence_check)
+        remove_silence_row.addStretch()
+        gv.addLayout(remove_silence_row)
         v.addWidget(gen_frame)
 
         # Edge-TTS sesi
@@ -1598,6 +1608,8 @@ class SettingsPage(QWidget):
             self.kokoro_cache_input.setText(tts.get("kokoro_cache_path", ""))
         if hasattr(self, "kokoro_gpu_check"):
             self.kokoro_gpu_check.setChecked(bool(tts.get("kokoro_use_gpu", True)))
+        if hasattr(self, "remove_silence_check"):
+            self.remove_silence_check.setChecked(bool(tts.get("remove_silence", False)))
 
         paths = data.get("paths", {})
         self.projects_dir_input.setText(paths.get("projects_dir", "./projects"))
@@ -1676,6 +1688,8 @@ class SettingsPage(QWidget):
             data["tts"]["default_speed"]     = self.tts_speed_spin.value()
             data["tts"]["kokoro_cache_path"] = self.kokoro_cache_input.text().strip()
             data["tts"]["kokoro_use_gpu"]    = self.kokoro_gpu_check.isChecked()
+            if hasattr(self, "remove_silence_check"):
+                data["tts"]["remove_silence"] = self.remove_silence_check.isChecked()
 
             data.setdefault("paths", {})
             data["paths"]["projects_dir"] = self.projects_dir_input.text().strip() or "./projects"

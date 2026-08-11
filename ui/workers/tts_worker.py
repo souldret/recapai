@@ -62,6 +62,35 @@ class TTSWorker(QThread):
         self.params      = params or {}
         self.cache       = cache
         self._stop_flag  = False
+        self._silence_cfg = self._load_silence_settings()
+
+    @staticmethod
+    def _load_silence_settings() -> Optional[Dict[str, Any]]:
+        """Ayarlardan silence-remover yapılandırmasını okur (kapalıysa None)."""
+        try:
+            from core.settings_manager import SettingsManager
+            sm = SettingsManager.instance()
+            tts_cfg = sm.get("tts", {}) or {}
+            if not tts_cfg.get("remove_silence", False):
+                return None
+            return {
+                "silence_thresh": float(tts_cfg.get("silence_thresh_db", -40.0)),
+                "min_silence_len": int(tts_cfg.get("min_silence_len_ms", 400)),
+                "keep_silence": int(tts_cfg.get("keep_silence_ms", 120)),
+            }
+        except Exception:
+            return None
+
+    def _apply_silence_removal(self, out_path: str, duration: float) -> float:
+        """Ayar açıksa sessizlik kaldırma uygular ve güncel süreyi döner."""
+        if not self._silence_cfg:
+            return duration
+        try:
+            from core.audio_processor import remove_silence
+            return remove_silence(out_path, **self._silence_cfg)
+        except Exception as exc:
+            logger.warning("Silence-remover uygulanamadı (%s): %s", out_path, exc)
+            return duration
 
     # ── Stop ──────────────────────────────────────────────────────
 
@@ -149,6 +178,7 @@ class TTSWorker(QThread):
 
                     from core.audio_processor import get_duration
                     duration = get_duration(out_path)
+                    duration = self._apply_silence_removal(out_path, duration)
                     seg.audio_path = out_path
                     seg.duration   = duration
 
@@ -260,6 +290,7 @@ class TTSWorker(QThread):
                     output_path=out_path,
                     **synth_kwargs,
                 )
+                duration = self._apply_silence_removal(out_path, duration)
                 seg.audio_path = out_path
                 seg.duration   = duration
 

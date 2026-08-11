@@ -442,16 +442,26 @@ class KokoroTTSEngine(TTSEngine):
         if self._device is None:
             try:
                 import torch
-                self._device = "cuda" if torch.cuda.is_available() else "cpu"
+                cuda_ok = torch.cuda.is_available()
             except (ImportError, OSError, Exception):
-                self._device = "cpu"
+                cuda_ok = False
+
+            use_gpu_setting = True
+            try:
+                from core.settings_manager import SettingsManager
+                use_gpu_setting = bool(SettingsManager.instance().get("tts.kokoro_use_gpu", True))
+            except Exception:
+                pass
+
+            self._device = "cuda" if (cuda_ok and use_gpu_setting) else "cpu"
         return self._device
 
     def _get_pipeline(self, lang_code: str):
         if lang_code not in self._pipelines:
             from kokoro import KPipeline
-            logger.info("Kokoro pipeline olusturuluyor: lang_code='%s'", lang_code)
-            self._pipelines[lang_code] = KPipeline(lang_code=lang_code)
+            device = self._get_device()
+            logger.info("Kokoro pipeline olusturuluyor: lang_code='%s' device='%s'", lang_code, device)
+            self._pipelines[lang_code] = KPipeline(lang_code=lang_code, device=device)
             logger.info("Kokoro pipeline hazir: lang_code='%s'", lang_code)
         return self._pipelines[lang_code]
 

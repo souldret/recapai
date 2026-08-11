@@ -87,6 +87,75 @@ def trim_silence(audio_path: str, silence_thresh: float = -40.0) -> None:
         logger.error("trim_silence hatası (%s): %s", audio_path, exc)
 
 
+def remove_silence(
+    audio_path: str,
+    silence_thresh: float = -40.0,
+    min_silence_len: int = 400,
+    keep_silence: int = 120,
+) -> float:
+    """
+    Ses dosyasındaki (başta, sonda ve konuşma İÇİNDEKİ) sessiz boşlukları
+    kısaltır. Tamamen kesmez; her boşluktan `keep_silence` ms kadar bırakır,
+    böylece seslendirme doğal durur ama uzun sessiz aralıklar (TTS motorunun
+    bıraktığı boşluklar, tekrarlı satır araları vb.) videoyu şişirmez.
+
+    Dosyanın üzerine yazar (in-place). Yeni süreyi (saniye) döner;
+    hata durumunda veya değişiklik yapılmadıysa mevcut süreyi döner.
+
+    Args:
+        audio_path:      Ses dosyası yolu.
+        silence_thresh:  Sessizlik eşiği (dBFS). Bu değerden düşük ses seviyesi
+                          "sessiz" sayılır.
+        min_silence_len: Bir aralığın "sessizlik" sayılması için gereken
+                          minimum süre (ms). Kısa duraklamalar dokunulmadan kalır.
+        keep_silence:     Her sessiz aralıktan korunacak süre (ms) — kelimeler
+                          birbirine yapışmasın diye küçük bir boşluk bırakılır.
+    """
+    AudioSegment = _load_pydub()
+    try:
+        from pydub.silence import detect_nonsilent
+
+        seg = AudioSegment.from_file(audio_path)
+        if len(seg) == 0:
+            return 0.0
+
+        nonsilent_ranges = detect_nonsilent(
+            seg, min_silence_len=min_silence_len, silence_thresh=silence_thresh
+        )
+        if not nonsilent_ranges:
+            # Tamamı sessiz — dokunma, orijinal süreyi döndür.
+            return len(seg) / 1000.0
+
+        pieces = []
+        for start, end in nonsilent_ranges:
+            piece_start = max(0, start - keep_silence)
+            piece_end = min(len(seg), end + keep_silence)
+            pieces.append(seg[piece_start:piece_end])
+
+        result = pieces[0]
+        for piece in pieces[1:]:
+            result += piece
+
+        if len(result) >= len(seg):
+            # Kısaltma sağlamadıysa orijinali koru.
+            return len(seg) / 1000.0
+
+        suffix = Path(audio_path).suffix.lower().lstrip(".")
+        fmt = suffix if suffix in ("mp3", "wav", "ogg", "flac") else "mp3"
+        result.export(audio_path, format=fmt)
+        logger.debug(
+            "Sessizlik kaldırıldı: %s (%.2fs -> %.2fs)",
+            audio_path, len(seg) / 1000.0, len(result) / 1000.0,
+        )
+        return len(result) / 1000.0
+    except Exception as exc:
+        logger.error("remove_silence hatası (%s): %s", audio_path, exc)
+        try:
+            return get_duration(audio_path)
+        except Exception:
+            return 0.0
+
+
 def merge_audios(
     paths: List[str],
     output_path: str,

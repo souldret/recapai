@@ -192,6 +192,10 @@ class SettingsManager(QObject):
                 "default_speed": 1.0,
                 "kokoro_cache_path": "",
                 "kokoro_use_gpu": True,
+                "remove_silence": False,
+                "silence_thresh_db": -40.0,
+                "min_silence_len_ms": 400,
+                "keep_silence_ms": 120,
             },
             "analysis": {
                 "rate_limit_delay": 1.0,   # API istekleri arası bekleme (saniye)
