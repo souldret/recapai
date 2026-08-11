@@ -369,6 +369,14 @@ class ScriptGenerator:
     def __init__(self, client: Optional[OpenRouterClient] = None) -> None:
         self._client = client or OpenRouterClient.instance()
 
+    def _fallback_models(self) -> list:
+        """Ayarlardan script-model fallback zincirini okur."""
+        try:
+            from core.settings_manager import SettingsManager
+            return SettingsManager.instance().get("api.script_fallback_models", []) or []
+        except Exception:
+            return []
+
     # ── Ana Üretim ─────────────────────────────────────────────────
 
     def generate_script(
@@ -516,6 +524,7 @@ class ScriptGenerator:
         # Streaming KULLANMA — JSON chunk'lar halinde gelince parse başarısız olur.
         result = self._client.chat_completion(
             model, messages, temperature=0.75, max_tokens=max_tokens,
+            fallback_models=self._fallback_models(),
         )
         full_text = result["content"]
         logger.debug(
@@ -762,6 +771,7 @@ class ScriptGenerator:
         result = self._client.chat_completion(
             model, [{"role": "user", "content": prompt}],
             temperature=0.8, max_tokens=max_tokens,
+            fallback_models=self._fallback_models(),
         )
         text = result["content"].strip().strip('"').strip("`")
         # Model bazen "text:" öneki koyabilir

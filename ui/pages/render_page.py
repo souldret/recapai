@@ -265,6 +265,35 @@ class RenderPage(QWidget):
             btn.clicked.connect(lambda checked, k=key: self._apply_preset(k))
             hbox.addWidget(btn)
 
+        hbox.addSpacing(16)
+
+        # Kullanıcı preset'leri (kaydet/yükle/sil)
+        user_preset_lbl = QLabel("Benim Preset'lerim:")
+        user_preset_lbl.setObjectName("pageSubtitle")
+        hbox.addWidget(user_preset_lbl)
+
+        self.user_preset_combo = QComboBox()
+        self.user_preset_combo.setMinimumWidth(140)
+        self.user_preset_combo.currentIndexChanged.connect(self._on_user_preset_selected)
+        hbox.addWidget(self.user_preset_combo)
+
+        btn_save_preset = QPushButton()
+        btn_save_preset.setToolTip("Mevcut ayarları preset olarak kaydet")
+        btn_save_preset.setIcon(Icons.get(Icons.SAVE))
+        btn_save_preset.setFixedWidth(36)
+        btn_save_preset.clicked.connect(self._save_user_preset)
+        hbox.addWidget(btn_save_preset)
+
+        btn_delete_preset = QPushButton()
+        btn_delete_preset.setToolTip("Seçili preset'i sil")
+        btn_delete_preset.setIcon(Icons.get(Icons.CLOSE))
+        btn_delete_preset.setIconSize(QSize(14, 14))
+        btn_delete_preset.setFixedWidth(28)
+        btn_delete_preset.clicked.connect(self._delete_user_preset)
+        hbox.addWidget(btn_delete_preset)
+
+        self._refresh_user_presets()
+
         hbox.addStretch()
         return bar
 
@@ -358,6 +387,12 @@ class RenderPage(QWidget):
         self.codec_combo = QComboBox()
         for label, val in CODEC_OPTIONS:
             self.codec_combo.addItem(label, val)
+        try:
+            from core.ffmpeg_helper import get_available_gpu_encoders, GPU_ENCODER_LABELS
+            for encoder in get_available_gpu_encoders():
+                self.codec_combo.addItem(GPU_ENCODER_LABELS[encoder], encoder)
+        except Exception:
+            pass
         vbox.addLayout(row("Codec:", self.codec_combo))
 
         # Bitrate
@@ -933,6 +968,158 @@ class RenderPage(QWidget):
 
         self.bitrate_edit.setText(preset["bitrate"])
         self._log(f"Preset uygulandı: {preset['label']}")
+
+    # ─────────────────────────────────────────────────────────────────────────
+    # Kullanıcı preset'leri (kaydet / yükle / sil)
+    # ─────────────────────────────────────────────────────────────────────────
+
+    def _refresh_user_presets(self) -> None:
+        from core.render_presets import list_presets
+        self.user_preset_combo.blockSignals(True)
+        self.user_preset_combo.clear()
+        self.user_preset_combo.addItem("— Preset seç —", None)
+        for name in list_presets():
+            self.user_preset_combo.addItem(name, name)
+        self.user_preset_combo.blockSignals(False)
+
+    def _on_user_preset_selected(self, index: int) -> None:
+        name = self.user_preset_combo.currentData()
+        if not name:
+            return
+        from core.render_presets import get_preset
+        settings = get_preset(name)
+        if settings:
+            self._apply_settings_dict(settings)
+            self._log(f"Preset yüklendi: {name}")
+
+    def _save_user_preset(self) -> None:
+        from PyQt6.QtWidgets import QInputDialog
+        from core.render_presets import save_preset
+
+        current_name = self.user_preset_combo.currentData() or ""
+        name, ok = QInputDialog.getText(
+            self, "Preset Kaydet", "Preset adı:", text=current_name
+        )
+        if not ok or not name.strip():
+            return
+        save_preset(name.strip(), self._collect_settings())
+        self._refresh_user_presets()
+        idx = self.user_preset_combo.findData(name.strip())
+        if idx >= 0:
+            self.user_preset_combo.setCurrentIndex(idx)
+        self._log(f"Preset kaydedildi: {name.strip()}")
+
+    def _delete_user_preset(self) -> None:
+        name = self.user_preset_combo.currentData()
+        if not name:
+            return
+        from core.render_presets import delete_preset
+        delete_preset(name)
+        self._refresh_user_presets()
+        self._log(f"Preset silindi: {name}")
+
+    def _apply_settings_dict(self, settings: Dict[str, Any]) -> None:
+        """Kaydedilmiş bir ayar sözlüğünü tüm render widget'larına uygular."""
+        # Çözünürlük
+        resolution = settings.get("resolution")
+        if resolution:
+            for i, (_, res) in enumerate(RESOLUTION_OPTIONS):
+                if res == resolution:
+                    self.res_combo.setCurrentIndex(i)
+                    break
+            else:
+                self.res_combo.setCurrentIndex(len(RESOLUTION_OPTIONS) - 1)
+                self.custom_w.setValue(resolution[0])
+                self.custom_h.setValue(resolution[1])
+
+        # FPS
+        fps = settings.get("fps")
+        if fps in FPS_OPTIONS:
+            self.fps_combo.setCurrentIndex(FPS_OPTIONS.index(fps))
+
+        # Codec
+        codec = settings.get("codec")
+        if codec:
+            idx = self.codec_combo.findData(codec)
+            if idx >= 0:
+                self.codec_combo.setCurrentIndex(idx)
+
+        if settings.get("bitrate"):
+            self.bitrate_edit.setText(settings["bitrate"])
+
+        # Geçiş efektleri
+        transitions = settings.get("transitions")
+        if transitions is not None:
+            selected = transitions if isinstance(transitions, list) else [transitions]
+            for i in range(self.transition_list.count()):
+                it = self.transition_list.item(i)
+                it.setCheckState(
+                    Qt.CheckState.Checked if it.data(Qt.ItemDataRole.UserRole) in selected
+                    else Qt.CheckState.Unchecked
+                )
+
+        if settings.get("transition_duration") is not None:
+            self.transition_dur.setValue(int(settings["transition_duration"] * 100))
+
+        # Görsel hareket
+        if settings.get("ken_burns") is not None:
+            self.chk_ken_burns.setChecked(bool(settings["ken_burns"]))
+        if settings.get("ken_burns_intensity") is not None:
+            self.kb_intensity.setValue(int(settings["ken_burns_intensity"] * 100))
+        motion = settings.get("image_motion")
+        if motion in self._motion_buttons:
+            self._select_motion(motion)
+
+        bg_effect = settings.get("bg_effect")
+        if bg_effect and hasattr(self, "bg_effect_combo"):
+            idx = self.bg_effect_combo.findData(bg_effect)
+            if idx >= 0:
+                self.bg_effect_combo.setCurrentIndex(idx)
+
+        # Altyazı
+        if settings.get("subtitles") is not None:
+            self.chk_subtitles.setChecked(bool(settings["subtitles"]))
+        sub_style = settings.get("subtitle_style") or {}
+        if sub_style:
+            if sub_style.get("font"):
+                idx = self.sub_font_combo.findText(sub_style["font"])
+                if idx >= 0:
+                    self.sub_font_combo.setCurrentIndex(idx)
+            if sub_style.get("size"):
+                self.sub_size_spin.setValue(int(sub_style["size"]))
+            if sub_style.get("color") and self._sub_color_picker:
+                self._sub_color_picker.set_color(sub_style["color"])
+            if sub_style.get("stroke_color") and self._sub_stroke_picker:
+                self._sub_stroke_picker.set_color(sub_style["stroke_color"])
+            if sub_style.get("stroke_width") is not None:
+                self.sub_stroke_spin.setValue(int(sub_style["stroke_width"]))
+            pos_reverse = {"bottom": 0, "middle": 1, "top": 2}
+            if sub_style.get("position") in pos_reverse:
+                self.sub_pos_combo.setCurrentIndex(pos_reverse[sub_style["position"]])
+
+        # Ses
+        if settings.get("bgm_path") and hasattr(self, "bgm_path_edit"):
+            self.bgm_path_edit.setText(settings["bgm_path"])
+        if settings.get("bgm_volume") is not None:
+            self.bgm_vol_slider.setValue(int(settings["bgm_volume"] * 100))
+        if settings.get("bgm_ducking") is not None:
+            self.chk_ducking.setChecked(bool(settings["bgm_ducking"]))
+
+        # Intro/Outro/Watermark
+        if settings.get("intro_path") and hasattr(self, "intro_path_edit"):
+            self.intro_path_edit.setText(settings["intro_path"])
+        if settings.get("outro_path") and hasattr(self, "outro_path_edit"):
+            self.outro_path_edit.setText(settings["outro_path"])
+        if settings.get("watermark_path") and hasattr(self, "watermark_path_edit"):
+            self.watermark_path_edit.setText(settings["watermark_path"])
+        if settings.get("watermark_position") and hasattr(self, "wm_pos_combo"):
+            idx = self.wm_pos_combo.findData(settings["watermark_position"])
+            if idx >= 0:
+                self.wm_pos_combo.setCurrentIndex(idx)
+        if settings.get("watermark_scale") is not None and hasattr(self, "wm_scale_spin"):
+            self.wm_scale_spin.setValue(int(settings["watermark_scale"] * 100))
+        if settings.get("watermark_opacity") is not None and hasattr(self, "wm_opacity_spin"):
+            self.wm_opacity_spin.setValue(int(settings["watermark_opacity"] * 100))
 
     # ─────────────────────────────────────────────────────────────────────────
     # Geçiş listesi yardımcıları

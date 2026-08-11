@@ -114,6 +114,16 @@ class VideoComposer:
             self._fps = 30
         self._codec = self.settings.get("codec") or "libx264"
         self._bitrate = self.settings.get("bitrate") or "8000k"
+        self._is_gpu_codec = self._codec in ("h264_nvenc", "h264_qsv", "h264_amf")
+        if self._is_gpu_codec:
+            from core.ffmpeg_helper import get_available_gpu_encoders
+            if self._codec not in get_available_gpu_encoders():
+                logger.warning(
+                    "GPU encoder '%s' bu sistemde kullanılamıyor; libx264'e (CPU) düşülüyor.",
+                    self._codec,
+                )
+                self._codec = "libx264"
+                self._is_gpu_codec = False
 
         # FFmpeg yolunu doğrula
         from core.ffmpeg_helper import get_ffmpeg_path
@@ -691,8 +701,7 @@ class VideoComposer:
         out_fps = zoompan_fps if not is_slide else fps
         cmd += [
             "-c:v", self._codec,
-            "-preset", "fast",
-            "-crf", "23",
+            *self._quality_args(),
             "-t", str(duration),
             "-pix_fmt", "yuv420p",
             "-r", str(out_fps),
@@ -759,7 +768,7 @@ class VideoComposer:
         cmd += [
             "-filter_complex", vf,
             "-map", "[vout]", "-map", f"{silent_audio_index}:a",
-            "-c:v", self._codec, "-preset", "fast", "-crf", "23",
+            "-c:v", self._codec, *self._quality_args(),
             "-c:a", "aac", "-b:a", "128k",
             "-ar", "44100", "-ac", "2",
             "-t", str(duration),
@@ -950,8 +959,7 @@ class VideoComposer:
             "-map", "[vout]",
             "-map", "[aout]",
             "-c:v", self._codec,
-            "-preset", "fast",
-            "-crf", "23",
+            *self._quality_args(),
             "-b:v", self._bitrate,
             "-c:a", "aac",
             "-b:a", "192k",
@@ -1095,7 +1103,7 @@ class VideoComposer:
             "-y",
             "-i", input_path,
             "-vf", f"ass='{safe_sub}'",
-            "-c:v", self._codec, "-preset", "fast", "-crf", "23",
+            "-c:v", self._codec, *self._quality_args(),
             "-c:a", "copy",
             output_path,
         ])
@@ -1195,7 +1203,7 @@ class VideoComposer:
                 "-y", "-i", clip,
                 "-vf", vf,
                 "-af", "aformat=sample_rates=44100:channel_layouts=stereo",
-                "-c:v", self._codec, "-preset", "fast", "-crf", "23",
+                "-c:v", self._codec, *self._quality_args(),
                 "-c:a", "aac", "-b:a", "192k",
                 "-ar", "44100", "-ac", "2",
                 norm_out,
@@ -1209,7 +1217,7 @@ class VideoComposer:
                     "-i", "anullsrc=channel_layout=stereo:sample_rate=44100",
                     "-vf", vf,
                     "-map", "0:v:0", "-map", "1:a:0",
-                    "-c:v", self._codec, "-preset", "fast", "-crf", "23",
+                    "-c:v", self._codec, *self._quality_args(),
                     "-c:a", "aac", "-b:a", "192k",
                     "-ar", "44100", "-ac", "2",
                     "-shortest",
@@ -1226,6 +1234,20 @@ class VideoComposer:
     # ─────────────────────────────────────────────────────────────────────────
     # FFmpeg çalıştırma
     # ─────────────────────────────────────────────────────────────────────────
+
+    def _quality_args(self, crf: int = 23) -> List[str]:
+        """
+        Seçili codec'e (CPU/GPU) uygun preset/kalite argümanlarını döner.
+        GPU encoder'ları (nvenc/qsv/amf) -crf desteklemez, kendi kalite
+        parametrelerine sahiptir.
+        """
+        if self._codec == "h264_nvenc":
+            return ["-preset", "p4", "-rc", "vbr", "-cq", str(crf)]
+        if self._codec == "h264_qsv":
+            return ["-preset", "fast", "-global_quality", str(crf)]
+        if self._codec == "h264_amf":
+            return ["-quality", "speed", "-qp_i", str(crf), "-qp_p", str(crf)]
+        return ["-preset", "fast", "-crf", str(crf)]
 
     def _run(self, args: List[str], cancel_check: Optional[Callable[[], bool]] = None) -> int:
         """FFmpeg komutunu çalıştırır. cancel_check ile gerçek iptal desteği."""

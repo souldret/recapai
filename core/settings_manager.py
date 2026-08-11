@@ -176,6 +176,10 @@ class SettingsManager(QObject):
                 "openrouter_base_url": "https://openrouter.ai/api/v1",
                 "elevenlabs_api_key": "",
                 "openai_api_key": "",
+                # Birincil model başarısız olursa (404/no-endpoints/5xx/429)
+                # sırayla denenecek alternatif modeller.
+                "vision_fallback_models": ["google/gemini-2.5-flash"],
+                "script_fallback_models": ["google/gemini-2.5-flash"],
             },
             "paths": {
                 "projects_dir": "./projects",
@@ -203,5 +207,6 @@ class SettingsManager(QObject):
             "cache": {
                 "global_tts_cache": True,  # Uygulama genelinde tek TTS cache
                 "global_cache_dir": "./cache/tts",  # Merkezi cache klasörü
+                "tts_cache_max_size_mb": 2048,  # LRU boyut limiti (MB)
             },
         }

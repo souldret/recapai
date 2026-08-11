@@ -21,6 +21,14 @@ _WINDOWS_PATHS = [
 ]
 
 _cached_path: Optional[str] = None
+_cached_gpu_encoders: Optional[List[str]] = None
+
+# Bilinen donanım (GPU) H.264 encoder'ları — kullanıcı dostu etiketleriyle
+GPU_ENCODER_LABELS = {
+    "h264_nvenc": "H.264 (NVIDIA GPU - NVENC)",
+    "h264_qsv":   "H.264 (Intel GPU - QuickSync)",
+    "h264_amf":   "H.264 (AMD GPU - AMF)",
+}
 
 
 def check_ffmpeg() -> bool:
@@ -207,6 +215,63 @@ def _format_eta(seconds: float) -> str:
     hours = minutes // 60
     mins = minutes % 60
     return f"{hours}h {mins}m"
+
+
+def _test_encoder(ffmpeg: str, encoder: str) -> bool:
+    """Küçük bir test kare ile encoder'ın gerçekten çalışıp çalışmadığını doğrular.
+
+    FFmpeg derlemesinde encoder listede görünse bile (örn. uygun GPU/driver
+    yoksa) encode sırasında hata verebilir. Bu yüzden sadece `-encoders`
+    çıktısına bakmak yeterli değildir; gerçek bir encode denemesi yapılır.
+    """
+    try:
+        result = subprocess.run(
+            [
+                ffmpeg, "-hide_banner", "-loglevel", "error",
+                "-f", "lavfi", "-i", "color=c=black:s=64x64:d=0.1",
+                "-frames:v", "1",
+                "-c:v", encoder,
+                "-f", "null", "-",
+            ],
+            capture_output=True, text=True, timeout=10,
+        )
+        return result.returncode == 0
+    except Exception as exc:
+        logger.debug("Encoder testi başarısız (%s): %s", encoder, exc)
+        return False
+
+
+def get_available_gpu_encoders(force_refresh: bool = False) -> List[str]:
+    """
+    Sistemde gerçekten kullanılabilir GPU (donanım hızlandırmalı) H.264
+    encoder'larını döner (örn. ["h264_nvenc"]). Sonuç process ömrü boyunca
+    cache'lenir.
+    """
+    global _cached_gpu_encoders
+    if _cached_gpu_encoders is not None and not force_refresh:
+        return _cached_gpu_encoders
+
+    ffmpeg = get_ffmpeg_path()
+    if not ffmpeg:
+        _cached_gpu_encoders = []
+        return _cached_gpu_encoders
+
+    available: List[str] = []
+    try:
+        result = subprocess.run(
+            [ffmpeg, "-hide_banner", "-encoders"],
+            capture_output=True, text=True, timeout=10,
+        )
+        listed = result.stdout or ""
+        for encoder in GPU_ENCODER_LABELS:
+            if encoder in listed and _test_encoder(ffmpeg, encoder):
+                available.append(encoder)
+                logger.info("GPU encoder kullanılabilir: %s", encoder)
+    except Exception as exc:
+        logger.warning("GPU encoder tespiti başarısız: %s", exc)
+
+    _cached_gpu_encoders = available
+    return available
 
 
 def concat_videos(input_paths: List[str], output_path: str, codec: str = "libx264") -> int:

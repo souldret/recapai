@@ -7,24 +7,42 @@ import hashlib
 import json
 import logging
 import shutil
+import time
 from pathlib import Path
 from typing import Optional
 
 logger = logging.getLogger(__name__)
+
+DEFAULT_MAX_SIZE_MB = 2048  # Varsayılan cache boyut limiti (2 GB)
 
 
 class TTSCache:
     """
     TTS çıktılarını önbellekler.
     cache_dir: projects/{proj}/audio/.cache/
+
+    Boyut limitini aşınca en uzun süre kullanılmamış (LRU) girdiler
+    otomatik olarak temizlenir.
     """
 
-    def __init__(self, cache_dir: str | Path) -> None:
+    def __init__(self, cache_dir: str | Path, max_size_mb: float = DEFAULT_MAX_SIZE_MB) -> None:
         self.cache_dir = Path(cache_dir)
         self.cache_dir.mkdir(parents=True, exist_ok=True)
+        self.max_size_mb = max_size_mb
         self._index_path = self.cache_dir / "index.json"
         self._index: dict = self._load_index()
-        logger.debug("TTSCache başlatıldı: %s", self.cache_dir)
+        self._migrate_index()
+        logger.debug("TTSCache başlatıldı: %s (limit=%.0fMB)", self.cache_dir, max_size_mb)
+
+    def _migrate_index(self) -> None:
+        """Eski index formatını (key -> path) yeni formata (key -> {path, last_used}) taşır."""
+        changed = False
+        for key, value in list(self._index.items()):
+            if isinstance(value, str):
+                self._index[key] = {"path": value, "last_used": time.time()}
+                changed = True
+        if changed:
+            self._save_index()
 
     # ── Index ──────────────────────────────────────────────────────
 
@@ -58,10 +76,13 @@ class TTSCache:
 
     def get(self, key: str) -> Optional[str]:
         """Cache'de varsa ses dosyasının yolunu döner, yoksa None."""
-        if key not in self._index:
+        entry = self._index.get(key)
+        if entry is None:
             return None
-        cached_path = Path(self._index[key])
+        cached_path = Path(entry["path"])
         if cached_path.exists():
+            entry["last_used"] = time.time()
+            self._save_index()
             logger.debug("Cache hit: %s", key)
             return str(cached_path)
         # Dosya silinmiş, index'ten temizle
@@ -80,11 +101,36 @@ class TTSCache:
         dst = self.cache_dir / f"{key}{suffix}"
         try:
             shutil.copy2(src, dst)
-            self._index[key] = str(dst)
+            self._index[key] = {"path": str(dst), "last_used": time.time()}
             self._save_index()
             logger.debug("Cache put: %s → %s", key, dst)
+            self._evict_lru()
         except Exception as exc:
             logger.warning("Cache put hatası: %s", exc)
+
+    def _evict_lru(self) -> None:
+        """Cache boyutu limiti aşarsa en uzun süre kullanılmamış girdileri siler."""
+        if self.max_size_mb <= 0:
+            return
+        try:
+            if self.size_mb() <= self.max_size_mb:
+                return
+
+            entries = sorted(self._index.items(), key=lambda kv: kv[1].get("last_used", 0))
+            for key, entry in entries:
+                if self.size_mb() <= self.max_size_mb:
+                    break
+                path = Path(entry["path"])
+                try:
+                    path.unlink(missing_ok=True)
+                except Exception as exc:
+                    logger.warning("Cache girdisi silinemedi (%s): %s", path, exc)
+                del self._index[key]
+                logger.debug("LRU eviction: %s silindi (%s)", key, path)
+
+            self._save_index()
+        except Exception as exc:
+            logger.warning("LRU eviction hatası: %s", exc)
 
     def clear(self) -> None:
         """Tüm cache'i temizler (dosya ve alt dizinler dahil)."""
@@ -125,10 +171,11 @@ class TTSCache:
             sm = SettingsManager.instance()
             if sm.get("cache.global_tts_cache", True):
                 cache_dir = sm.get("cache.global_cache_dir", "./cache/tts")
+                max_size_mb = sm.get("cache.tts_cache_max_size_mb", DEFAULT_MAX_SIZE_MB)
                 from pathlib import Path
                 from core.constants import BASE_DIR
                 cache_path = BASE_DIR / cache_dir if not Path(cache_dir).is_absolute() else Path(cache_dir)
-                return cls(str(cache_path))
+                return cls(str(cache_path), max_size_mb=max_size_mb)
         except Exception:
             pass
         # Fallback: geçici dizin

@@ -114,7 +114,8 @@ class AIAnalyzer:
             image_path,
         )
         try:
-            result = self._client.vision_analyze(model, image_path, effective_prompt)
+            fallback_models = self._settings.get("api.vision_fallback_models", []) or []
+            result = self._client.vision_analyze(model, image_path, effective_prompt, fallback_models)
             parsed = _parse_json_response(result["content"])
             parsed["_model"] = result.get("model", model)
             parsed["_usage"] = result.get("usage", {})

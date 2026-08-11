@@ -244,6 +244,46 @@ class OpenRouterClient:
 
         raise last_exc
 
+    def _post_with_fallback(
+        self,
+        endpoint: str,
+        payload: Dict,
+        fallback_models: Optional[List[str]] = None,
+    ) -> Dict:
+        """
+        `_post` ile aynı işi yapar; ancak birincil model kalıcı olarak
+        başarısız olursa (404 / "no endpoints" / rate-limit veya sunucu
+        hatasının tüm denemeler tükendikten sonra sürmesi) `fallback_models`
+        listesindeki modellere sırayla geçer.
+
+        Modeller arası geçiş sadece modele özgü hatalarda (404, no-endpoints,
+        401/402 hariç) yapılır; 401/402 gibi hesap seviyesi hatalarda hemen
+        yükseltilir (başka modelde de aynı sorun tekrar eder).
+        """
+        models_to_try = [payload["model"]] + [m for m in (fallback_models or []) if m != payload["model"]]
+        last_error: Optional[OpenRouterError] = None
+
+        for i, model in enumerate(models_to_try):
+            attempt_payload = dict(payload, model=model)
+            try:
+                data = self._post(endpoint, attempt_payload)
+                if i > 0:
+                    logger.info("Model fallback başarılı: '%s' kullanıldı.", model)
+                return data
+            except OpenRouterError as exc:
+                last_error = exc
+                if exc.status_code in (401, 402):
+                    raise  # Hesap seviyesi hata — model değiştirmek çözmez
+                if i < len(models_to_try) - 1:
+                    logger.warning(
+                        "Model '%s' başarısız (%s), fallback deneniyor: '%s'",
+                        model, exc, models_to_try[i + 1],
+                    )
+                    continue
+                raise
+
+        raise last_error or OpenRouterError("Tüm modeller başarısız oldu.")
+
     def _safe_json(self, response: requests.Response) -> dict:
         """Response'u güvenli şekilde dict'e çevirir."""
         try:
@@ -298,9 +338,14 @@ class OpenRouterClient:
         messages: List[Dict],
         temperature: float = 0.7,
         max_tokens: int = 2000,
+        fallback_models: Optional[List[str]] = None,
     ) -> Dict:
         """
         Standart chat tamamlama isteği gönderir.
+
+        Args:
+            fallback_models: Birincil model başarısız olursa sırayla
+                denenecek alternatif model ID'leri.
 
         Returns:
             {"content": str, "model": str, "usage": dict}
@@ -311,7 +356,7 @@ class OpenRouterClient:
             "temperature": temperature,
             "max_tokens": max_tokens,
         }
-        data = self._post("chat/completions", payload)
+        data = self._post_with_fallback("chat/completions", payload, fallback_models)
         content = data["choices"][0]["message"]["content"]
         return {
             "content": content,
@@ -321,7 +366,13 @@ class OpenRouterClient:
 
     # ── Vision Analyze ─────────────────────────────────────────────
 
-    def vision_analyze(self, model: str, image_path: str, prompt: str) -> Dict:
+    def vision_analyze(
+        self,
+        model: str,
+        image_path: str,
+        prompt: str,
+        fallback_models: Optional[List[str]] = None,
+    ) -> Dict:
         """
         Görseli base64 encode edip vision modeline gönderir.
 
@@ -329,6 +380,8 @@ class OpenRouterClient:
             model: Kullanılacak vision modeli ID.
             image_path: Görsel dosya yolu.
             prompt: Analiz promptu.
+            fallback_models: Birincil model başarısız olursa sırayla
+                denenecek alternatif vision model ID'leri.
 
         Returns:
             {"content": str, "model": str, "usage": dict}
@@ -348,7 +401,7 @@ class OpenRouterClient:
             "messages": messages,
             "max_tokens": 1024,
         }
-        data = self._post("chat/completions", payload)
+        data = self._post_with_fallback("chat/completions", payload, fallback_models)
         content = data["choices"][0]["message"]["content"]
         return {
             "content": content,
