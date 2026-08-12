@@ -29,7 +29,33 @@ Bu dosya RecapAI projesindeki önemli değişiklikleri listeler.
   isimle kaydedilip toolbar'daki "Benim Preset'lerim" listesinden tek tıkla
   geri yüklenebilir veya silinebilir (`config/render_presets.json`).
 
+### Değiştirildi
+- **Görsel hareket (image motion) sadeleştirildi**: Render → Görsel Hareketi
+  bölümündeki Slide (Top/Bottom/Left/Right), Large Pan ve Full Pan modları
+  kaldırıldı; bu karmaşık overlay/split tabanlı filtre zincirleri render'ı
+  yavaşlatıp bazı kombinasyonlarda bozuk çıktı üretiyordu. Artık yalnızca
+  FFmpeg `zoompan` filtresine dayanan **Zoom In / Zoom Out** Ken Burns efekti
+  destekleniyor; sahne geçişleri için mevcut `xfade` geçiş efektleri listesi
+  (fade, wipe, slide, cover, diagonal vb.) kullanılmaya devam ediyor.
+
 ### Düzeltildi
+- **Render %5'te donma (kritik)**: Arka plan efektlerinde (`blur`,
+  `vignette_blur`, `cinematic`, `gradient_tb/lr`) kullanılan `boxblur=40:40`,
+  `boxblur=30:30`, `boxblur=50:50` gibi filtre parametreleri hatalıydı —
+  FFmpeg'de `boxblur`'un 2. parametresi "power" (filtrenin kaç kez üst üste
+  uygulanacağı) anlamına gelir; radius ile aynı büyük değer verilince tek bir
+  4 saniyelik klip ~44 saniyeye kadar sürüyor, çok segmentli render bu yüzden
+  ilerleme çubuğunda "%5'te donmuş" gibi görünüyordu. Doğru küçük power
+  değerleriyle (`20:2`, `15:2`, `25:2`) düzeltildi; blur içeren klipler artık
+  ~3 saniyenin altında tamamlanıyor.
+- **GPU render tespiti çalışmıyordu**: GPU encoder testi (`h264_nvenc`,
+  `h264_qsv`, `h264_amf`) 64×64 piksellik bir test görüntüsü kullanıyordu.
+  NVENC bu boyutu desteklemediği için ("Frame Dimension less than the minimum
+  supported value") gerçekte çalışan bir GPU bile "kullanılamıyor" olarak
+  raporlanıyor, Render → Codec listesinde hiç görünmüyordu. Test görüntüsü
+  320×240'a çıkarılarak düzeltildi. Ayrıca Render → Codec bölümüne, GPU
+  hızlandırmanın bu sistemde kullanılabilir olup olmadığını ve hangi
+  encoder(lar)ın bulunduğunu gösteren bir durum bilgisi etiketi eklendi.
 - **Render — Kutu geçiş efektleri**: "Kutu İçeri/Dışarı (Yatay/Dikey)" geçiş
   efektleri FFmpeg'in `xfade` filtresinde var olmayan isimlerle (`hboxin`,
   `hboxout`, `vboxin`, `vboxout`) tanımlanmıştı. Bu efektlerden biri seçildiğinde
@@ -45,9 +71,12 @@ Bu dosya RecapAI projesindeki önemli değişiklikleri listeler.
   Dosya git takibinden çıkarıldı (`git rm --cached`), yerel dosya korunuyor.
 
 ### Doğrulandı
-- Görsel hareket (image motion) modlarının tümü (zoom in/out, slide
-  top/bottom/left/right, large pan, full pan) tek başına ve tüm geçiş
-  efektleriyle birlikte render edildiğinde sorunsuz çalıştığı test edildi.
+- Zoom In / Zoom Out Ken Burns modları, arka plan efektleriyle (blur,
+  vignette_blur, cinematic, gradient_tb/lr) birlikte ve `compose_chapter`
+  üzerinden tam bir render akışıyla test edildi; donma/performans sorunu
+  gözlenmedi.
+- GPU encoder tespiti (`get_available_gpu_encoders`) düzeltme sonrası
+  NVENC'i doğru şekilde bulduğu doğrulandı.
 - Script/AI analiz prompt sistemi (Universal Compression Engine + niş
   modülleri + Bölüm 1 Hook Layer) mevcut `config/prompts.json` yapılandırmasıyla
   gözden geçirildi, ek değişikliğe gerek görülmedi.

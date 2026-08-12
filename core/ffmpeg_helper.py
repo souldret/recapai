@@ -225,10 +225,14 @@ def _test_encoder(ffmpeg: str, encoder: str) -> bool:
     çıktısına bakmak yeterli değildir; gerçek bir encode denemesi yapılır.
     """
     try:
+        # NOT: 64x64 gibi çok küçük çözünürlükler NVENC'te
+        # "Frame Dimension less than the minimum supported value" hatası verir
+        # ve encoder gerçekte çalışsa bile testi yanlışlıkla başarısız gösterir.
+        # 320x240 tüm GPU encoder'lar için güvenli bir minimum boyuttur.
         result = subprocess.run(
             [
                 ffmpeg, "-hide_banner", "-loglevel", "error",
-                "-f", "lavfi", "-i", "color=c=black:s=64x64:d=0.1",
+                "-f", "lavfi", "-i", "color=c=black:s=320x240:d=0.1",
                 "-frames:v", "1",
                 "-c:v", encoder,
                 "-f", "null", "-",

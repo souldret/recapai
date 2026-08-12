@@ -23,7 +23,7 @@ DEFAULT_SETTINGS: Dict[str, Any] = {
     "transition_duration": 0.5,
     "ken_burns": True,
     "ken_burns_intensity": 0.15,
-    "image_motion": "zoom_in",   # zoom_in, zoom_out, slide_top, slide_bot, slide_right, slide_left, large_pan, full_pan
+    "image_motion": "zoom_in",   # zoom_in, zoom_out
     "blur_background": False,
     "bg_effect": "none",
     "subtitles": True,
@@ -47,22 +47,6 @@ DEFAULT_SETTINGS: Dict[str, Any] = {
     "watermark_scale": 0.08,
     "watermark_opacity": 0.85,
 }
-
-# ── Ken Burns pan yön ön ayarları ─────────────────────────────────────────────
-# Her tuple: (pan_x_expr, pan_y_expr) — zoom büyüdükçe görüntü bu yönde kayar
-_PAN_PRESETS = [
-    # (pan_x_expr, pan_y_expr) — FFmpeg zoompan x/y crop sol-üst köşesidir.
-    # x/y arttıkça kamera o yönün tersine doğru kayar (crop penceresi hareket eder).
-    ("iw/2-(iw/zoom/2)",  "ih/2-(ih/zoom/2)"),   # 0: merkez zoom-in (pan yok)
-    ("iw*(1-1/zoom)",     "ih*(1-1/zoom)"),        # 1: sağ-alt köşeye zoom-in
-    ("0",                 "0"),                    # 2: sol-üst köşeye zoom-in
-    ("iw*(1-1/zoom)",     "0"),                    # 3: sağ-üst köşeye zoom-in
-    ("0",                 "ih*(1-1/zoom)"),        # 4: sol-alt köşeye zoom-in
-    ("iw/2-(iw/zoom/2)",  "0"),                    # 5: üst-ortaya zoom-in
-    ("iw/2-(iw/zoom/2)",  "ih*(1-1/zoom)"),        # 6: alt-ortaya zoom-in
-    ("0",                 "ih/2-(ih/zoom/2)"),     # 7: sol-ortaya zoom-in
-]
-
 
 def _parse_resolution(value: Any) -> tuple:
     """
@@ -403,8 +387,7 @@ class VideoComposer:
         Tek bir görsel + ses'ten MP4 klip üretir.
         Ken Burns efekti FFmpeg zoompan filtresi ile uygulanır.
         Arka plan efektleri: none, blur, gradient_tb, gradient_lr, vignette_blur, cinematic
-        Görsel animasyon modları (image_motion): zoom_in, zoom_out, slide_top, slide_bot,
-            slide_right, slide_left, large_pan, full_pan
+        Görsel animasyon modları (image_motion): zoom_in, zoom_out
 
         TİTREME NOTU: zoompan filtresinde titreşimi önlemek için:
         - z ifadesinde if(eq(on,1),1.0,zoom)+delta kullanılır (başlangıç zoom'u açıkça 1.0)
@@ -431,75 +414,13 @@ class VideoComposer:
         # bg_effect "blur" ise blur_bg de açık say
         use_blur = blur_bg or bg_effect in ("blur", "vignette_blur", "cinematic")
 
-        # ── Slide modlar için yardımcı fonksiyon ──────────────────────────────
-        def _build_slide_vf(bg_label: Optional[str]) -> str:
-            """
-            Slide modunda vf zinciri oluşturur.
-            bg_label: blur/gradient durumunda arka planın [comp] etiketini taşıyan label.
-                      None ise siyah renk kaynağı kullanılır.
-            Slide modlar: slide_top, slide_bot, slide_right, slide_left
-            """
-            # Slide yön mantığı: isim görselin GELDİĞİ yönü belirtir.
-            # overlay y/x: t=0'da ekran dışı başlar, t=duration'da yerleşir (y/x=0).
-            # overlay x/y: filter_complex'te virgül parametre ayirici
-            # if() icindeki virgulleri \, ile escape et
-            if image_motion == "slide_top":
-                # Gorsel yukaridan iner: y=-h -> 0
-                slide_expr = f"if(gte(t\\,0)\\,-{h}+(t/{duration:.4f})*{h}\\,-{h})"
-                overlay_xy = f"x=0:y={slide_expr}"
-            elif image_motion == "slide_bot":
-                # Gorsel asagidan cikar: y=h -> 0
-                slide_expr = f"if(gte(t\\,0)\\,{h}-(t/{duration:.4f})*{h}\\,{h})"
-                overlay_xy = f"x=0:y={slide_expr}"
-            elif image_motion == "slide_right":
-                # Gorsel sagdan gelir: x=w -> 0
-                slide_expr = f"if(gte(t\\,0)\\,{w}-(t/{duration:.4f})*{w}\\,{w})"
-                overlay_xy = f"x={slide_expr}:y=0"
-            else:  # slide_left
-                # Gorsel soldan gelir: x=-w -> 0
-                slide_expr = f"if(gte(t\\,0)\\,-{w}+(t/{duration:.4f})*{w}\\,-{w})"
-                overlay_xy = f"x={slide_expr}:y=0"
-
-            if bg_label:
-                # Blur/gradient arka planı zaten hazır; [comp] etiketini [bg] olarak kullan
-                return (
-                    f"[0:v]scale={w}:{h}:force_original_aspect_ratio=decrease:flags=lanczos,"
-                    f"pad={w}:{h}:(ow-iw)/2:(oh-ih)/2:black[fg];"
-                    f"{bg_label}[fg]overlay={overlay_xy}[vout]"
-                )
-            else:
-                # Siyah arka plan: split ile ikiye bol, fg overlay ile kaydır
-                # (crop+t desteklenmiyor; split+overlay güvenilir)
-                vf_parts = (
-                    f"[0:v]split=2[bg_s][fg_s];"
-                    f"[bg_s]scale={w}:{h}:force_original_aspect_ratio=decrease:flags=lanczos,"
-                    f"pad={w}:{h}:(ow-iw)/2:(oh-ih)/2:black[bg_black];"
-                    f"[fg_s]scale={w}:{h}:force_original_aspect_ratio=decrease:flags=lanczos,"
-                    f"pad={w}:{h}:(ow-iw)/2:(oh-ih)/2:black[fg];"
-                )
-                if image_motion == "slide_top":
-                    slide_expr = f"if(gte(t\\,0)\\,-{h}+(t/{duration:.4f})*{h}\\,-{h})"
-                    return vf_parts + f"[bg_black][fg]overlay=x=0:y={slide_expr}[vout]"
-                elif image_motion == "slide_bot":
-                    slide_expr = f"if(gte(t\\,0)\\,{h}-(t/{duration:.4f})*{h}\\,{h})"
-                    return vf_parts + f"[bg_black][fg]overlay=x=0:y={slide_expr}[vout]"
-                elif image_motion == "slide_right":
-                    slide_expr = f"if(gte(t\\,0)\\,{w}-(t/{duration:.4f})*{w}\\,{w})"
-                    return vf_parts + f"[bg_black][fg]overlay=x={slide_expr}:y=0[vout]"
-                else:  # slide_left
-                    slide_expr = f"if(gte(t\\,0)\\,-{w}+(t/{duration:.4f})*{w}\\,-{w})"
-                    return vf_parts + f"[bg_black][fg]overlay=x={slide_expr}:y=0[vout]"
-
-        # ── Zoompan ifadesi oluştur (image_motion'a göre) ─────────────────────
+        # ── Zoompan ifadesi oluştur (image_motion'a göre: zoom_in / zoom_out) ──
         # zoompan için frame sayısı: max 30fps ile hesapla (60fps çok yavaş)
         zp_total_frames = max(1, int(duration * zoompan_fps))
         zp_zoom_delta = intensity / zp_total_frames
 
         def _build_zoompan_vf(input_label: str) -> str:
-            """
-            Zoompan tabanlı vf parçası oluşturur.
-            input_label: zoompan'ın alacağı giriş etiketi, ör. "[comp]" veya boş string (chain)
-            """
+            """Zoompan tabanlı basit Ken Burns (zoom_in / zoom_out) vf parçası oluşturur."""
             if image_motion == "zoom_out":
                 zoom_expr_out = f"if(eq(on\\,1)\\,{max_zoom:.4f}\\,zoom)-{zp_zoom_delta:.6f}"
                 zoom_clamp_out = f"max({zoom_expr_out}\\,1.0)"
@@ -507,26 +428,8 @@ class VideoComposer:
                     f"{input_label}zoompan=z='{zoom_clamp_out}':"
                     f"x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)':d=1:s={w}x{h}[vout]"
                 )
-            elif image_motion == "large_pan":
-                pan_x_lp, pan_y_lp = _PAN_PRESETS[clip_index % len(_PAN_PRESETS)]
-                strong_intensity = min(intensity * 2, 0.40)
-                strong_delta = strong_intensity / zp_total_frames
-                strong_max = 1.0 + strong_intensity
-                zoom_expr_lp = f"if(eq(on\\,1)\\,1.0\\,zoom)+{strong_delta:.6f}"
-                zoom_clamp_lp = f"min({zoom_expr_lp}\\,{strong_max:.4f})"
-                return (
-                    f"{input_label}zoompan=z='{zoom_clamp_lp}':"
-                    f"x='{pan_x_lp}':y='{pan_y_lp}':d=1:s={w}x{h}[vout]"
-                )
-            elif image_motion == "full_pan":
-                fp_zoom = 1.30
-                fp_x = f"(on-1)/({zp_total_frames}-1)*iw*(1-1/{fp_zoom:.2f})"
-                return (
-                    f"{input_label}zoompan=z='{fp_zoom:.2f}':"
-                    f"x='{fp_x}':y='ih/2-(ih/{fp_zoom:.2f}/2)':d=1:s={w}x{h}[vout]"
-                )
             else:
-                # zoom_in
+                # zoom_in (varsayılan)
                 zoom_expr_in = f"if(eq(on\\,1)\\,1.0\\,zoom)+{zp_zoom_delta:.6f}"
                 zoom_clamp_in = f"min({zoom_expr_in}\\,{max_zoom:.4f})"
                 return (
@@ -534,17 +437,18 @@ class VideoComposer:
                     f"x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)':d=1:s={w}x{h}[vout]"
                 )
 
-        # ── Slide mod mu? ──────────────────────────────────────────────────────
-        is_slide = image_motion in ("slide_top", "slide_bot", "slide_right", "slide_left")
-
         # ── VF zinciri oluştur ─────────────────────────────────────────────────
+        # NOT: boxblur=radius:power — 2. parametre (power) filtrenin kaç kez
+        # üst üste uygulanacağını belirtir. radius ile aynı büyük değer verilirse
+        # (örn. 40:40) render süresi katlanarak artar (44s'ye kadar tek klip için).
+        # power değeri her zaman küçük (1-2) tutulmalı.
         if use_blur:
             # Arka plan blur filtresi
-            blur_str = "boxblur=40:40"
+            blur_str = "boxblur=20:2"
             if bg_effect == "cinematic":
-                blur_str = "boxblur=30:30,colorchannelmixer=.3:.4:.3:0:.3:.4:.3:0:.3:.4:.3"
+                blur_str = "boxblur=15:2,colorchannelmixer=.3:.4:.3:0:.3:.4:.3:0:.3:.4:.3"
             elif bg_effect == "vignette_blur":
-                blur_str = "boxblur=50:50"
+                blur_str = "boxblur=25:2"
 
             if not ken_burns:
                 # Sabit görsel: w x h blur arka plan + fg overlay
@@ -556,31 +460,8 @@ class VideoComposer:
                     f"pad={w}:{h}:(ow-iw)/2:(oh-ih)/2:black[fg];"
                     f"[bg][fg]overlay=(W-w)/2:(H-h)/2[vout]"
                 )
-            elif is_slide:
-                # Slide: blur arka plan (w x h) + fg kaydırma
-                if image_motion == "slide_top":
-                    slide_expr = f"if(gte(t\\,0)\\,-{h}+(t/{duration:.4f})*{h}\\,-{h})"
-                    slide_part = f"[bg_blur][fg]overlay=x=0:y={slide_expr}[vout]"
-                elif image_motion == "slide_bot":
-                    slide_expr = f"if(gte(t\\,0)\\,{h}-(t/{duration:.4f})*{h}\\,{h})"
-                    slide_part = f"[bg_blur][fg]overlay=x=0:y={slide_expr}[vout]"
-                elif image_motion == "slide_right":
-                    slide_expr = f"if(gte(t\\,0)\\,{w}-(t/{duration:.4f})*{w}\\,{w})"
-                    slide_part = f"[bg_blur][fg]overlay=x={slide_expr}:y=0[vout]"
-                else:
-                    slide_expr = f"if(gte(t\\,0)\\,-{w}+(t/{duration:.4f})*{w}\\,-{w})"
-                    slide_part = f"[bg_blur][fg]overlay=x={slide_expr}:y=0[vout]"
-                vf = (
-                    f"[0:v]split=2[bg_in][fg_in];"
-                    f"[bg_in]scale={w}:{h}:force_original_aspect_ratio=increase:flags=lanczos,"
-                    f"crop={w}:{h},{blur_str},scale={w}:{h}:flags=lanczos[bg_blur];"
-                    f"[fg_in]scale={w}:{h}:force_original_aspect_ratio=decrease:flags=lanczos,"
-                    f"pad={w}:{h}:(ow-iw)/2:(oh-ih)/2:black[fg];"
-                    + slide_part
-                )
             else:
-                # zoom modlar: bg=blur w x h, fg=w x h zoompan, sonra bg üstüne overlay
-                # w2/h2 yerine w/h: blur modda zoompan kaynagi daha kucuk, daha hizli
+                # zoom_in/zoom_out: bg=blur w x h, fg=w x h zoompan, sonra bg üstüne overlay
                 zp = _build_zoompan_vf("[fg_big]").replace("[vout]", "[fg_zoomed]") + ";"
                 vf = (
                     f"[0:v]split=2[bg_in][fg_in];"
@@ -594,7 +475,7 @@ class VideoComposer:
 
         elif bg_effect in ("gradient_tb", "gradient_lr"):
             # Gradient: blur gibi split+overlay — color source filter yok
-            grad_blur = "boxblur=30:30"
+            grad_blur = "boxblur=15:2"
             if not ken_burns:
                 vf = (
                     f"[0:v]split=2[bg_in][fg_in];"
@@ -604,29 +485,8 @@ class VideoComposer:
                     f"pad={w}:{h}:(ow-iw)/2:(oh-ih)/2:black[fg];"
                     f"[bg][fg]overlay=(W-w)/2:(H-h)/2[vout]"
                 )
-            elif is_slide:
-                if image_motion == "slide_top":
-                    slide_expr = f"if(gte(t\\,0)\\,-{h}+(t/{duration:.4f})*{h}\\,-{h})"
-                    slide_part = f"[bg_blur][fg]overlay=x=0:y={slide_expr}[vout]"
-                elif image_motion == "slide_bot":
-                    slide_expr = f"if(gte(t\\,0)\\,{h}-(t/{duration:.4f})*{h}\\,{h})"
-                    slide_part = f"[bg_blur][fg]overlay=x=0:y={slide_expr}[vout]"
-                elif image_motion == "slide_right":
-                    slide_expr = f"if(gte(t\\,0)\\,{w}-(t/{duration:.4f})*{w}\\,{w})"
-                    slide_part = f"[bg_blur][fg]overlay=x={slide_expr}:y=0[vout]"
-                else:
-                    slide_expr = f"if(gte(t\\,0)\\,-{w}+(t/{duration:.4f})*{w}\\,-{w})"
-                    slide_part = f"[bg_blur][fg]overlay=x={slide_expr}:y=0[vout]"
-                vf = (
-                    f"[0:v]split=2[bg_in][fg_in];"
-                    f"[bg_in]scale={w}:{h}:force_original_aspect_ratio=increase:flags=lanczos,"
-                    f"crop={w}:{h},{grad_blur},scale={w}:{h}:flags=lanczos[bg_blur];"
-                    f"[fg_in]scale={w}:{h}:force_original_aspect_ratio=decrease:flags=lanczos,"
-                    f"pad={w}:{h}:(ow-iw)/2:(oh-ih)/2:black[fg];"
-                    + slide_part
-                )
             else:
-                # zoom modlar: bg=gradient blur w x h, fg=w x h zoompan → w x h
+                # zoom_in/zoom_out: bg=gradient blur w x h, fg=w x h zoompan → w x h
                 zp = _build_zoompan_vf("[fg_big]").replace("[vout]", "[fg_zoomed]") + ";"
                 vf = (
                     f"[0:v]split=2[bg_in][fg_in];"
@@ -645,10 +505,8 @@ class VideoComposer:
                     f"[0:v]scale={w}:{h}:force_original_aspect_ratio=decrease:flags=lanczos,"
                     f"pad={w}:{h}:(ow-iw)/2:(oh-ih)/2:black[vout]"
                 )
-            elif is_slide:
-                vf = _build_slide_vf(None)
             else:
-                # zoom_in, zoom_out, large_pan, full_pan — standart siyah arka plan
+                # zoom_in / zoom_out — standart siyah arka plan
                 vf = (
                     f"[0:v]scale={w2}:{h2}:force_original_aspect_ratio=decrease:flags=lanczos,"
                     f"pad={w2}:{h2}:(ow-iw)/2:(oh-ih)/2:black,"
@@ -697,8 +555,8 @@ class VideoComposer:
         # Video filtresi (filter_complex)
         cmd += ["-filter_complex", vf, "-map", "[vout]"]
 
-        # Encoding ayarları — zoompan modlarda fps'i 30 ile sınırla (hız)
-        out_fps = zoompan_fps if not is_slide else fps
+        # Encoding ayarları — zoompan modunda fps'i 30 ile sınırla (hız)
+        out_fps = zoompan_fps
         cmd += [
             "-c:v", self._codec,
             *self._quality_args(),

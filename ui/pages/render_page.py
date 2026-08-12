@@ -387,13 +387,32 @@ class RenderPage(QWidget):
         self.codec_combo = QComboBox()
         for label, val in CODEC_OPTIONS:
             self.codec_combo.addItem(label, val)
+        gpu_encoders = []
         try:
             from core.ffmpeg_helper import get_available_gpu_encoders, GPU_ENCODER_LABELS
-            for encoder in get_available_gpu_encoders():
+            gpu_encoders = get_available_gpu_encoders()
+            for encoder in gpu_encoders:
                 self.codec_combo.addItem(GPU_ENCODER_LABELS[encoder], encoder)
         except Exception:
-            pass
+            logger.exception("GPU encoder tespiti başarısız")
         vbox.addLayout(row("Codec:", self.codec_combo))
+
+        # GPU durum bilgisi — kullanıcı GPU render'ın çalışıp çalışmadığını görebilsin
+        self.gpu_status_lbl = QLabel()
+        self.gpu_status_lbl.setObjectName("pageSubtitle")
+        self.gpu_status_lbl.setWordWrap(True)
+        if gpu_encoders:
+            self.gpu_status_lbl.setText(
+                f"✅ GPU hızlandırma kullanılabilir: {', '.join(gpu_encoders)}. "
+                "Kullanmak için Codec listesinden GPU seçeneğini seçin."
+            )
+        else:
+            self.gpu_status_lbl.setText(
+                "⚠️ GPU hızlandırmalı encoder bulunamadı (NVENC/QSV/AMF). "
+                "Sistem CPU (libx264/libx265) ile render edecek. "
+                "GPU sürücünüzün ve FFmpeg kurulumunuzun güncel olduğundan emin olun."
+            )
+        vbox.addWidget(self.gpu_status_lbl)
 
         # Bitrate
         self.bitrate_edit = QLineEdit("8000k")
@@ -495,33 +514,22 @@ class RenderPage(QWidget):
         motion_lbl.setObjectName("pageSubtitle")
         vbox.addWidget(motion_lbl)
 
-        # 8 animasyon butonu — görseldeki gibi
+        # FFmpeg zoompan tabanlı Ken Burns modları (yalnızca zoom_in / zoom_out)
         _MOTION_OPTIONS = [
             ("zoom_in",    "Zoom In"),
             ("zoom_out",   "Zoom Out"),
-            ("slide_top",  "Slide Top"),
-            ("slide_bot",  "Slide Bot"),
-            ("slide_right","Slide Right"),
-            ("slide_left", "Slide Left"),
-            ("large_pan",  "Large Pan"),
-            ("full_pan",   "Full Pan"),
         ]
         self._motion_buttons: Dict[str, QPushButton] = {}
         motion_grid1 = QHBoxLayout()
-        motion_grid2 = QHBoxLayout()
-        for i, (val, lbl_text) in enumerate(_MOTION_OPTIONS):
+        for val, lbl_text in _MOTION_OPTIONS:
             btn = QPushButton(lbl_text)
             btn.setCheckable(True)
             btn.setFixedHeight(36)
             btn.setObjectName("motionBtn")
             btn.clicked.connect(lambda checked, v=val: self._select_motion(v))
             self._motion_buttons[val] = btn
-            if i < 4:
-                motion_grid1.addWidget(btn)
-            else:
-                motion_grid2.addWidget(btn)
+            motion_grid1.addWidget(btn)
         vbox.addLayout(motion_grid1)
-        vbox.addLayout(motion_grid2)
         # Varsayılan: zoom_in seçili
         self._current_motion = "zoom_in"
         self._motion_buttons["zoom_in"].setChecked(True)
