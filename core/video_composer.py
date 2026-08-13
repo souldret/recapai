@@ -313,6 +313,29 @@ class VideoComposer:
     # Segment klip oluşturma
     # ─────────────────────────────────────────────────────────────────────────
 
+    def _clip_worker_count(self) -> int:
+        """
+        Segment klipleri için kaç işlemin paralel çalışacağını belirler.
+
+        FFmpeg klip üretimi CPU-bound filtrelerden (boxblur, zoompan, scale)
+        oluştuğundan tek bir klip render'ı GPU/CPU codec'inden bağımsız
+        olarak aynı hızda sürer (bkz. GPU encoder yalnızca encode adımını
+        hızlandırır, filtre grafiğini hızlandırmaz). Bu nedenle GERÇEK
+        performans kazancı, birden fazla klibi AYNI ANDA (paralel) işlemekten
+        gelir: her FFmpeg process'i CPU'nun farklı çekirdeklerini kullanır ve
+        GPU encoder'lar (NVENC/QSV/AMF) donanımsal olarak eşzamanlı birden
+        fazla encode oturumunu destekler.
+        """
+        import os
+        cpu_count = os.cpu_count() or 4
+        if self._is_gpu_codec:
+            # GPU encoder'lar birden çok eşzamanlı oturumu destekler;
+            # CPU çekirdek sayısıyla sınırla (filtre grafiği hâlâ CPU'da çalışır).
+            return max(2, min(6, cpu_count // 2))
+        # CPU codec: her klip zaten çok çekirdek kullanabilir (libx264 threads);
+        # aşırı paralellik çekirdekleri bölüştürüp yavaşlatabilir.
+        return max(2, min(4, cpu_count // 3))
+
     def _build_segment_clips(
         self,
         chapter,
@@ -320,30 +343,30 @@ class VideoComposer:
         progress_callback: Callable[[int, str], None],
         cancel_check: Optional[Callable[[], bool]],
     ) -> List[str]:
-        """Her segment için görsel + ses → ayrı MP4 klip üretir."""
+        """Her segment için görsel + ses → ayrı MP4 klip üretir (paralel)."""
+        import threading
+        from concurrent.futures import ThreadPoolExecutor, as_completed
+
         segments = chapter.segments
         images = chapter.images
-        clip_paths: List[str] = []
         total = len(segments)
 
-        for idx, seg in enumerate(segments):
+        results: Dict[int, Optional[str]] = {}
+        progress_lock = threading.Lock()
+        completed = 0
+
+        def _process(idx: int, seg) -> Optional[str]:
             if cancel_check and cancel_check():
-                break
+                return None
 
-            pct = int(5 + (idx / total) * 60)
-            progress_callback(pct, "—")
-            self._log(f"Klip işleniyor: {idx + 1}/{total}")
-
-            # Görsel yolunu bul
             img_path: Optional[str] = None
             if seg.image_index < len(images):
                 img_path = images[seg.image_index].path
 
             if not img_path or not Path(img_path).exists():
                 logger.warning("Görsel bulunamadı segment %d için, atlanıyor.", idx)
-                continue
+                return None
 
-            # Ses süresi
             audio_path = seg.audio_path
             duration = seg.duration
             if duration <= 0:
@@ -353,17 +376,45 @@ class VideoComposer:
                 if duration <= 0:
                     duration = 4.0  # fallback
 
-            # Klip oluştur
             clip_out = str(tmp_dir / f"clip_{idx:04d}.mp4")
             try:
                 self._make_clip(img_path, audio_path, duration, clip_out, clip_index=idx)
             except Exception as exc:
                 logger.error("Klip oluşturma istisnası (segment %d): %s", idx, exc)
+                return None
 
             if Path(clip_out).exists() and Path(clip_out).stat().st_size > 0:
-                clip_paths.append(clip_out)
-            else:
-                logger.warning("Klip oluşturulamadı: %s", clip_out)
+                return clip_out
+            logger.warning("Klip oluşturulamadı: %s", clip_out)
+            return None
+
+        max_workers = self._clip_worker_count()
+        self._log(f"Klipler {max_workers} paralel işlemle üretiliyor...")
+
+        with ThreadPoolExecutor(max_workers=max_workers) as executor:
+            future_map = {
+                executor.submit(_process, idx, seg): idx
+                for idx, seg in enumerate(segments)
+            }
+            for future in as_completed(future_map):
+                idx = future_map[future]
+                if cancel_check and cancel_check():
+                    break
+                try:
+                    results[idx] = future.result()
+                except Exception as exc:
+                    logger.error("Klip worker hatası (segment %d): %s", idx, exc)
+                    results[idx] = None
+                with progress_lock:
+                    completed += 1
+                    pct = int(5 + (completed / total) * 60)
+                    progress_callback(pct, "—")
+                    self._log(f"Klip tamamlandı: {completed}/{total}")
+
+        # Sıralı listeye çevir (concat sıralaması önemli)
+        clip_paths: List[str] = [
+            results[i] for i in range(total) if results.get(i)
+        ]
 
         if not clip_paths:
             raise RuntimeError(
@@ -420,13 +471,23 @@ class VideoComposer:
         zp_zoom_delta = intensity / zp_total_frames
 
         def _build_zoompan_vf(input_label: str) -> str:
-            """Zoompan tabanlı basit Ken Burns (zoom_in / zoom_out) vf parçası oluşturur."""
+            """Zoompan tabanlı basit Ken Burns (zoom_in / zoom_out) vf parçası oluşturur.
+
+            NOT: d=1 kullanıldığında FFmpeg'in zoompan filtresi giriş -loop 1
+            statik görselinde 'zoom' değişkenini frame'ler arası ilerletmiyor
+            (her çıkış frame'i eq(on,1) dalına düşüyor gibi davranıyor) ve
+            sonuç olarak hareket TAMAMEN görünmez oluyor. Doğru davranış için
+            d=<toplam_frame_sayısı>:fps=<zoompan_fps> kullanılmalı; böylece
+            zoompan kendi iç frame sayacını (on) 0..d-1 arasında ilerletir ve
+            zoom her frame'de bir önceki karesinin üzerine birikir.
+            """
             if image_motion == "zoom_out":
                 zoom_expr_out = f"if(eq(on\\,1)\\,{max_zoom:.4f}\\,zoom)-{zp_zoom_delta:.6f}"
                 zoom_clamp_out = f"max({zoom_expr_out}\\,1.0)"
                 return (
                     f"{input_label}zoompan=z='{zoom_clamp_out}':"
-                    f"x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)':d=1:s={w}x{h}[vout]"
+                    f"x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)':"
+                    f"d={zp_total_frames}:s={w}x{h}:fps={zoompan_fps}[vout]"
                 )
             else:
                 # zoom_in (varsayılan)
@@ -434,7 +495,8 @@ class VideoComposer:
                 zoom_clamp_in = f"min({zoom_expr_in}\\,{max_zoom:.4f})"
                 return (
                     f"{input_label}zoompan=z='{zoom_clamp_in}':"
-                    f"x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)':d=1:s={w}x{h}[vout]"
+                    f"x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)':"
+                    f"d={zp_total_frames}:s={w}x{h}:fps={zoompan_fps}[vout]"
                 )
 
         # ── VF zinciri oluştur ─────────────────────────────────────────────────
@@ -452,13 +514,19 @@ class VideoComposer:
 
             if not ken_burns:
                 # Sabit görsel: w x h blur arka plan + fg overlay
+                # NOT: fg pad'i OPAK siyah DEĞİL, şeffaf (alpha=0) olmalı.
+                # Dikey (portre) görsellerde force_original_aspect_ratio=decrease
+                # ile kenarlarda çok büyük pad alanı oluşur; pad rengi opak
+                # siyah olursa bu alan blur arka planın üzerini kaplayıp
+                # ekranın büyük kısmını simsiyah gösterir (bkz. blur arka
+                # plan render'da her yeri siyah gösterme hatası).
                 vf = (
                     f"[0:v]split=2[bg_in][fg_in];"
                     f"[bg_in]scale={w}:{h}:force_original_aspect_ratio=increase:flags=lanczos,"
                     f"crop={w}:{h},{blur_str},scale={w}:{h}:flags=lanczos[bg];"
                     f"[fg_in]scale={w}:{h}:force_original_aspect_ratio=decrease:flags=lanczos,"
-                    f"pad={w}:{h}:(ow-iw)/2:(oh-ih)/2:black[fg];"
-                    f"[bg][fg]overlay=(W-w)/2:(H-h)/2[vout]"
+                    f"format=rgba,pad={w}:{h}:(ow-iw)/2:(oh-ih)/2:color=black@0.0[fg];"
+                    f"[bg][fg]overlay=(W-w)/2:(H-h)/2:format=auto[vout]"
                 )
             else:
                 # zoom_in/zoom_out: bg=blur w x h, fg=w x h zoompan, sonra bg üstüne overlay
@@ -468,9 +536,9 @@ class VideoComposer:
                     f"[bg_in]scale={w}:{h}:force_original_aspect_ratio=increase:flags=lanczos,"
                     f"crop={w}:{h},{blur_str},scale={w}:{h}:flags=lanczos[bg];"
                     f"[fg_in]scale={w}:{h}:force_original_aspect_ratio=decrease:flags=lanczos,"
-                    f"pad={w}:{h}:(ow-iw)/2:(oh-ih)/2:black[fg_big];"
+                    f"format=rgba,pad={w}:{h}:(ow-iw)/2:(oh-ih)/2:color=black@0.0[fg_big];"
                     + zp +
-                    "[bg][fg_zoomed]overlay=(W-w)/2:(H-h)/2[vout]"
+                    "[bg][fg_zoomed]overlay=(W-w)/2:(H-h)/2:format=auto[vout]"
                 )
 
         elif bg_effect in ("gradient_tb", "gradient_lr"):
@@ -482,8 +550,8 @@ class VideoComposer:
                     f"[bg_in]scale={w}:{h}:force_original_aspect_ratio=increase:flags=lanczos,"
                     f"crop={w}:{h},{grad_blur},scale={w}:{h}:flags=lanczos[bg];"
                     f"[fg_in]scale={w}:{h}:force_original_aspect_ratio=decrease:flags=lanczos,"
-                    f"pad={w}:{h}:(ow-iw)/2:(oh-ih)/2:black[fg];"
-                    f"[bg][fg]overlay=(W-w)/2:(H-h)/2[vout]"
+                    f"format=rgba,pad={w}:{h}:(ow-iw)/2:(oh-ih)/2:color=black@0.0[fg];"
+                    f"[bg][fg]overlay=(W-w)/2:(H-h)/2:format=auto[vout]"
                 )
             else:
                 # zoom_in/zoom_out: bg=gradient blur w x h, fg=w x h zoompan → w x h
@@ -493,9 +561,9 @@ class VideoComposer:
                     f"[bg_in]scale={w}:{h}:force_original_aspect_ratio=increase:flags=lanczos,"
                     f"crop={w}:{h},{grad_blur},scale={w}:{h}:flags=lanczos[bg];"
                     f"[fg_in]scale={w}:{h}:force_original_aspect_ratio=decrease:flags=lanczos,"
-                    f"pad={w}:{h}:(ow-iw)/2:(oh-ih)/2:black[fg_big];"
+                    f"format=rgba,pad={w}:{h}:(ow-iw)/2:(oh-ih)/2:color=black@0.0[fg_big];"
                     + zp +
-                    "[bg][fg_zoomed]overlay=(W-w)/2:(H-h)/2[vout]"
+                    "[bg][fg_zoomed]overlay=(W-w)/2:(H-h)/2:format=auto[vout]"
                 )
 
         else:
@@ -849,7 +917,22 @@ class VideoComposer:
         t_dur: float,
         random_pool: Optional[List[str]] = None,
     ) -> Dict[str, Any]:
-        """xfade filter_complex zinciri oluşturur."""
+        """xfade filter_complex zinciri oluşturur.
+
+        NOT (SES ÜST ÜSTE BİNME DÜZELTMESİ): Video geçişleri için xfade
+        kullanılırken ses için önceden `acrossfade` kullanılıyordu. Bu,
+        her klibin sonundaki t_dur kadarlık kısmı bir SONRAKİ klibin
+        başındaki t_dur kadarlık kısımla KARIŞTIRIR (mixer gibi toplar) —
+        yani iki farklı seslendirme (TTS) segmenti aynı anda duyulur hale
+        gelir. TTS ses dosyaları neredeyse hiç sessizlik içermediğinden
+        (konuşma baştan sona dolu) bu üst üste binme çok belirgin olur.
+        Video tarafında xfade görsel olarak sorunsuz bir geçiş efekti
+        oluştursa da, ses tarafında akustik olarak buna karşılık gelen bir
+        şey YOKTUR — sesler basitçe ardı ardına (concat) çalınmalıdır.
+        Bu yüzden ses için ayrı bir `concat` filtresi kullanılır; video
+        geçişi görsel olarak devam ederken ses hiçbir üst üste binme
+        olmadan bir segmentten diğerine kesintisiz geçer.
+        """
         import random as _random
 
         n = len(clips)
@@ -860,14 +943,12 @@ class VideoComposer:
         fc_parts: List[str] = []
         # video stream etiketleri: [0:v], [1:v], ...
         v_label = "[0:v]"
-        a_label = "[0:a]"
 
         offset = max(0.0, durations[0] - t_dur)
 
         for i in range(1, n):
             is_last = (i == n - 1)
             out_v = "[vout]" if is_last else f"[v{i}]"
-            out_a = "[aout]" if is_last else f"[a{i}]"
 
             # random mod: her geçiş için havuzdan rastgele seç
             cur_transition = _random.choice(random_pool) if random_pool else transition
@@ -876,15 +957,28 @@ class VideoComposer:
                 f"{v_label}[{i}:v]xfade=transition={cur_transition}:"
                 f"duration={t_dur:.2f}:offset={offset:.2f}{out_v}"
             )
-            fc_parts.append(
-                f"{a_label}[{i}:a]acrossfade=d={t_dur:.2f}{out_a}"
-            )
 
-            # Bir sonraki iterasyon için giriş etiketleri bu iterasyonun çıkışlarıdır
+            # Bir sonraki iterasyon için giriş etiketi bu iterasyonun çıkışıdır
             v_label = out_v
-            a_label = out_a
 
             offset = max(0.0, offset + durations[i] - t_dur)
+
+        # Ses: crossfade YOK — segmentler art arda (concat) eklenir.
+        # Böylece bir seslendirme bitmeden yenisi başlamaz.
+        # Video xfade zinciri toplam süreyi her geçişte t_dur kadar kısaltır
+        # (bindirme yüzünden). Ses tarafı crossfade yapmadığı için, ses
+        # video ile senkron kalsın diye SON klip hariç her klibin sonundan
+        # t_dur kadar kırpılır (atrim). Böylece toplam ses süresi = toplam
+        # video süresi olur ve ses/altyazı kayması oluşmaz.
+        audio_labels: List[str] = []
+        for i in range(n):
+            if i < n - 1 and t_dur > 0:
+                trim_end = max(0.05, durations[i] - t_dur)
+                fc_parts.append(f"[{i}:a]atrim=0:{trim_end:.3f}[a{i}t]")
+                audio_labels.append(f"[a{i}t]")
+            else:
+                audio_labels.append(f"[{i}:a]")
+        fc_parts.append(f"{''.join(audio_labels)}concat=n={n}:v=0:a=1[aout]")
 
         return {
             "inputs": inputs,
