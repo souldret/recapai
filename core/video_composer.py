@@ -23,7 +23,7 @@ DEFAULT_SETTINGS: Dict[str, Any] = {
     "transition_duration": 0.5,
     "ken_burns": True,
     "ken_burns_intensity": 0.15,
-    "image_motion": "zoom_in",   # zoom_in, zoom_out
+    "image_motion": "zoom_in",   # zoom_in, zoom_out, random (segment başına karışık)
     "blur_background": False,
     "bg_effect": "none",
     "subtitles": True,
@@ -193,21 +193,15 @@ class VideoComposer:
                 # PlayRes gerçek çıktı çözünürlüğüne uysun (Shorts/4K dahil)
                 sub_style["play_res_x"] = self._width
                 sub_style["play_res_y"] = self._height
-                # xfade bindirmesi varsa altyazı zamanını kaydır
-                t_name = self.settings.get("transitions", "none")
-                t_dur = float(self.settings.get("transition_duration", 0) or 0)
-                if t_name == "none" or t_dur <= 0:
-                    eff_t_dur = 0.0
-                else:
-                    # _xfade_concat ile aynı clamp mantığı (yaklaşık)
-                    segs_durs = [
-                        (s.duration if s.duration > 0 else 4.0) for s in segments
-                    ]
-                    min_d = min(segs_durs) if segs_durs else t_dur
-                    eff_t_dur = min(t_dur, max(0.05, min_d * 0.45))
+                # NOT: xfade geçişlerinde SES artık sıkıştırılmıyor (bkz.
+                # _xfade_chain — konuşma kırpılmaması için ses tam/ham haliyle
+                # art arda ekleniyor, video tarafı tpad ile telafi ediliyor).
+                # Bu yüzden altyazı zaman çizelgesi de HAM (kaydırmasız,
+                # transition_duration=0) kümülatif süreye göre hesaplanmalı;
+                # aksi halde altyazılar sesle senkronsuz kayar.
                 generate_ass(
                     chapter, sub_path, sub_style,
-                    transition_duration=eff_t_dur,
+                    transition_duration=0.0,
                 )
                 subs_out = str(tmp_dir / "with_subs.mp4")
                 self._burn_subtitles(merged, sub_path, subs_out)
@@ -453,6 +447,14 @@ class VideoComposer:
         blur_bg = self.settings.get("blur_background", False)
         bg_effect = self.settings.get("bg_effect", "none")
         image_motion = self.settings.get("image_motion", "zoom_in")
+
+        # "random" modu: her segment için zoom_in/zoom_out arasından deterministik
+        # (ama görünüşte rastgele) seçim yapılır. clip_index tohum olarak kullanılır
+        # ki paralel klip üretiminde thread-safe olsun ve aynı render tekrar
+        # çalıştırıldığında aynı sonucu üretsin (reprodüksiyon kolaylığı).
+        if image_motion == "random":
+            import random as _motion_random
+            image_motion = _motion_random.Random(clip_index).choice(["zoom_in", "zoom_out"])
 
         max_zoom = 1.0 + intensity
 
@@ -932,6 +934,17 @@ class VideoComposer:
         Bu yüzden ses için ayrı bir `concat` filtresi kullanılır; video
         geçişi görsel olarak devam ederken ses hiçbir üst üste binme
         olmadan bir segmentten diğerine kesintisiz geçer.
+
+        ÖNEMLİ (KONUŞMA KIRPILMASI DÜZELTMESİ): İlk versiyonda ses/video
+        senkronunu korumak için her klibin sonundan t_dur kadar `atrim` ile
+        kırpılıyordu. Ancak TTS seslendirmesi neredeyse hiç sessizlik
+        içermediğinden, kırpılan bu son t_dur'luk kısım genellikle GERÇEK
+        KONUŞMA içeriyordu — yani her geçişte cümlenin sonu kesiliyordu.
+        Bunun yerine ses HİÇ kırpılmadan tam haliyle art arda eklenir; video
+        tarafı xfade nedeniyle sesten biraz daha kısa kaldığından, video
+        zincirinin sonuna (son klibin son karesini dondurarak) fark kadar
+        `tpad` eklenir. Böylece hem hiçbir kelime kaybolmaz hem de ses/video
+        toplam süresi eşitlenir (senkron/altyazı kayması olmaz).
         """
         import random as _random
 
@@ -945,10 +958,12 @@ class VideoComposer:
         v_label = "[0:v]"
 
         offset = max(0.0, durations[0] - t_dur)
+        # Video zincirinin xfade sonrası toplam süresi (bindirmeler nedeniyle
+        # kısalır): ilk klip + sonraki her klip - t_dur.
+        video_total = durations[0]
 
         for i in range(1, n):
-            is_last = (i == n - 1)
-            out_v = "[vout]" if is_last else f"[v{i}]"
+            out_v = f"[v{i}]"
 
             # random mod: her geçiş için havuzdan rastgele seç
             cur_transition = _random.choice(random_pool) if random_pool else transition
@@ -962,23 +977,22 @@ class VideoComposer:
             v_label = out_v
 
             offset = max(0.0, offset + durations[i] - t_dur)
+            video_total = video_total + durations[i] - t_dur
 
-        # Ses: crossfade YOK — segmentler art arda (concat) eklenir.
-        # Böylece bir seslendirme bitmeden yenisi başlamaz.
-        # Video xfade zinciri toplam süreyi her geçişte t_dur kadar kısaltır
-        # (bindirme yüzünden). Ses tarafı crossfade yapmadığı için, ses
-        # video ile senkron kalsın diye SON klip hariç her klibin sonundan
-        # t_dur kadar kırpılır (atrim). Böylece toplam ses süresi = toplam
-        # video süresi olur ve ses/altyazı kayması oluşmaz.
-        audio_labels: List[str] = []
-        for i in range(n):
-            if i < n - 1 and t_dur > 0:
-                trim_end = max(0.05, durations[i] - t_dur)
-                fc_parts.append(f"[{i}:a]atrim=0:{trim_end:.3f}[a{i}t]")
-                audio_labels.append(f"[a{i}t]")
-            else:
-                audio_labels.append(f"[{i}:a]")
-        fc_parts.append(f"{''.join(audio_labels)}concat=n={n}:v=0:a=1[aout]")
+        # Ses: crossfade YOK, kırpma YOK — tüm segmentler tam haliyle art
+        # arda (concat) eklenir. Hiçbir kelime kaybolmaz.
+        audio_total = sum(durations)
+        audio_labels = "".join(f"[{i}:a]" for i in range(n))
+        fc_parts.append(f"{audio_labels}concat=n={n}:v=0:a=1[aout]")
+
+        # Video, xfade bindirmeleri nedeniyle sesten kısa kaldı — farkı son
+        # karenin dondurulmasıyla (tpad) telafi et ki video sesin bitişini
+        # kesmesin (ses akışının kesilmemesi ses/video sync'ini önceliklendirir).
+        pad_needed = max(0.0, audio_total - video_total)
+        if pad_needed > 0.02:
+            fc_parts.append(f"{v_label}tpad=stop_mode=clone:stop_duration={pad_needed:.3f}[vout]")
+        else:
+            fc_parts.append(f"{v_label}null[vout]")
 
         return {
             "inputs": inputs,

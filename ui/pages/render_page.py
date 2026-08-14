@@ -514,10 +514,12 @@ class RenderPage(QWidget):
         motion_lbl.setObjectName("pageSubtitle")
         vbox.addWidget(motion_lbl)
 
-        # FFmpeg zoompan tabanlı Ken Burns modları (yalnızca zoom_in / zoom_out)
+        # FFmpeg zoompan tabanlı Ken Burns modları: zoom_in, zoom_out ve
+        # "random" (her segment için zoom_in/zoom_out karışık uygulanır)
         _MOTION_OPTIONS = [
             ("zoom_in",    "Zoom In"),
             ("zoom_out",   "Zoom Out"),
+            ("random",     "Karışık (Zoom In + Out)"),
         ]
         self._motion_buttons: Dict[str, QPushButton] = {}
         motion_grid1 = QHBoxLayout()
