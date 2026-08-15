@@ -935,16 +935,23 @@ class VideoComposer:
         geçişi görsel olarak devam ederken ses hiçbir üst üste binme
         olmadan bir segmentten diğerine kesintisiz geçer.
 
-        ÖNEMLİ (KONUŞMA KIRPILMASI DÜZELTMESİ): İlk versiyonda ses/video
-        senkronunu korumak için her klibin sonundan t_dur kadar `atrim` ile
-        kırpılıyordu. Ancak TTS seslendirmesi neredeyse hiç sessizlik
-        içermediğinden, kırpılan bu son t_dur'luk kısım genellikle GERÇEK
-        KONUŞMA içeriyordu — yani her geçişte cümlenin sonu kesiliyordu.
-        Bunun yerine ses HİÇ kırpılmadan tam haliyle art arda eklenir; video
-        tarafı xfade nedeniyle sesten biraz daha kısa kaldığından, video
-        zincirinin sonuna (son klibin son karesini dondurarak) fark kadar
-        `tpad` eklenir. Böylece hem hiçbir kelime kaybolmaz hem de ses/video
-        toplam süresi eşitlenir (senkron/altyazı kayması olmaz).
+        ÖNEMLİ (KONUŞMA KIRPILMASI DÜZELTMESİ): Ses hiç kırpılmadan tam
+        haliyle art arda eklenir — hiçbir kelime kaybolmaz.
+
+        KRİTİK (BİRİKEN SENKRON KAYMASI DÜZELTMESİ): xfade'in doğal offset
+        zinciri `offset_i = offset_(i-1) + duration_i - t_dur` şeklinde
+        ilerler; yani HER geçişte video zaman çizelgesi t_dur kadar kısalır
+        (klipler üst üste bindirilir). Ses tarafı artık ham/kırpılmadan
+        art arda eklendiğinden (yukarıdaki düzeltme), video ile ses
+        arasında geçiş başına t_dur'luk bir sapma birikir: 5. geçişten
+        sonra video, karşılık gelen sesin bitişinden 5×t_dur kadar ÖNCE bir
+        sonraki görsele geçmiş olur (görsel, ses bitmeden değişir).
+        Çözüm: xfade'e vermeden ÖNCE her klibin (son klip hariç) sonuna
+        `tpad` ile t_dur kadar "donmuş kare" eklenir; xfade bu dondurulmuş
+        kısmı kullanarak geçiş yapar, gerçek video içeriğinden bir şey
+        çalınmaz. offset değerleri de HAM (kırpılmamış) kümülatif süreye
+        göre hesaplanır. Sonuç: video toplam süresi = ses toplam süresi
+        (sum(durations)) — geçiş sayısından bağımsız, sıfır sapma.
         """
         import random as _random
 
@@ -954,45 +961,47 @@ class VideoComposer:
             inputs += ["-i", cp]
 
         fc_parts: List[str] = []
-        # video stream etiketleri: [0:v], [1:v], ...
-        v_label = "[0:v]"
 
-        offset = max(0.0, durations[0] - t_dur)
-        # Video zincirinin xfade sonrası toplam süresi (bindirmeler nedeniyle
-        # kısalır): ilk klip + sonraki her klip - t_dur.
-        video_total = durations[0]
+        # İlk n-1 klibin video akışını t_dur kadar "donmuş kare" ile uzat;
+        # böylece xfade bindirmesi gerçek içerikten değil, bu ek pay'dan
+        # zaman çalar ve toplam video süresi HAM toplam süreyle eşit kalır.
+        v_label = "[0p]" if n > 1 else "[0:v]"
+        if n > 1:
+            fc_parts.append(f"[0:v]tpad=stop_mode=clone:stop_duration={t_dur:.3f}[0p]")
+
+        # xfade offset'leri HAM (kırpılmamış) kümülatif süreye göre —
+        # her segmentin gerçek bitiş zamanı.
+        cumulative = durations[0]
 
         for i in range(1, n):
-            out_v = f"[v{i}]"
+            is_last = (i == n - 1)
+            out_v = "[vraw]" if is_last else f"[v{i}]"
 
             # random mod: her geçiş için havuzdan rastgele seç
             cur_transition = _random.choice(random_pool) if random_pool else transition
 
+            if is_last:
+                next_label = f"[{i}:v]"
+            else:
+                next_label = f"[{i}p]"
+                fc_parts.append(f"[{i}:v]tpad=stop_mode=clone:stop_duration={t_dur:.3f}[{i}p]")
+
             fc_parts.append(
-                f"{v_label}[{i}:v]xfade=transition={cur_transition}:"
-                f"duration={t_dur:.2f}:offset={offset:.2f}{out_v}"
+                f"{v_label}{next_label}xfade=transition={cur_transition}:"
+                f"duration={t_dur:.2f}:offset={cumulative:.3f}{out_v}"
             )
 
-            # Bir sonraki iterasyon için giriş etiketi bu iterasyonun çıkışıdır
             v_label = out_v
+            cumulative += durations[i]
 
-            offset = max(0.0, offset + durations[i] - t_dur)
-            video_total = video_total + durations[i] - t_dur
+        final_v_label = v_label if n > 1 else "[0:v]"
+        fc_parts.append(f"{final_v_label}null[vout]")
 
         # Ses: crossfade YOK, kırpma YOK — tüm segmentler tam haliyle art
-        # arda (concat) eklenir. Hiçbir kelime kaybolmaz.
-        audio_total = sum(durations)
+        # arda (concat) eklenir. Hiçbir kelime kaybolmaz. Toplam ses süresi
+        # = toplam video süresi (cumulative) olduğundan sync sapması olmaz.
         audio_labels = "".join(f"[{i}:a]" for i in range(n))
         fc_parts.append(f"{audio_labels}concat=n={n}:v=0:a=1[aout]")
-
-        # Video, xfade bindirmeleri nedeniyle sesten kısa kaldı — farkı son
-        # karenin dondurulmasıyla (tpad) telafi et ki video sesin bitişini
-        # kesmesin (ses akışının kesilmemesi ses/video sync'ini önceliklendirir).
-        pad_needed = max(0.0, audio_total - video_total)
-        if pad_needed > 0.02:
-            fc_parts.append(f"{v_label}tpad=stop_mode=clone:stop_duration={pad_needed:.3f}[vout]")
-        else:
-            fc_parts.append(f"{v_label}null[vout]")
 
         return {
             "inputs": inputs,
