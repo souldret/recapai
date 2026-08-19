@@ -467,39 +467,44 @@ class VideoComposer:
         # bg_effect "blur" ise blur_bg de açık say
         use_blur = blur_bg or bg_effect in ("blur", "vignette_blur", "cinematic")
 
-        # ── Zoompan ifadesi oluştur (image_motion'a göre: zoom_in / zoom_out) ──
-        # zoompan için frame sayısı: max 30fps ile hesapla (60fps çok yavaş)
-        zp_total_frames = max(1, int(duration * zoompan_fps))
-        zp_zoom_delta = intensity / zp_total_frames
+        # ── Jitter-free Ken Burns: scale+crop+scale (zoompan yerine) ──────────────
+        # zoompan filtresi integer piksel sınırlarında kırpma yapar; her frame
+        # için zoom hesaplanırken yuvarlama hataları birikir ve gözle görülür
+        # titreme (1-3 piksellik geri-ileri atlama) oluşturur.
+        # Çözüm: "scale büyük → crop(n ile lineer) → scale küçük" zinciri.
+        # crop filtresi 'n' değişkeniyle (frame numarası) per-frame expression
+        # destekler ve tam kayan nokta hassasiyetiyle çalışır — sıfır titreme.
+        #
+        # Formül:
+        #   zoom_in:  z(n) = 1 + intensity * n / (total_frames - 1)
+        #   zoom_out: z(n) = max_zoom - intensity * n / (total_frames - 1)
+        #   crop_w = iw / z(n),  crop_h = ih / z(n)
+        #   crop_x = (iw - crop_w) / 2,  crop_y = (ih - crop_h) / 2
+        #
+        # Giriş: w2×h2 (2x büyük) prescale; crop+scale → w×h çıkış.
+        total_frames = max(2, int(duration * fps))
+        n_max = total_frames - 1  # 0-indexed son frame
 
-        def _build_zoompan_vf(input_label: str) -> str:
-            """Zoompan tabanlı basit Ken Burns (zoom_in / zoom_out) vf parçası oluşturur.
+        def _build_kenburns_vf(input_label: str, out_label: str = "[vout]") -> str:
+            """Jitter-free Ken Burns (scale+crop+scale) VF parçası.
 
-            NOT: d=1 kullanıldığında FFmpeg'in zoompan filtresi giriş -loop 1
-            statik görselinde 'zoom' değişkenini frame'ler arası ilerletmiyor
-            (her çıkış frame'i eq(on,1) dalına düşüyor gibi davranıyor) ve
-            sonuç olarak hareket TAMAMEN görünmez oluyor. Doğru davranış için
-            d=<toplam_frame_sayısı>:fps=<zoompan_fps> kullanılmalı; böylece
-            zoompan kendi iç frame sayacını (on) 0..d-1 arasında ilerletir ve
-            zoom her frame'de bir önceki karesinin üzerine birikir.
+            input_label: crop'a girecek stream etiketi (boş string = zincir devam)
+            out_label:   çıkış stream etiketi
             """
             if image_motion == "zoom_out":
-                zoom_expr_out = f"if(eq(on\\,1)\\,{max_zoom:.4f}\\,zoom)-{zp_zoom_delta:.6f}"
-                zoom_clamp_out = f"max({zoom_expr_out}\\,1.0)"
-                return (
-                    f"{input_label}zoompan=z='{zoom_clamp_out}':"
-                    f"x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)':"
-                    f"d={zp_total_frames}:s={w}x{h}:fps={zoompan_fps}[vout]"
-                )
+                # z(n) = max_zoom - intensity * n / n_max  (1.15 → 1.0)
+                crop_w = f"iw/(({max_zoom:.6f})-({intensity:.6f})*n/{n_max})"
+                crop_h = f"ih/(({max_zoom:.6f})-({intensity:.6f})*n/{n_max})"
             else:
-                # zoom_in (varsayılan)
-                zoom_expr_in = f"if(eq(on\\,1)\\,1.0\\,zoom)+{zp_zoom_delta:.6f}"
-                zoom_clamp_in = f"min({zoom_expr_in}\\,{max_zoom:.4f})"
-                return (
-                    f"{input_label}zoompan=z='{zoom_clamp_in}':"
-                    f"x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)':"
-                    f"d={zp_total_frames}:s={w}x{h}:fps={zoompan_fps}[vout]"
-                )
+                # zoom_in: z(n) = 1 + intensity * n / n_max  (1.0 → 1.15)
+                crop_w = f"iw/((1.0)+({intensity:.6f})*n/{n_max})"
+                crop_h = f"ih/((1.0)+({intensity:.6f})*n/{n_max})"
+            crop_x = f"(iw-{crop_w})/2"
+            crop_y = f"(ih-{crop_h})/2"
+            return (
+                f"{input_label}crop='{crop_w}':'{crop_h}':'{crop_x}':'{crop_y}',"
+                f"scale={w}:{h}:flags=lanczos{out_label}"
+            )
 
         # ── VF zinciri oluştur ─────────────────────────────────────────────────
         # NOT: boxblur=radius:power — 2. parametre (power) filtrenin kaç kez
@@ -531,15 +536,15 @@ class VideoComposer:
                     f"[bg][fg]overlay=(W-w)/2:(H-h)/2:format=auto[vout]"
                 )
             else:
-                # zoom_in/zoom_out: bg=blur w x h, fg=w x h zoompan, sonra bg üstüne overlay
-                zp = _build_zoompan_vf("[fg_big]").replace("[vout]", "[fg_zoomed]") + ";"
+                # zoom_in/zoom_out: bg=blur w x h, fg kenburns (scale+crop+scale) → overlay
+                kb = _build_kenburns_vf("[fg_big]", "[fg_zoomed]") + ";"
                 vf = (
                     f"[0:v]split=2[bg_in][fg_in];"
                     f"[bg_in]scale={w}:{h}:force_original_aspect_ratio=increase:flags=lanczos,"
                     f"crop={w}:{h},{blur_str},scale={w}:{h}:flags=lanczos[bg];"
-                    f"[fg_in]scale={w}:{h}:force_original_aspect_ratio=decrease:flags=lanczos,"
-                    f"format=rgba,pad={w}:{h}:(ow-iw)/2:(oh-ih)/2:color=black@0.0[fg_big];"
-                    + zp +
+                    f"[fg_in]scale={w2}:{h2}:force_original_aspect_ratio=decrease:flags=lanczos,"
+                    f"pad={w2}:{h2}:(ow-iw)/2:(oh-ih)/2:color=black@0.0[fg_big];"
+                    + kb +
                     "[bg][fg_zoomed]overlay=(W-w)/2:(H-h)/2:format=auto[vout]"
                 )
 
@@ -556,15 +561,15 @@ class VideoComposer:
                     f"[bg][fg]overlay=(W-w)/2:(H-h)/2:format=auto[vout]"
                 )
             else:
-                # zoom_in/zoom_out: bg=gradient blur w x h, fg=w x h zoompan → w x h
-                zp = _build_zoompan_vf("[fg_big]").replace("[vout]", "[fg_zoomed]") + ";"
+                # zoom_in/zoom_out: bg=gradient blur, fg kenburns → overlay
+                kb = _build_kenburns_vf("[fg_big]", "[fg_zoomed]") + ";"
                 vf = (
                     f"[0:v]split=2[bg_in][fg_in];"
                     f"[bg_in]scale={w}:{h}:force_original_aspect_ratio=increase:flags=lanczos,"
                     f"crop={w}:{h},{grad_blur},scale={w}:{h}:flags=lanczos[bg];"
-                    f"[fg_in]scale={w}:{h}:force_original_aspect_ratio=decrease:flags=lanczos,"
-                    f"format=rgba,pad={w}:{h}:(ow-iw)/2:(oh-ih)/2:color=black@0.0[fg_big];"
-                    + zp +
+                    f"[fg_in]scale={w2}:{h2}:force_original_aspect_ratio=decrease:flags=lanczos,"
+                    f"pad={w2}:{h2}:(ow-iw)/2:(oh-ih)/2:color=black@0.0[fg_big];"
+                    + kb +
                     "[bg][fg_zoomed]overlay=(W-w)/2:(H-h)/2:format=auto[vout]"
                 )
 
@@ -576,11 +581,12 @@ class VideoComposer:
                     f"pad={w}:{h}:(ow-iw)/2:(oh-ih)/2:black[vout]"
                 )
             else:
-                # zoom_in / zoom_out — standart siyah arka plan
+                # zoom_in / zoom_out — standart siyah arka plan, jitter-free scale+crop+scale
+                kb = _build_kenburns_vf("", "[vout]")
                 vf = (
                     f"[0:v]scale={w2}:{h2}:force_original_aspect_ratio=decrease:flags=lanczos,"
                     f"pad={w2}:{h2}:(ow-iw)/2:(oh-ih)/2:black,"
-                    + _build_zoompan_vf("")
+                    + kb
                 )
 
         # Watermark overlay
