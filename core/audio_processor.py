@@ -126,15 +126,18 @@ def remove_silence(
             # Tamamı sessiz — dokunma, orijinal süreyi döndür.
             return len(seg) / 1000.0
 
-        pieces = []
+        merged: List[tuple] = []
         for start, end in nonsilent_ranges:
             piece_start = max(0, start - keep_silence)
             piece_end = min(len(seg), end + keep_silence)
-            pieces.append(seg[piece_start:piece_end])
+            if merged and piece_start <= merged[-1][1]:
+                merged[-1] = (merged[-1][0], max(merged[-1][1], piece_end))
+            else:
+                merged.append((piece_start, piece_end))
 
-        result = pieces[0]
-        for piece in pieces[1:]:
-            result += piece
+        result = seg[merged[0][0]:merged[0][1]]
+        for piece_start, piece_end in merged[1:]:
+            result += seg[piece_start:piece_end]
 
         if len(result) >= len(seg):
             # Kısaltma sağlamadıysa orijinali koru.

@@ -392,8 +392,6 @@ class VideoComposer:
             }
             for future in as_completed(future_map):
                 idx = future_map[future]
-                if cancel_check and cancel_check():
-                    break
                 try:
                     results[idx] = future.result()
                 except Exception as exc:
@@ -404,6 +402,10 @@ class VideoComposer:
                     pct = int(5 + (completed / total) * 60)
                     progress_callback(pct, "—")
                     self._log(f"Klip tamamlandı: {completed}/{total}")
+                if cancel_check and cancel_check():
+                    for pending in future_map:
+                        pending.cancel()
+                    break
 
         # Sıralı listeye çevir (concat sıralaması önemli)
         clip_paths: List[str] = [
@@ -614,8 +616,8 @@ class VideoComposer:
 
         cmd = ["-y"]
 
-        # Giriş: görsel (loop ile duration kadar)
-        cmd += ["-loop", "1", "-framerate", str(fps), "-i", image_path]
+        # Giriş: görsel — framerate çıktı fps ile aynı olmalı (crop n sayacı)
+        cmd += ["-loop", "1", "-framerate", str(out_fps), "-i", image_path]
 
         # Giriş: watermark (varsa) — index 1
         if has_watermark:
@@ -643,7 +645,6 @@ class VideoComposer:
                 "-map", f"{audio_index}:a",
                 "-c:a", "aac", "-b:a", "192k",
                 "-ar", "44100", "-ac", "2",
-                "-shortest",
             ]
         else:
             # Sessiz audio ekle
@@ -705,7 +706,6 @@ class VideoComposer:
             "-t", str(duration),
             "-pix_fmt", "yuv420p",
             "-r", str(fps),
-            "-shortest",
         ]
         return cmd
 
@@ -843,14 +843,6 @@ class VideoComposer:
 
         from core.ffmpeg_helper import get_media_duration
 
-        # Her klip süresini öğren
-        durations: List[float] = []
-        for cp in clip_paths:
-            d = get_media_duration(cp)
-            if d <= 0:
-                d = 4.0
-            durations.append(d)
-
         # Tek klip — xfade zinciri gereksiz, doğrudan simple_concat
         if len(clip_paths) == 1:
             self._simple_concat(clip_paths, output_path)
@@ -866,6 +858,14 @@ class VideoComposer:
             else:
                 normalized_clips.append(cp)  # başarısız olursa orijinali kullan
         clip_paths_to_use = normalized_clips
+
+        # Süreleri NORMALİZE SONRASI ölç — loudnorm AAC padding xfade offset'i bozmasın
+        durations: List[float] = []
+        for cp in clip_paths_to_use:
+            d = get_media_duration(cp)
+            if d <= 0:
+                d = 4.0
+            durations.append(d)
 
         # Geçiş süresi klipten uzun olamaz — aksi halde xfade offset bozulur
         min_dur = min(durations) if durations else t_dur
