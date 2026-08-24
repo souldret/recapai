@@ -430,15 +430,9 @@ class VideoComposer:
     ) -> None:
         """
         Tek bir görsel + ses'ten MP4 klip üretir.
-        Ken Burns efekti FFmpeg zoompan filtresi ile uygulanır.
+        Ken Burns: scale+crop+scale (zoompan değil — integer crop titreşimi yok).
         Arka plan efektleri: none, blur, gradient_tb, gradient_lr, vignette_blur, cinematic
-        Görsel animasyon modları (image_motion): zoom_in, zoom_out
-
-        TİTREME NOTU: zoompan filtresinde titreşimi önlemek için:
-        - z ifadesinde if(eq(on,1),1.0,zoom)+delta kullanılır (başlangıç zoom'u açıkça 1.0)
-        - fps parametresi zoompan'a verilmez; klip fps'i encoding aşamasında -r ile ayarlanır
-        - zoompan çıktısından sonra ikinci scale KULLANILMAZ (sıçrama yaratır)
-        - İki aşamalı scale: önce büyük, sonra zoompan; final boyut zoompan'ın s= parametresiyle
+        Görsel animasyon modları (image_motion): zoom_in, zoom_out, random
         """
         w, h = self._width, self._height
         fps = self._fps
@@ -458,11 +452,12 @@ class VideoComposer:
 
         max_zoom = 1.0 + intensity
 
-        # zoompan için kaynak çözünürlük: 2x — zoompan sınır dışı kırpmayı önler
+        # Ken Burns kaynak çözünürlük: 2x — crop penceresi sınır dışı kırpmayı önler
         w2, h2 = w * 2, h * 2
 
-        # zoompan fps limiti: 30fps üzerinde çok yavaş — içeriden sabitle
-        zoompan_fps = min(fps, 30)
+        # 60 fps zoom/crop çok yavaş; çıktı fps'i 30 ile sınırla.
+        # crop ifadesindeki n bu fps ile aynı olmalı (aksi halde zoom yarım kalır).
+        out_fps = min(fps, 30)
 
         # bg_effect "blur" ise blur_bg de açık say
         use_blur = blur_bg or bg_effect in ("blur", "vignette_blur", "cinematic")
@@ -482,7 +477,7 @@ class VideoComposer:
         #   crop_x = (iw - crop_w) / 2,  crop_y = (ih - crop_h) / 2
         #
         # Giriş: w2×h2 (2x büyük) prescale; crop+scale → w×h çıkış.
-        total_frames = max(2, int(duration * fps))
+        total_frames = max(2, int(round(duration * out_fps)))
         n_max = total_frames - 1  # 0-indexed son frame
 
         def _build_kenburns_vf(input_label: str, out_label: str = "[vout]") -> str:
@@ -501,8 +496,12 @@ class VideoComposer:
                 crop_h = f"ih/((1.0)+({intensity:.6f})*n/{n_max})"
             crop_x = f"(iw-{crop_w})/2"
             crop_y = f"(ih-{crop_h})/2"
+            # crop w:h:x:y — ifade içindeki virgüller parametre ayırıcı olmasın
+            def _esc(expr: str) -> str:
+                return expr.replace(",", "\\,")
+
             return (
-                f"{input_label}crop='{crop_w}':'{crop_h}':'{crop_x}':'{crop_y}',"
+                f"{input_label}crop={_esc(crop_w)}:{_esc(crop_h)}:{_esc(crop_x)}:{_esc(crop_y)},"
                 f"scale={w}:{h}:flags=lanczos{out_label}"
             )
 
@@ -543,7 +542,7 @@ class VideoComposer:
                     f"[bg_in]scale={w}:{h}:force_original_aspect_ratio=increase:flags=lanczos,"
                     f"crop={w}:{h},{blur_str},scale={w}:{h}:flags=lanczos[bg];"
                     f"[fg_in]scale={w2}:{h2}:force_original_aspect_ratio=decrease:flags=lanczos,"
-                    f"pad={w2}:{h2}:(ow-iw)/2:(oh-ih)/2:color=black@0.0[fg_big];"
+                    f"format=rgba,pad={w2}:{h2}:(ow-iw)/2:(oh-ih)/2:color=black@0.0[fg_big];"
                     + kb +
                     "[bg][fg_zoomed]overlay=(W-w)/2:(H-h)/2:format=auto[vout]"
                 )
@@ -568,7 +567,7 @@ class VideoComposer:
                     f"[bg_in]scale={w}:{h}:force_original_aspect_ratio=increase:flags=lanczos,"
                     f"crop={w}:{h},{grad_blur},scale={w}:{h}:flags=lanczos[bg];"
                     f"[fg_in]scale={w2}:{h2}:force_original_aspect_ratio=decrease:flags=lanczos,"
-                    f"pad={w2}:{h2}:(ow-iw)/2:(oh-ih)/2:color=black@0.0[fg_big];"
+                    f"format=rgba,pad={w2}:{h2}:(ow-iw)/2:(oh-ih)/2:color=black@0.0[fg_big];"
                     + kb +
                     "[bg][fg_zoomed]overlay=(W-w)/2:(H-h)/2:format=auto[vout]"
                 )
@@ -631,8 +630,6 @@ class VideoComposer:
         # Video filtresi (filter_complex)
         cmd += ["-filter_complex", vf, "-map", "[vout]"]
 
-        # Encoding ayarları — zoompan modunda fps'i 30 ile sınırla (hız)
-        out_fps = zoompan_fps
         cmd += [
             "-c:v", self._codec,
             *self._quality_args(),
