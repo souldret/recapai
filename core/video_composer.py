@@ -479,13 +479,13 @@ class VideoComposer:
                 z_expr = f"({max_zoom:.6f})-({intensity:.6f})*n/{n_max}"
             else:
                 z_expr = f"(1.0)+({intensity:.6f})*n/{n_max}"
-            z_esc = z_expr.replace(",", "\\,")
-            sw = f"trunc(iw*({z_esc})/2)*2"
-            sh = f"trunc(ih*({z_esc})/2)*2"
-            cx = f"trunc((in_w-{w})/4)*2"
-            cy = f"trunc((in_h-{h})/4)*2"
+            sw = f"trunc(iw*({z_expr})/2)*2"
+            sh = f"trunc(ih*({z_expr})/2)*2"
+            # w/h ve scale ciktisi cift; (in_w-w)/2 tam sayi — /4*2 merkezde 2px atlama yapardi
+            cx = f"(in_w-{w})/2"
+            cy = f"(in_h-{h})/2"
             return (
-                f"{input_label}scale=w='{sw}':h='{sh}':eval=frame:flags=lanczos+accurate_rnd,"
+                f"{input_label}scale=w='{sw}':h='{sh}':eval=frame:flags=lanczos,"
                 f"crop={w}:{h}:{cx}:{cy}{out_label}"
             )
 
