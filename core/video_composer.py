@@ -206,7 +206,7 @@ class VideoComposer:
                     transition_duration=0.0,
                 )
                 subs_out = str(tmp_dir / "with_subs.mp4")
-                self._burn_subtitles(merged, sub_path, subs_out)
+                self._burn_subtitles(merged, sub_path, subs_out, _cancelled)
                 if Path(subs_out).exists() and Path(subs_out).stat().st_size > 0:
                     with_subs = subs_out
                 else:
@@ -219,7 +219,7 @@ class VideoComposer:
                 _cb(88, "—")
                 self._log("BGM ekleniyor...")
                 bgm_out = str(tmp_dir / "with_bgm.mp4")
-                self._mix_bgm(with_subs, bgm_path, bgm_out)
+                self._mix_bgm(with_subs, bgm_path, bgm_out, _cancelled)
                 if Path(bgm_out).exists() and Path(bgm_out).stat().st_size > 0:
                     with_bgm = bgm_out
 
@@ -231,7 +231,7 @@ class VideoComposer:
                 _cb(93, "—")
                 self._log("Intro/Outro ekleniyor...")
                 bookend_out = str(tmp_dir / "with_bookends.mp4")
-                self._add_bookends(with_bgm, intro_path, outro_path, bookend_out)
+                self._add_bookends(with_bgm, intro_path, outro_path, bookend_out, _cancelled)
                 if Path(bookend_out).exists() and Path(bookend_out).stat().st_size > 0:
                     final_tmp = bookend_out
 
@@ -862,7 +862,7 @@ class VideoComposer:
         normalized_clips: List[str] = []
         for i, cp in enumerate(clip_paths):
             norm_out = str(norm_dir / f"norm_{i:04d}.mp4")
-            if self._normalize_clip_audio(cp, norm_out):
+            if self._normalize_clip_audio(cp, norm_out, cancel_check):
                 normalized_clips.append(norm_out)
             else:
                 normalized_clips.append(cp)  # başarısız olursa orijinali kullan
@@ -1045,7 +1045,12 @@ class VideoComposer:
             logger.debug("Ses seviyesi ölçülemedi (%s): %s", clip_path, exc)
             return True
 
-    def _normalize_clip_audio(self, clip_path: str, output_path: str) -> bool:
+    def _normalize_clip_audio(
+        self,
+        clip_path: str,
+        output_path: str,
+        cancel_check: Optional[Callable[[], bool]] = None,
+    ) -> bool:
         """
         Ses seviyesini loudnorm filtresi ile normalize eder.
         Sessiz / neredeyse sessiz kliplerde loudnorm NaN üretir → atlanır.
@@ -1068,10 +1073,16 @@ class VideoComposer:
             "-c:a", "aac", "-b:a", "192k",
             "-ar", "44100", "-ac", "2",
             output_path,
-        ])
+        ], cancel_check)
         return ret == 0 and Path(output_path).exists() and Path(output_path).stat().st_size > 0
 
-    def _burn_subtitles(self, input_path: str, sub_path: str, output_path: str) -> None:
+    def _burn_subtitles(
+        self,
+        input_path: str,
+        sub_path: str,
+        output_path: str,
+        cancel_check: Optional[Callable[[], bool]] = None,
+    ) -> None:
         """ASS altyazıları video üzerine yazar (FFmpeg subtitles filtresi).
 
         Windows yol güvenliği:
@@ -1093,9 +1104,15 @@ class VideoComposer:
             "-c:v", self._codec, *self._quality_args(),
             "-c:a", "copy",
             output_path,
-        ])
+        ], cancel_check)
 
-    def _mix_bgm(self, input_path: str, bgm_path: str, output_path: str) -> None:
+    def _mix_bgm(
+        self,
+        input_path: str,
+        bgm_path: str,
+        output_path: str,
+        cancel_check: Optional[Callable[[], bool]] = None,
+    ) -> None:
         """BGM'i ana ses ile karıştırır (ducking ile)."""
         bgm_vol = self.settings.get("bgm_volume", 0.15)
         ducking = self.settings.get("bgm_ducking", True)
@@ -1127,7 +1144,7 @@ class VideoComposer:
             "-ar", "44100", "-ac", "2",
             "-shortest",
             output_path,
-        ])
+        ], cancel_check)
         # Ducking filtreleri yoksa veya fail olursa basit mix dene
         if (ret != 0 or not Path(output_path).exists() or Path(output_path).stat().st_size <= 0) and ducking:
             logger.warning("BGM ducking başarısız; basit mix deneniyor.")
@@ -1148,7 +1165,7 @@ class VideoComposer:
                 "-ar", "44100", "-ac", "2",
                 "-shortest",
                 output_path,
-            ])
+            ], cancel_check)
 
     def _add_bookends(
         self,
@@ -1156,6 +1173,7 @@ class VideoComposer:
         intro_path: Optional[str],
         outro_path: Optional[str],
         output_path: str,
+        cancel_check: Optional[Callable[[], bool]] = None,
     ) -> None:
         """
         Intro ve/veya outro videolarını ana videoya ekler.
@@ -1194,7 +1212,7 @@ class VideoComposer:
                 "-c:a", "aac", "-b:a", "192k",
                 "-ar", "44100", "-ac", "2",
                 norm_out,
-            ])
+            ], cancel_check)
             # 2) Ses yoksa: anullsrc ile sessiz ses ekle
             if ret != 0 or not Path(norm_out).exists() or Path(norm_out).stat().st_size <= 0:
                 ret = self._run([
@@ -1209,14 +1227,14 @@ class VideoComposer:
                     "-ar", "44100", "-ac", "2",
                     "-shortest",
                     norm_out,
-                ])
+                ], cancel_check)
             if ret == 0 and Path(norm_out).exists() and Path(norm_out).stat().st_size > 0:
                 normalized.append(norm_out)
             else:
                 logger.warning("Bookend normalleştirme başarısız: %s, orijinal kullanılıyor", clip)
                 normalized.append(clip)
 
-        self._simple_concat(normalized, output_path)
+        self._simple_concat(normalized, output_path, cancel_check)
 
     # ─────────────────────────────────────────────────────────────────────────
     # FFmpeg çalıştırma
@@ -1234,6 +1252,8 @@ class VideoComposer:
             return ["-preset", "fast", "-global_quality", str(crf)]
         if self._codec == "h264_amf":
             return ["-quality", "speed", "-qp_i", str(crf), "-qp_p", str(crf)]
+        if self._codec == "libx265":
+            return ["-preset", "fast", "-crf", str(crf), "-tag:v", "hvc1"]
         return ["-preset", "fast", "-crf", str(crf)]
 
     def _run(self, args: List[str], cancel_check: Optional[Callable[[], bool]] = None) -> int:
