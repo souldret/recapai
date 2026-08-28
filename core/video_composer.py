@@ -96,6 +96,8 @@ class VideoComposer:
         self._fps = int(self.settings.get("fps", 30) or 30)
         if self._fps <= 0:
             self._fps = 30
+        # Ken Burns crop n sayacı ve klip encode bu fps ile; 60 çok yavaş
+        self._clip_fps = min(self._fps, 30)
         self._codec = self.settings.get("codec") or "libx264"
         self._bitrate = self.settings.get("bitrate") or "8000k"
         self._is_gpu_codec = self._codec in ("h264_nvenc", "h264_qsv", "h264_amf")
@@ -372,7 +374,10 @@ class VideoComposer:
 
             clip_out = str(tmp_dir / f"clip_{idx:04d}.mp4")
             try:
-                self._make_clip(img_path, audio_path, duration, clip_out, clip_index=idx)
+                self._make_clip(
+                    img_path, audio_path, duration, clip_out,
+                    clip_index=idx, cancel_check=cancel_check,
+                )
             except Exception as exc:
                 logger.error("Klip oluşturma istisnası (segment %d): %s", idx, exc)
                 return None
@@ -429,6 +434,7 @@ class VideoComposer:
         duration: float,
         output_path: str,
         clip_index: int = 0,
+        cancel_check: Optional[Callable[[], bool]] = None,
     ) -> None:
         """
         Tek bir görsel + ses'ten MP4 klip üretir.
@@ -457,9 +463,7 @@ class VideoComposer:
         # Ken Burns kaynak çözünürlük: 2x — crop penceresi sınır dışı kırpmayı önler
         w2, h2 = w * 2, h * 2
 
-        # 60 fps zoom/crop çok yavaş; çıktı fps'i 30 ile sınırla.
-        # crop ifadesindeki n bu fps ile aynı olmalı (aksi halde zoom yarım kalır).
-        out_fps = min(fps, 30)
+        out_fps = self._clip_fps
 
         # bg_effect "blur" ise blur_bg de açık say
         use_blur = blur_bg or bg_effect in ("blur", "vignette_blur", "cinematic")
@@ -657,7 +661,7 @@ class VideoComposer:
             )
 
         cmd.append(output_path)
-        ret = self._run(cmd)
+        ret = self._run(cmd, cancel_check)
         if ret != 0:
             logger.error("Klip oluşturulamadı (rc=%d): %s", ret, output_path)
             # Hata ayıklama: sadece başarısız kliplerde VF log yaz
@@ -731,11 +735,16 @@ class VideoComposer:
             return
 
         if transition == "none" or t_dur <= 0:
-            self._simple_concat(clip_paths, output_path)
+            self._simple_concat(clip_paths, output_path, cancel_check)
         else:
             self._xfade_concat(clip_paths, output_path, transition, t_dur, cancel_check)
 
-    def _simple_concat(self, clip_paths: List[str], output_path: str) -> None:
+    def _simple_concat(
+        self,
+        clip_paths: List[str],
+        output_path: str,
+        cancel_check: Optional[Callable[[], bool]] = None,
+    ) -> None:
         """Geçiş efekti olmadan basit birleştirme."""
         list_file = Path(output_path).with_suffix(".list.txt")
         try:
@@ -752,7 +761,7 @@ class VideoComposer:
                 "-i", str(list_file),
                 "-c", "copy",
                 output_path,
-            ])
+            ], cancel_check)
         finally:
             if list_file.exists():
                 list_file.unlink()
@@ -845,7 +854,7 @@ class VideoComposer:
 
         # Tek klip — xfade zinciri gereksiz, doğrudan simple_concat
         if len(clip_paths) == 1:
-            self._simple_concat(clip_paths, output_path)
+            self._simple_concat(clip_paths, output_path, cancel_check)
             return
 
         # Ses normalizasyonu — her klibi normalize et (sessiz kliplerde atlanır)
@@ -896,15 +905,15 @@ class VideoComposer:
             "-b:a", "192k",
             "-ar", "44100", "-ac", "2",
             "-pix_fmt", "yuv420p",
-            "-r", str(self._fps),
+            "-r", str(self._clip_fps),
             output_path,
         ]
 
-        ret = self._run(cmd)
+        ret = self._run(cmd, cancel_check)
         if ret != 0 or not Path(output_path).exists() or Path(output_path).stat().st_size <= 0:
             # xfade başarısız — orijinal kliplerle simple concat'e dön
             logger.warning("xfade başarısız, orijinal kliplerle basit concat'e geçiliyor.")
-            self._simple_concat(clip_paths, output_path)
+            self._simple_concat(clip_paths, output_path, cancel_check)
 
         # Normalizasyon geçici dosyalarını temizle
         for norm_file in normalized_clips:
