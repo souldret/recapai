@@ -468,47 +468,25 @@ class VideoComposer:
         # bg_effect "blur" ise blur_bg de açık say
         use_blur = blur_bg or bg_effect in ("blur", "vignette_blur", "cinematic")
 
-        # ── Jitter-free Ken Burns: scale+crop+scale (zoompan yerine) ──────────────
-        # zoompan filtresi integer piksel sınırlarında kırpma yapar; her frame
-        # için zoom hesaplanırken yuvarlama hataları birikir ve gözle görülür
-        # titreme (1-3 piksellik geri-ileri atlama) oluşturur.
-        # Çözüm: "scale büyük → crop(n ile lineer) → scale küçük" zinciri.
-        # crop filtresi 'n' değişkeniyle (frame numarası) per-frame expression
-        # destekler ve tam kayan nokta hassasiyetiyle çalışır — sıfır titreme.
-        #
-        # Formül:
-        #   zoom_in:  z(n) = 1 + intensity * n / (total_frames - 1)
-        #   zoom_out: z(n) = max_zoom - intensity * n / (total_frames - 1)
-        #   crop_w = iw / z(n),  crop_h = ih / z(n)
-        #   crop_x = (iw - crop_w) / 2,  crop_y = (ih - crop_h) / 2
-        #
-        # Giriş: w2×h2 (2x büyük) prescale; crop+scale → w×h çıkış.
+        # Ken Burns: görseli kademeli büyüt, SABİT w×h merkeze crop.
+        # Değişen crop boyutu + (iw-cw)/2 tek/çift kayması wiggling yapar.
+        # scale eval=frame + crop={w}:{h}:even_x:even_y titreşimi keser.
         total_frames = max(2, int(round(duration * out_fps)))
-        n_max = total_frames - 1  # 0-indexed son frame
+        n_max = total_frames - 1
 
         def _build_kenburns_vf(input_label: str, out_label: str = "[vout]") -> str:
-            """Jitter-free Ken Burns (scale+crop+scale) VF parçası.
-
-            input_label: crop'a girecek stream etiketi (boş string = zincir devam)
-            out_label:   çıkış stream etiketi
-            """
             if image_motion == "zoom_out":
-                # z(n) = max_zoom - intensity * n / n_max  (1.15 → 1.0)
-                crop_w = f"iw/(({max_zoom:.6f})-({intensity:.6f})*n/{n_max})"
-                crop_h = f"ih/(({max_zoom:.6f})-({intensity:.6f})*n/{n_max})"
+                z_expr = f"({max_zoom:.6f})-({intensity:.6f})*n/{n_max}"
             else:
-                # zoom_in: z(n) = 1 + intensity * n / n_max  (1.0 → 1.15)
-                crop_w = f"iw/((1.0)+({intensity:.6f})*n/{n_max})"
-                crop_h = f"ih/((1.0)+({intensity:.6f})*n/{n_max})"
-            crop_x = f"(iw-{crop_w})/2"
-            crop_y = f"(ih-{crop_h})/2"
-            # crop w:h:x:y — ifade içindeki virgüller parametre ayırıcı olmasın
-            def _esc(expr: str) -> str:
-                return expr.replace(",", "\\,")
-
+                z_expr = f"(1.0)+({intensity:.6f})*n/{n_max}"
+            z_esc = z_expr.replace(",", "\\,")
+            sw = f"trunc(iw*({z_esc})/2)*2"
+            sh = f"trunc(ih*({z_esc})/2)*2"
+            cx = f"trunc((in_w-{w})/4)*2"
+            cy = f"trunc((in_h-{h})/4)*2"
             return (
-                f"{input_label}crop={_esc(crop_w)}:{_esc(crop_h)}:{_esc(crop_x)}:{_esc(crop_y)},"
-                f"scale={w}:{h}:flags=lanczos{out_label}"
+                f"{input_label}scale=w='{sw}':h='{sh}':eval=frame:flags=lanczos+accurate_rnd,"
+                f"crop={w}:{h}:{cx}:{cy}{out_label}"
             )
 
         # ── VF zinciri oluştur ─────────────────────────────────────────────────
