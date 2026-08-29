@@ -23,30 +23,33 @@ python main.py
 
 ## Gereksinimler
 
-- Python 3.11+
+- Python 3.10–3.12 (3.13 önerilmez)
 - PyQt6 6.7.0
 - OpenRouter API anahtarı (https://openrouter.ai)
+- FFmpeg (video render)
+
+Opsiyonel yerel TTS (Kokoro): `python tools/install_dependencies.py`
+
+Test: `pytest tests/ -q`
 
 ## Özellikler
 
-- 🖼️ Manhwa/manga görsel yükleme ve yönetimi
-- 🤖 AI ile otomatik görsel analizi (Gemini, Claude, GPT-4o)
-- 📝 Otomatik script oluşturma ve editör
-- 🎙️ Türkçe TTS seslendirme (Edge TTS)
-- 🎬 Video render ve dışa aktarma
-- 🌙 Modern dark tema
+- Manhwa/manga görsel yükleme, panel tespiti
+- AI görsel analizi (OpenRouter: Gemini, Claude, GPT-4o)
+- Niş modüllü script üretimi (power fantasy, romance, dark action, comedy)
+- Edge TTS + opsiyonel Kokoro
+- FFmpeg render (Ken Burns, xfade, altyazı, BGM, watermark)
 
 ## Dizin Yapısı
 
 ```
 RecapAI/
 ├── main.py           # Giriş noktası
-├── config/           # Ayarlar ve tema
-├── core/             # İş mantığı (geliştiriliyor)
-├── ui/               # Arayüz bileşenleri
-│   ├── main_window.py
-│   └── pages/        # Uygulama sayfaları
-├── assets/           # İkonlar ve kaynaklar
-├── projects/         # Kullanıcı projeleri
-└── logs/             # Uygulama logları
+├── config/           # Ayarlar, promptlar, QSS temalar
+├── core/             # İş mantığı
+├── ui/               # PyQt sayfaları ve worker'lar
+├── tests/            # pytest
+├── tools/            # Torch/CUDA kurulum
+├── projects/         # Kullanıcı projeleri (gitignored)
+└── logs/             # Uygulama logları (gitignored)
 ```

@@ -41,3 +41,6 @@ imageio-ffmpeg==0.5.1
 
 # === Yardimci ===
 tqdm==4.66.5
+
+# === Test ===
+pytest>=8.0.0

@@ -43,7 +43,7 @@ from PyQt6.QtWidgets import QApplication
 from PyQt6.QtCore import Qt
 from PyQt6.QtGui import QFont
 
-from core.constants import THEME_PATH, APP_LOG_PATH, ERROR_LOG_PATH, LOGS_DIR
+from core.constants import THEME_PATH, APP_LOG_PATH, ERROR_LOG_PATH, LOGS_DIR, CONFIG_DIR, SETTINGS_PATH
 
 # Log dizini oluştur
 LOGS_DIR.mkdir(exist_ok=True)
@@ -71,16 +71,15 @@ def load_stylesheet(app: QApplication) -> None:
     import json as _json
     theme = "dark"
     try:
-        settings_path = Path("config/settings.json")
-        if settings_path.exists():
-            data = _json.loads(settings_path.read_text(encoding="utf-8"))
+        if SETTINGS_PATH.exists():
+            data = _json.loads(SETTINGS_PATH.read_text(encoding="utf-8"))
             theme = data.get("app", {}).get("theme", "dark")
     except Exception:
-        pass
+        logger.warning("Tema tercihi okunamadi, dark kullanilacak.", exc_info=True)
 
     theme_map = {
-        "light": Path("config/theme_light.qss"),
-        "space_blue": Path("config/theme_space_blue.qss"),
+        "light": CONFIG_DIR / "theme_light.qss",
+        "space_blue": CONFIG_DIR / "theme_space_blue.qss",
         "dark": THEME_PATH,
     }
     qss_path = theme_map.get(theme, THEME_PATH)

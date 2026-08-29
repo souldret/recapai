@@ -4,6 +4,11 @@ Bu dosya RecapAI projesindeki önemli değişiklikleri listeler.
 
 ## [Yayınlanmamış]
 
+### Düzeltildi
+- Tema yükleme artık çalışma dizinine değil `core.constants` yollarına bakıyor.
+- README Python sürümü, TTS, dizin yapısı ve test komutu güncellendi.
+- `pytest` `requirements.txt` içine eklendi.
+
 ### Eklendi
 - **Silence Remover**: Seslendirmedeki (Kokoro/edge-tts) uzun sessiz aralıklar artık
   otomatik olarak kısaltılabiliyor. Ayarlar → Seslendirme sekmesinden
