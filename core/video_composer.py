@@ -475,11 +475,10 @@ class VideoComposer:
             else:
                 z_expr = f"1+({intensity:.6f})*n/{n_max}"
             sw = f"trunc({w}*({z_expr})/4)*4"
-            sh = f"trunc({h}*({z_expr})/4)*4"
             cx = f"(in_w-{w})/2"
             cy = f"(in_h-{h})/2"
             return (
-                f"{input_label}scale=w='{sw}':h='{sh}':eval=frame:flags=lanczos,"
+                f"{input_label}scale=w='{sw}':h=-4:eval=frame:flags=lanczos,"
                 f"crop={w}:{h}:{cx}:{cy}{out_label}"
             )
 
