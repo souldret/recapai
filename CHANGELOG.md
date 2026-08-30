@@ -5,6 +5,7 @@ Bu dosya RecapAI projesindeki önemli değişiklikleri listeler.
 ## [Yayınlanmamış]
 
 ### Düzeltildi
+- Ken Burns zoom artık 2x tuvalden kırpmıyor; önce tam kadraj letterbox, sonra tek ölçekle merkeze yakınlaşıyor (sağa/sola kayma yok).
 - Tema yükleme artık çalışma dizinine değil `core.constants` yollarına bakıyor.
 - README Python sürümü, TTS, dizin yapısı ve test komutu güncellendi.
 - `pytest` `requirements.txt` içine eklendi.

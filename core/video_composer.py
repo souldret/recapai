@@ -88,11 +88,9 @@ class VideoComposer:
         self.settings["subtitle_style"] = {**default_sub, **user_sub}
 
         self._width, self._height = _parse_resolution(self.settings.get("resolution", [1920, 1080]))
-        # libx264 yuv420p için çift boyut zorunlu
-        if self._width % 2:
-            self._width -= 1
-        if self._height % 2:
-            self._height -= 1
+        # yuv420p + Ken Burns crop: 4'un kati (chroma + merkez /4)
+        self._width -= self._width % 4
+        self._height -= self._height % 4
         self._fps = int(self.settings.get("fps", 30) or 30)
         if self._fps <= 0:
             self._fps = 30
@@ -460,17 +458,14 @@ class VideoComposer:
 
         max_zoom = 1.0 + intensity
 
-        # Ken Burns kaynak çözünürlük: 2x — crop penceresi sınır dışı kırpmayı önler
-        w2, h2 = w * 2, h * 2
-
         out_fps = self._clip_fps
 
         # bg_effect "blur" ise blur_bg de açık say
         use_blur = blur_bg or bg_effect in ("blur", "vignette_blur", "cinematic")
 
-        # Ken Burns: görseli kademeli büyüt, SABİT w×h merkeze crop.
-        # Değişen crop boyutu + (iw-cw)/2 tek/çift kayması wiggling yapar.
-        # scale eval=frame + crop={w}:{h}:even_x:even_y titreşimi keser.
+        # Ken Burns: once w×h letterbox (zoom=1 tam kadraj), sonra tek z ile buyut.
+        # w/h 4'un kati; scale ciktisi da 4'un kati → crop x/y cift (yuv420p chroma kaymasiz).
+        # Bagimsiz trunc(iw*z/2)*2 x/y zoom'u ayri orana ceker, kadraj saga/sola kayar.
         total_frames = max(2, int(round(duration * out_fps)))
         n_max = total_frames - 1
 
@@ -478,10 +473,9 @@ class VideoComposer:
             if image_motion == "zoom_out":
                 z_expr = f"({max_zoom:.6f})-({intensity:.6f})*n/{n_max}"
             else:
-                z_expr = f"(1.0)+({intensity:.6f})*n/{n_max}"
-            sw = f"trunc(iw*({z_expr})/2)*2"
-            sh = f"trunc(ih*({z_expr})/2)*2"
-            # w/h ve scale ciktisi cift; (in_w-w)/2 tam sayi — /4*2 merkezde 2px atlama yapardi
+                z_expr = f"1+({intensity:.6f})*n/{n_max}"
+            sw = f"trunc({w}*({z_expr})/4)*4"
+            sh = f"trunc({h}*({z_expr})/4)*4"
             cx = f"(in_w-{w})/2"
             cy = f"(in_h-{h})/2"
             return (
@@ -525,8 +519,8 @@ class VideoComposer:
                     f"[0:v]split=2[bg_in][fg_in];"
                     f"[bg_in]scale={w}:{h}:force_original_aspect_ratio=increase:flags=lanczos,"
                     f"crop={w}:{h},{blur_str},scale={w}:{h}:flags=lanczos[bg];"
-                    f"[fg_in]scale={w2}:{h2}:force_original_aspect_ratio=decrease:flags=lanczos,"
-                    f"format=rgba,pad={w2}:{h2}:(ow-iw)/2:(oh-ih)/2:color=black@0.0[fg_big];"
+                    f"[fg_in]scale={w}:{h}:force_original_aspect_ratio=decrease:flags=lanczos,"
+                    f"format=rgba,pad={w}:{h}:(ow-iw)/2:(oh-ih)/2:color=black@0.0[fg_big];"
                     + kb +
                     "[bg][fg_zoomed]overlay=(W-w)/2:(H-h)/2:format=auto[vout]"
                 )
@@ -550,8 +544,8 @@ class VideoComposer:
                     f"[0:v]split=2[bg_in][fg_in];"
                     f"[bg_in]scale={w}:{h}:force_original_aspect_ratio=increase:flags=lanczos,"
                     f"crop={w}:{h},{grad_blur},scale={w}:{h}:flags=lanczos[bg];"
-                    f"[fg_in]scale={w2}:{h2}:force_original_aspect_ratio=decrease:flags=lanczos,"
-                    f"format=rgba,pad={w2}:{h2}:(ow-iw)/2:(oh-ih)/2:color=black@0.0[fg_big];"
+                    f"[fg_in]scale={w}:{h}:force_original_aspect_ratio=decrease:flags=lanczos,"
+                    f"format=rgba,pad={w}:{h}:(ow-iw)/2:(oh-ih)/2:color=black@0.0[fg_big];"
                     + kb +
                     "[bg][fg_zoomed]overlay=(W-w)/2:(H-h)/2:format=auto[vout]"
                 )
@@ -567,8 +561,8 @@ class VideoComposer:
                 # zoom_in / zoom_out — standart siyah arka plan, jitter-free scale+crop+scale
                 kb = _build_kenburns_vf("", "[vout]")
                 vf = (
-                    f"[0:v]scale={w2}:{h2}:force_original_aspect_ratio=decrease:flags=lanczos,"
-                    f"pad={w2}:{h2}:(ow-iw)/2:(oh-ih)/2:black,"
+                    f"[0:v]scale={w}:{h}:force_original_aspect_ratio=decrease:flags=lanczos,"
+                    f"pad={w}:{h}:(ow-iw)/2:(oh-ih)/2:black,"
                     + kb
                 )
 
