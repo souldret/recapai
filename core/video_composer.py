@@ -376,6 +376,13 @@ class VideoComposer:
                     img_path, audio_path, duration, clip_out,
                     clip_index=idx, cancel_check=cancel_check,
                 )
+                if not ok:
+                    logger.warning("Ken Burns klip basarisiz, hareketsiz yeniden deneniyor (segment %d).", idx)
+                    ok = self._make_clip(
+                        img_path, audio_path, duration, clip_out,
+                        clip_index=idx, cancel_check=cancel_check,
+                        ken_burns_override=False,
+                    )
             except Exception as exc:
                 logger.error("Klip oluşturma istisnası (segment %d): %s", idx, exc)
                 return None
@@ -433,6 +440,7 @@ class VideoComposer:
         output_path: str,
         clip_index: int = 0,
         cancel_check: Optional[Callable[[], bool]] = None,
+        ken_burns_override: Optional[bool] = None,
     ) -> bool:
         """
         Tek bir görsel + ses'ten MP4 klip üretir.
@@ -442,7 +450,7 @@ class VideoComposer:
         """
         w, h = self._width, self._height
         fps = self._fps
-        ken_burns = self.settings.get("ken_burns", True)
+        ken_burns = self.settings.get("ken_burns", True) if ken_burns_override is None else ken_burns_override
         intensity = self.settings.get("ken_burns_intensity", 0.15)
         blur_bg = self.settings.get("blur_background", False)
         bg_effect = self.settings.get("bg_effect", "none")
@@ -463,24 +471,21 @@ class VideoComposer:
         # bg_effect "blur" ise blur_bg de açık say
         use_blur = blur_bg or bg_effect in ("blur", "vignette_blur", "cinematic")
 
-        # Ken Burns: once w×h letterbox (zoom=1 tam kadraj), sonra tek z ile buyut.
-        # w/h 4'un kati; scale ciktisi da 4'un kati → crop x/y cift (yuv420p chroma kaymasiz).
-        # Bagimsiz trunc(iw*z/2)*2 x/y zoom'u ayri orana ceker, kadraj saga/sola kayar.
+        # Ken Burns: zoompan (scale eval=frame Windows'ta 0xC0000005 crash).
+        # Once w×h letterbox, 2x scale, merkeze zoom. zoom=1 tam kadraj.
         total_frames = max(2, int(round(duration * out_fps)))
-        n_max = total_frames - 1
+        n_max = max(1, total_frames - 1)
+        src_w, src_h = w * 2, h * 2
 
         def _build_kenburns_vf(input_label: str, out_label: str = "[vout]") -> str:
             if image_motion == "zoom_out":
-                z_expr = f"({max_zoom:.6f})-({intensity:.6f})*n/{n_max}"
+                z_expr = f"({max_zoom:.6f})-({intensity:.6f})*on/{n_max}"
             else:
-                z_expr = f"1+({intensity:.6f})*n/{n_max}"
-            sw = f"trunc({w}*({z_expr})/4)*4"
-            sh = f"trunc(({sw})*{h}/{w}/4)*4"
-            cx = f"trunc((in_w-{w})/2)"
-            cy = f"trunc((in_h-{h})/2)"
+                z_expr = f"1+({intensity:.6f})*on/{n_max}"
             return (
-                f"{input_label}scale=w='{sw}':h='{sh}':eval=frame:flags=lanczos,"
-                f"crop={w}:{h}:{cx}:{cy}{out_label}"
+                f"{input_label}scale={src_w}:{src_h}:flags=lanczos,"
+                f"zoompan=z='{z_expr}':x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)'"
+                f":d=1:s={w}x{h}:fps={out_fps}{out_label}"
             )
 
         # ── VF zinciri oluştur ─────────────────────────────────────────────────
