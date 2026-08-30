@@ -372,7 +372,7 @@ class VideoComposer:
 
             clip_out = str(tmp_dir / f"clip_{idx:04d}.mp4")
             try:
-                self._make_clip(
+                ok = self._make_clip(
                     img_path, audio_path, duration, clip_out,
                     clip_index=idx, cancel_check=cancel_check,
                 )
@@ -380,7 +380,7 @@ class VideoComposer:
                 logger.error("Klip oluşturma istisnası (segment %d): %s", idx, exc)
                 return None
 
-            if Path(clip_out).exists() and Path(clip_out).stat().st_size > 0:
+            if ok and Path(clip_out).exists() and Path(clip_out).stat().st_size > 1024:
                 return clip_out
             logger.warning("Klip oluşturulamadı: %s", clip_out)
             return None
@@ -433,7 +433,7 @@ class VideoComposer:
         output_path: str,
         clip_index: int = 0,
         cancel_check: Optional[Callable[[], bool]] = None,
-    ) -> None:
+    ) -> bool:
         """
         Tek bir görsel + ses'ten MP4 klip üretir.
         Ken Burns: scale+crop+scale (zoompan değil — integer crop titreşimi yok).
@@ -475,10 +475,11 @@ class VideoComposer:
             else:
                 z_expr = f"1+({intensity:.6f})*n/{n_max}"
             sw = f"trunc({w}*({z_expr})/4)*4"
+            sh = f"trunc(({sw})*{h}/{w}/4)*4"
             cx = f"(in_w-{w})/2"
             cy = f"(in_h-{h})/2"
             return (
-                f"{input_label}scale=w='{sw}':h=-4:eval=frame:flags=lanczos,"
+                f"{input_label}scale=w='{sw}':h='{sh}':eval=frame:flags=lanczos,"
                 f"crop={w}:{h}:{cx}:{cy}{out_label}"
             )
 
@@ -635,7 +636,6 @@ class VideoComposer:
         ret = self._run(cmd, cancel_check)
         if ret != 0:
             logger.error("Klip oluşturulamadı (rc=%d): %s", ret, output_path)
-            # Hata ayıklama: sadece başarısız kliplerde VF log yaz
             try:
                 log_dir = Path(__file__).resolve().parent.parent / "logs"
                 log_dir.mkdir(exist_ok=True)
@@ -647,6 +647,15 @@ class VideoComposer:
                 )
             except Exception:
                 pass
+            try:
+                Path(output_path).unlink(missing_ok=True)
+            except Exception:
+                pass
+            return False
+        if not Path(output_path).exists() or Path(output_path).stat().st_size <= 1024:
+            logger.error("Klip dosyasi bos veya eksik: %s", output_path)
+            return False
+        return True
 
     def _build_silent_clip_cmd(
         self,
