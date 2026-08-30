@@ -380,7 +380,7 @@ class VideoComposer:
                 logger.error("Klip oluşturma istisnası (segment %d): %s", idx, exc)
                 return None
 
-            if ok and Path(clip_out).exists() and Path(clip_out).stat().st_size > 1024:
+            if ok and self._clip_file_ok(clip_out):
                 return clip_out
             logger.warning("Klip oluşturulamadı: %s", clip_out)
             return None
@@ -476,8 +476,8 @@ class VideoComposer:
                 z_expr = f"1+({intensity:.6f})*n/{n_max}"
             sw = f"trunc({w}*({z_expr})/4)*4"
             sh = f"trunc(({sw})*{h}/{w}/4)*4"
-            cx = f"(in_w-{w})/2"
-            cy = f"(in_h-{h})/2"
+            cx = f"trunc((in_w-{w})/2)"
+            cy = f"trunc((in_h-{h})/2)"
             return (
                 f"{input_label}scale=w='{sw}':h='{sh}':eval=frame:flags=lanczos,"
                 f"crop={w}:{h}:{cx}:{cy}{out_label}"
@@ -652,8 +652,12 @@ class VideoComposer:
             except Exception:
                 pass
             return False
-        if not Path(output_path).exists() or Path(output_path).stat().st_size <= 1024:
-            logger.error("Klip dosyasi bos veya eksik: %s", output_path)
+        if not self._clip_file_ok(output_path):
+            logger.error("Klip dosyasi bos veya gecersiz: %s", output_path)
+            try:
+                Path(output_path).unlink(missing_ok=True)
+            except Exception:
+                pass
             return False
         return True
 
@@ -696,6 +700,13 @@ class VideoComposer:
     # ─────────────────────────────────────────────────────────────────────────
     # Birleştirme ve post-process
     # ─────────────────────────────────────────────────────────────────────────
+
+    def _clip_file_ok(self, path: str) -> bool:
+        p = Path(path)
+        if not p.exists() or p.stat().st_size <= 1024:
+            return False
+        from core.ffmpeg_helper import get_media_duration
+        return get_media_duration(str(p)) > 0.05
 
     def _concat_clips(
         self,
