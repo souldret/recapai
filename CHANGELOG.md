@@ -5,8 +5,9 @@ Bu dosya RecapAI projesindeki önemli değişiklikleri listeler.
 ## [Yayınlanmamış]
 
 ### Eklendi
-- Render: görselin arkasına hafif drop shadow (blur/gradient/siyah arka plan).
+- Render: görselin arkasına hafif drop shadow (yalnız letterbox boşluğu varken; tam kadrajda gölge yok).
 - Blur arka plan daha güçlü (`boxblur` 20→32, vinyette 25→36).
+- Manhwa Fresh: YouTube tutma katmanı (açılış kancası, orta rehook, son açık uç, stakes).
 
 ### Düzeltildi
 - Ken Burns zoom artık 2x tuvalden kırpmıyor; önce tam kadraj letterbox, sonra tek ölçekle merkeze yakınlaşıyor (sağa/sola kayma yok).

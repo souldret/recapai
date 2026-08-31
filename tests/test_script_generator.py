@@ -180,3 +180,13 @@ class TestNichesAndHook:
     def test_is_not_first_chapter_10(self):
         ch = Chapter(id="c10", name="Bölüm 10", images=[])
         assert _is_first_chapter(ch) is False
+
+    def test_retention_prompt_exists(self):
+        from pathlib import Path
+        import json
+        data = json.loads(
+            (Path(__file__).resolve().parent.parent / "config" / "prompts.json").read_text(encoding="utf-8")
+        )
+        assert "script_prompt_retention" in data
+        assert "{retention_layer}" in data["script_generation"]
+        assert "kanca" in data["script_prompt_retention"].lower() or "hook" in data["script_prompt_retention"].lower()

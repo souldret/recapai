@@ -495,6 +495,7 @@ class VideoComposer:
         fw, fh = _fitted_size()
         ox = (w - fw) // 2
         oy = (h - fh) // 2
+        use_shadow = (w - fw) >= 24 or (h - fh) >= 24
         sh_dx = max(8, w // 160)
         sh_dy = max(10, h // 90)
         sh_blur = max(10, h // 90)
@@ -518,10 +519,14 @@ class VideoComposer:
                 f":d=1:s={ow}x{oh}:fps={out_fps}{out_label}"
             )
 
-        def _fg_shadow_overlay(fg_label: str, bg_label: str, out_label: str = "[vout]") -> str:
+        def _place_fg(fg_label: str, bg_label: str, out_label: str = "[vout]") -> str:
+            if not use_shadow:
+                return (
+                    f"{bg_label}{fg_label}overlay={ox}:{oy}:format=auto{out_label}"
+                )
             return (
                 f"{fg_label}split=2[fg_main][fg_sh];"
-                f"[fg_sh]format=rgba,colorchannelmixer=0:0:0:0:0:0:0:0:0:0:0:0:0:0:0:0.38,"
+                f"[fg_sh]format=rgba,colorchannelmixer=0:0:0:0:0:0:0:0:0:0:0:0:0:0:0:0.35,"
                 f"boxblur={sh_blur}:1[sh];"
                 f"{bg_label}[sh]overlay={ox + sh_dx}:{oy + sh_dy}[bgsh];"
                 f"[bgsh][fg_main]overlay={ox}:{oy}:format=auto{out_label}"
@@ -549,7 +554,7 @@ class VideoComposer:
                 vf = (
                     bg
                     + f"[fg_in]scale={fw}:{fh}:flags=lanczos,format=rgba[fg];"
-                    + _fg_shadow_overlay("[fg]", "[bg]")
+                    + _place_fg("[fg]", "[bg]")
                 )
             else:
                 kb = _build_kenburns_vf("[fg_fit]", "[fg]", fw, fh) + ";"
@@ -557,7 +562,7 @@ class VideoComposer:
                     bg
                     + f"[fg_in]scale={fw}:{fh}:flags=lanczos,format=rgba[fg_fit];"
                     + kb
-                    + _fg_shadow_overlay("[fg]", "[bg]")
+                    + _place_fg("[fg]", "[bg]")
                 )
 
         elif bg_effect in ("gradient_tb", "gradient_lr"):
@@ -572,7 +577,7 @@ class VideoComposer:
                 vf = (
                     bg
                     + f"[fg_in]scale={fw}:{fh}:flags=lanczos,format=rgba[fg];"
-                    + _fg_shadow_overlay("[fg]", "[bg]")
+                    + _place_fg("[fg]", "[bg]")
                 )
             else:
                 kb = _build_kenburns_vf("[fg_fit]", "[fg]", fw, fh) + ";"
@@ -580,7 +585,7 @@ class VideoComposer:
                     bg
                     + f"[fg_in]scale={fw}:{fh}:flags=lanczos,format=rgba[fg_fit];"
                     + kb
-                    + _fg_shadow_overlay("[fg]", "[bg]")
+                    + _place_fg("[fg]", "[bg]")
                 )
 
         else:
@@ -588,13 +593,13 @@ class VideoComposer:
             bg = (
                 f"[0:v]split=2[bg_in][fg_in];"
                 f"[bg_in]scale={w}:{h}:force_original_aspect_ratio=increase:flags=lanczos,"
-                f"crop={w}:{h},eq=brightness=-1:saturation=0[bg];"
+                f"crop={w}:{h},lutrgb=r=0:g=0:b=0[bg];"
             )
             if not ken_burns:
                 vf = (
                     bg
                     + f"[fg_in]scale={fw}:{fh}:flags=lanczos,format=rgba[fg];"
-                    + _fg_shadow_overlay("[fg]", "[bg]")
+                    + _place_fg("[fg]", "[bg]")
                 )
             else:
                 kb = _build_kenburns_vf("[fg_fit]", "[fg]", fw, fh) + ";"
@@ -602,7 +607,7 @@ class VideoComposer:
                     bg
                     + f"[fg_in]scale={fw}:{fh}:flags=lanczos,format=rgba[fg_fit];"
                     + kb
-                    + _fg_shadow_overlay("[fg]", "[bg]")
+                    + _place_fg("[fg]", "[bg]")
                 )
 
         # Watermark overlay

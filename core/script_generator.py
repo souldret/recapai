@@ -606,6 +606,7 @@ class ScriptGenerator:
 
         prompt_1 = prompts.get("script_prompt_1_universal", "")
         niche_module = _resolve_niche_prompt(prompts, niche)
+        retention_layer = prompts.get("script_prompt_retention", "")
         hook_layer = prompts.get("script_prompt_3_hook", "") if use_hook else ""
 
         analysis_lines = []
@@ -655,6 +656,7 @@ class ScriptGenerator:
         result = result.replace("{length_desc}",   length_desc)
         result = result.replace("{prompt_1}",      prompt_1)
         result = result.replace("{niche_module}",  niche_module)
+        result = result.replace("{retention_layer}", retention_layer)
         result = result.replace("{hook_layer}",    hook_layer)
         result = result.replace("{analysis_data}", analysis_data)
         return result
@@ -760,6 +762,7 @@ class ScriptGenerator:
         prompt = prompt.replace("{length_desc}", length_desc)
         prompt = prompt.replace("{prompt_1}", prompts.get("script_prompt_1_universal", ""))
         prompt = prompt.replace("{niche_module}", _resolve_niche_prompt(prompts, niche))
+        prompt = prompt.replace("{retention_layer}", prompts.get("script_prompt_retention", ""))
         prompt = prompt.replace("{context_block}", context_block)
         prompt = prompt.replace("{scene}", scene)
         prompt = prompt.replace("{action}", action)
