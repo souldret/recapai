@@ -37,7 +37,7 @@ PRESETS = {
         "icon": Icons.YOUTUBE,
         "resolution": [1920, 1080],
         "fps": 30,
-        "bitrate": "8000k",
+        "bitrate": "12000k",
         "codec": "libx264",
     },
     "shorts": {
@@ -45,7 +45,7 @@ PRESETS = {
         "icon": Icons.TIKTOK,
         "resolution": [1080, 1920],
         "fps": 30,
-        "bitrate": "6000k",
+        "bitrate": "10000k",
         "codec": "libx264",
     },
     "cinema": {
@@ -415,7 +415,7 @@ class RenderPage(QWidget):
         vbox.addWidget(self.gpu_status_lbl)
 
         # Bitrate
-        self.bitrate_edit = QLineEdit("8000k")
+        self.bitrate_edit = QLineEdit("12000k")
         self.bitrate_edit.setPlaceholderText("örn. 8000k veya 20M")
         vbox.addLayout(row("Bitrate:", self.bitrate_edit))
 
@@ -1170,7 +1170,7 @@ class RenderPage(QWidget):
 
         fps = FPS_OPTIONS[self.fps_combo.currentIndex()]
         codec = self.codec_combo.currentData() or "libx264"
-        bitrate = self.bitrate_edit.text().strip() or "8000k"
+        bitrate = self.bitrate_edit.text().strip() or "12000k"
         selected_transitions = self._get_selected_transitions()
         if not selected_transitions:
             transition = "none"

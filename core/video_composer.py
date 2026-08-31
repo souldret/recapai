@@ -41,7 +41,7 @@ DEFAULT_SETTINGS: Dict[str, Any] = {
     "intro_path": None,
     "outro_path": None,
     "codec": "libx264",
-    "bitrate": "8000k",
+        "bitrate": "12000k",
     "watermark_path": None,
     "watermark_position": "br",
     "watermark_scale": 0.08,
@@ -444,9 +444,8 @@ class VideoComposer:
     ) -> bool:
         """
         Tek bir görsel + ses'ten MP4 klip üretir.
-        Ken Burns: scale+crop+scale (zoompan değil — integer crop titreşimi yok).
-        Arka plan efektleri: none, blur, gradient_tb, gradient_lr, vignette_blur, cinematic
-        Görsel animasyon modları (image_motion): zoom_in, zoom_out, random
+        Ken Burns: zoompan (merkeze, 2x kaynak).
+        Arka plan: none, blur, gradient_tb, gradient_lr, vignette_blur, cinematic
         """
         w, h = self._width, self._height
         fps = self._fps
@@ -515,22 +514,38 @@ class VideoComposer:
                 z_expr = f"1+({intensity:.6f})*on/{n_max}"
             return (
                 f"{input_label}scale={src_w}:{src_h}:flags=lanczos,"
-                f"zoompan=z='{z_expr}':x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)'"
+                f"zoompan=z='{z_expr}':"
+                f"x='trunc(iw/2-(iw/zoom/2))':y='trunc(ih/2-(ih/zoom/2))'"
                 f":d=1:s={ow}x{oh}:fps={out_fps}{out_label}"
             )
 
-        def _place_fg(fg_label: str, bg_label: str, out_label: str = "[vout]") -> str:
+        def _place_fg(fg_label: str, bg_label: str, out_label: str = "[vpre]") -> str:
             if not use_shadow:
                 return (
                     f"{bg_label}{fg_label}overlay={ox}:{oy}:format=auto{out_label}"
                 )
             return (
                 f"{fg_label}split=2[fg_main][fg_sh];"
-                f"[fg_sh]format=rgba,colorchannelmixer=0:0:0:0:0:0:0:0:0:0:0:0:0:0:0:0.35,"
+                f"[fg_sh]format=rgba,colorchannelmixer=aa=0.32,"
+                f"hue=s=0,eq=brightness=-1,"
                 f"boxblur={sh_blur}:1[sh];"
-                f"{bg_label}[sh]overlay={ox + sh_dx}:{oy + sh_dy}[bgsh];"
+                f"{bg_label}[sh]overlay={ox + sh_dx}:{oy + sh_dy}:format=auto[bgsh];"
                 f"[bgsh][fg_main]overlay={ox}:{oy}:format=auto{out_label}"
             )
+
+        def _finish_look(src: str = "[vpre]", dst: str = "[vout]") -> str:
+            parts = [
+                "eq=contrast=1.05:brightness=0.012:saturation=1.08:gamma=1.02",
+                "unsharp=5:5:0.4:5:5:0.0",
+            ]
+            if bg_effect == "vignette_blur":
+                parts.append("vignette=PI/5")
+            elif bg_effect == "cinematic":
+                parts.append("colorbalance=rs=0.04:gs=-0.01:bs=-0.05")
+                parts.append("vignette=PI/6")
+            elif bg_effect in ("gradient_tb", "gradient_lr"):
+                parts.append("vignette=PI/4.5")
+            return f"{src}{','.join(parts)}{dst}"
 
         # ── VF zinciri oluştur ─────────────────────────────────────────────────
         # NOT: boxblur=radius:power — 2. parametre (power) filtrenin kaç kez
@@ -555,6 +570,7 @@ class VideoComposer:
                     bg
                     + f"[fg_in]scale={fw}:{fh}:flags=lanczos,format=rgba[fg];"
                     + _place_fg("[fg]", "[bg]")
+                    + ";" + _finish_look()
                 )
             else:
                 kb = _build_kenburns_vf("[fg_fit]", "[fg]", fw, fh) + ";"
@@ -563,6 +579,7 @@ class VideoComposer:
                     + f"[fg_in]scale={fw}:{fh}:flags=lanczos,format=rgba[fg_fit];"
                     + kb
                     + _place_fg("[fg]", "[bg]")
+                    + ";" + _finish_look()
                 )
 
         elif bg_effect in ("gradient_tb", "gradient_lr"):
@@ -578,6 +595,7 @@ class VideoComposer:
                     bg
                     + f"[fg_in]scale={fw}:{fh}:flags=lanczos,format=rgba[fg];"
                     + _place_fg("[fg]", "[bg]")
+                    + ";" + _finish_look()
                 )
             else:
                 kb = _build_kenburns_vf("[fg_fit]", "[fg]", fw, fh) + ";"
@@ -586,6 +604,7 @@ class VideoComposer:
                     + f"[fg_in]scale={fw}:{fh}:flags=lanczos,format=rgba[fg_fit];"
                     + kb
                     + _place_fg("[fg]", "[bg]")
+                    + ";" + _finish_look()
                 )
 
         else:
@@ -600,6 +619,7 @@ class VideoComposer:
                     bg
                     + f"[fg_in]scale={fw}:{fh}:flags=lanczos,format=rgba[fg];"
                     + _place_fg("[fg]", "[bg]")
+                    + ";" + _finish_look()
                 )
             else:
                 kb = _build_kenburns_vf("[fg_fit]", "[fg]", fw, fh) + ";"
@@ -608,6 +628,7 @@ class VideoComposer:
                     + f"[fg_in]scale={fw}:{fh}:flags=lanczos,format=rgba[fg_fit];"
                     + kb
                     + _place_fg("[fg]", "[bg]")
+                    + ";" + _finish_look()
                 )
 
         # Watermark overlay
@@ -658,6 +679,7 @@ class VideoComposer:
             "-t", str(duration),
             "-pix_fmt", "yuv420p",
             "-r", str(out_fps),
+            "-movflags", "+faststart",
         ]
 
         if has_audio:
@@ -733,11 +755,12 @@ class VideoComposer:
             "-filter_complex", vf,
             "-map", "[vout]", "-map", f"{silent_audio_index}:a",
             "-c:v", self._codec, *self._quality_args(),
-            "-c:a", "aac", "-b:a", "128k",
+            "-c:a", "aac", "-b:a", "192k",
             "-ar", "44100", "-ac", "2",
             "-t", str(duration),
             "-pix_fmt", "yuv420p",
             "-r", str(fps),
+            "-movflags", "+faststart",
         ]
         return cmd
 
@@ -935,12 +958,13 @@ class VideoComposer:
             "-map", "[aout]",
             "-c:v", self._codec,
             *self._quality_args(),
-            "-b:v", self._bitrate,
+            *(["-b:v", self._bitrate] if self._is_gpu_codec else []),
             "-c:a", "aac",
             "-b:a", "192k",
             "-ar", "44100", "-ac", "2",
             "-pix_fmt", "yuv420p",
             "-r", str(self._clip_fps),
+            "-movflags", "+faststart",
             output_path,
         ]
 
@@ -1138,6 +1162,7 @@ class VideoComposer:
             "-vf", f"ass='{safe_sub}'",
             "-c:v", self._codec, *self._quality_args(),
             "-c:a", "copy",
+            "-movflags", "+faststart",
             output_path,
         ], cancel_check)
 
@@ -1275,21 +1300,21 @@ class VideoComposer:
     # FFmpeg çalıştırma
     # ─────────────────────────────────────────────────────────────────────────
 
-    def _quality_args(self, crf: int = 23) -> List[str]:
+    def _quality_args(self, crf: int = 18) -> List[str]:
         """
         Seçili codec'e (CPU/GPU) uygun preset/kalite argümanlarını döner.
         GPU encoder'ları (nvenc/qsv/amf) -crf desteklemez, kendi kalite
-        parametrelerine sahiptir.
+        parametrelerine sahiptir. CRF 18 ≈ görsel olarak kayıpsıza yakın.
         """
         if self._codec == "h264_nvenc":
-            return ["-preset", "p4", "-rc", "vbr", "-cq", str(crf)]
+            return ["-preset", "p5", "-rc", "vbr", "-cq", str(crf), "-b:v", "0"]
         if self._codec == "h264_qsv":
-            return ["-preset", "fast", "-global_quality", str(crf)]
+            return ["-preset", "medium", "-global_quality", str(crf)]
         if self._codec == "h264_amf":
-            return ["-quality", "speed", "-qp_i", str(crf), "-qp_p", str(crf)]
+            return ["-quality", "quality", "-qp_i", str(crf), "-qp_p", str(crf)]
         if self._codec == "libx265":
-            return ["-preset", "fast", "-crf", str(crf), "-tag:v", "hvc1"]
-        return ["-preset", "fast", "-crf", str(crf)]
+            return ["-preset", "medium", "-crf", str(crf), "-tag:v", "hvc1"]
+        return ["-preset", "medium", "-crf", str(crf), "-profile:v", "high"]
 
     def _run(self, args: List[str], cancel_check: Optional[Callable[[], bool]] = None) -> int:
         """FFmpeg komutunu çalıştırır. cancel_check ile gerçek iptal desteği."""
