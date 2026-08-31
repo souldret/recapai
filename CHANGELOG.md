@@ -4,6 +4,10 @@ Bu dosya RecapAI projesindeki önemli değişiklikleri listeler.
 
 ## [Yayınlanmamış]
 
+### Eklendi
+- Render: görselin arkasına hafif drop shadow (blur/gradient/siyah arka plan).
+- Blur arka plan daha güçlü (`boxblur` 20→32, vinyette 25→36).
+
 ### Düzeltildi
 - Ken Burns zoom artık 2x tuvalden kırpmıyor; önce tam kadraj letterbox, sonra tek ölçekle merkeze yakınlaşıyor (sağa/sola kayma yok).
 - Tema yükleme artık çalışma dizinine değil `core.constants` yollarına bakıyor.

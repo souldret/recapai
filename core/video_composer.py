@@ -472,12 +472,42 @@ class VideoComposer:
         use_blur = blur_bg or bg_effect in ("blur", "vignette_blur", "cinematic")
 
         # Ken Burns: zoompan (scale eval=frame Windows'ta 0xC0000005 crash).
-        # Once w×h letterbox, 2x scale, merkeze zoom. zoom=1 tam kadraj.
+        # Once letterbox, 2x scale, merkeze zoom. zoom=1 tam kadraj.
         total_frames = max(2, int(round(duration * out_fps)))
         n_max = max(1, total_frames - 1)
-        src_w, src_h = w * 2, h * 2
 
-        def _build_kenburns_vf(input_label: str, out_label: str = "[vout]") -> str:
+        def _fitted_size() -> tuple:
+            try:
+                from PIL import Image as _PILImage
+                with _PILImage.open(image_path) as _im:
+                    iw, ih = _im.size
+            except Exception:
+                return w, h
+            if iw <= 0 or ih <= 0:
+                return w, h
+            scale = min(w / iw, h / ih)
+            fw = max(2, int(iw * scale))
+            fh = max(2, int(ih * scale))
+            fw -= fw % 2
+            fh -= fh % 2
+            return min(fw, w), min(fh, h)
+
+        fw, fh = _fitted_size()
+        ox = (w - fw) // 2
+        oy = (h - fh) // 2
+        sh_dx = max(8, w // 160)
+        sh_dy = max(10, h // 90)
+        sh_blur = max(10, h // 90)
+
+        def _build_kenburns_vf(
+            input_label: str,
+            out_label: str = "[vout]",
+            out_w: Optional[int] = None,
+            out_h: Optional[int] = None,
+        ) -> str:
+            ow = out_w if out_w is not None else w
+            oh = out_h if out_h is not None else h
+            src_w, src_h = ow * 2, oh * 2
             if image_motion == "zoom_out":
                 z_expr = f"({max_zoom:.6f})-({intensity:.6f})*on/{n_max}"
             else:
@@ -485,7 +515,16 @@ class VideoComposer:
             return (
                 f"{input_label}scale={src_w}:{src_h}:flags=lanczos,"
                 f"zoompan=z='{z_expr}':x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)'"
-                f":d=1:s={w}x{h}:fps={out_fps}{out_label}"
+                f":d=1:s={ow}x{oh}:fps={out_fps}{out_label}"
+            )
+
+        def _fg_shadow_overlay(fg_label: str, bg_label: str, out_label: str = "[vout]") -> str:
+            return (
+                f"{fg_label}split=2[fg_main][fg_sh];"
+                f"[fg_sh]format=rgba,colorchannelmixer=0:0:0:0:0:0:0:0:0:0:0:0:0:0:0:0.38,"
+                f"boxblur={sh_blur}:1[sh];"
+                f"{bg_label}[sh]overlay={ox + sh_dx}:{oy + sh_dy}[bgsh];"
+                f"[bgsh][fg_main]overlay={ox}:{oy}:format=auto{out_label}"
             )
 
         # ── VF zinciri oluştur ─────────────────────────────────────────────────
@@ -495,80 +534,75 @@ class VideoComposer:
         # power değeri her zaman küçük (1-2) tutulmalı.
         if use_blur:
             # Arka plan blur filtresi
-            blur_str = "boxblur=20:2"
+            blur_str = "boxblur=32:2"
             if bg_effect == "cinematic":
-                blur_str = "boxblur=15:2,colorchannelmixer=.3:.4:.3:0:.3:.4:.3:0:.3:.4:.3"
+                blur_str = "boxblur=24:2,colorchannelmixer=.3:.4:.3:0:.3:.4:.3:0:.3:.4:.3"
             elif bg_effect == "vignette_blur":
-                blur_str = "boxblur=25:2"
+                blur_str = "boxblur=36:2"
 
+            bg = (
+                f"[0:v]split=2[bg_in][fg_in];"
+                f"[bg_in]scale={w}:{h}:force_original_aspect_ratio=increase:flags=lanczos,"
+                f"crop={w}:{h},{blur_str},scale={w}:{h}:flags=lanczos[bg];"
+            )
             if not ken_burns:
-                # Sabit görsel: w x h blur arka plan + fg overlay
-                # NOT: fg pad'i OPAK siyah DEĞİL, şeffaf (alpha=0) olmalı.
-                # Dikey (portre) görsellerde force_original_aspect_ratio=decrease
-                # ile kenarlarda çok büyük pad alanı oluşur; pad rengi opak
-                # siyah olursa bu alan blur arka planın üzerini kaplayıp
-                # ekranın büyük kısmını simsiyah gösterir (bkz. blur arka
-                # plan render'da her yeri siyah gösterme hatası).
                 vf = (
-                    f"[0:v]split=2[bg_in][fg_in];"
-                    f"[bg_in]scale={w}:{h}:force_original_aspect_ratio=increase:flags=lanczos,"
-                    f"crop={w}:{h},{blur_str},scale={w}:{h}:flags=lanczos[bg];"
-                    f"[fg_in]scale={w}:{h}:force_original_aspect_ratio=decrease:flags=lanczos,"
-                    f"format=rgba,pad={w}:{h}:(ow-iw)/2:(oh-ih)/2:color=black@0.0[fg];"
-                    f"[bg][fg]overlay=(W-w)/2:(H-h)/2:format=auto[vout]"
+                    bg
+                    + f"[fg_in]scale={fw}:{fh}:flags=lanczos,format=rgba[fg];"
+                    + _fg_shadow_overlay("[fg]", "[bg]")
                 )
             else:
-                # zoom_in/zoom_out: bg=blur w x h, fg kenburns (scale+crop+scale) → overlay
-                kb = _build_kenburns_vf("[fg_big]", "[fg_zoomed]") + ";"
+                kb = _build_kenburns_vf("[fg_fit]", "[fg]", fw, fh) + ";"
                 vf = (
-                    f"[0:v]split=2[bg_in][fg_in];"
-                    f"[bg_in]scale={w}:{h}:force_original_aspect_ratio=increase:flags=lanczos,"
-                    f"crop={w}:{h},{blur_str},scale={w}:{h}:flags=lanczos[bg];"
-                    f"[fg_in]scale={w}:{h}:force_original_aspect_ratio=decrease:flags=lanczos,"
-                    f"format=rgba,pad={w}:{h}:(ow-iw)/2:(oh-ih)/2:color=black@0.0[fg_big];"
-                    + kb +
-                    "[bg][fg_zoomed]overlay=(W-w)/2:(H-h)/2:format=auto[vout]"
+                    bg
+                    + f"[fg_in]scale={fw}:{fh}:flags=lanczos,format=rgba[fg_fit];"
+                    + kb
+                    + _fg_shadow_overlay("[fg]", "[bg]")
                 )
 
         elif bg_effect in ("gradient_tb", "gradient_lr"):
             # Gradient: blur gibi split+overlay — color source filter yok
-            grad_blur = "boxblur=15:2"
+            grad_blur = "boxblur=24:2"
+            bg = (
+                f"[0:v]split=2[bg_in][fg_in];"
+                f"[bg_in]scale={w}:{h}:force_original_aspect_ratio=increase:flags=lanczos,"
+                f"crop={w}:{h},{grad_blur},scale={w}:{h}:flags=lanczos[bg];"
+            )
             if not ken_burns:
                 vf = (
-                    f"[0:v]split=2[bg_in][fg_in];"
-                    f"[bg_in]scale={w}:{h}:force_original_aspect_ratio=increase:flags=lanczos,"
-                    f"crop={w}:{h},{grad_blur},scale={w}:{h}:flags=lanczos[bg];"
-                    f"[fg_in]scale={w}:{h}:force_original_aspect_ratio=decrease:flags=lanczos,"
-                    f"format=rgba,pad={w}:{h}:(ow-iw)/2:(oh-ih)/2:color=black@0.0[fg];"
-                    f"[bg][fg]overlay=(W-w)/2:(H-h)/2:format=auto[vout]"
+                    bg
+                    + f"[fg_in]scale={fw}:{fh}:flags=lanczos,format=rgba[fg];"
+                    + _fg_shadow_overlay("[fg]", "[bg]")
                 )
             else:
-                # zoom_in/zoom_out: bg=gradient blur, fg kenburns → overlay
-                kb = _build_kenburns_vf("[fg_big]", "[fg_zoomed]") + ";"
+                kb = _build_kenburns_vf("[fg_fit]", "[fg]", fw, fh) + ";"
                 vf = (
-                    f"[0:v]split=2[bg_in][fg_in];"
-                    f"[bg_in]scale={w}:{h}:force_original_aspect_ratio=increase:flags=lanczos,"
-                    f"crop={w}:{h},{grad_blur},scale={w}:{h}:flags=lanczos[bg];"
-                    f"[fg_in]scale={w}:{h}:force_original_aspect_ratio=decrease:flags=lanczos,"
-                    f"format=rgba,pad={w}:{h}:(ow-iw)/2:(oh-ih)/2:color=black@0.0[fg_big];"
-                    + kb +
-                    "[bg][fg_zoomed]overlay=(W-w)/2:(H-h)/2:format=auto[vout]"
+                    bg
+                    + f"[fg_in]scale={fw}:{fh}:flags=lanczos,format=rgba[fg_fit];"
+                    + kb
+                    + _fg_shadow_overlay("[fg]", "[bg]")
                 )
 
         else:
-            # Standart siyah arka plan
+            # Siyah arka plan + drop shadow (portre panellerde görünür)
+            bg = (
+                f"[0:v]split=2[bg_in][fg_in];"
+                f"[bg_in]scale={w}:{h}:force_original_aspect_ratio=increase:flags=lanczos,"
+                f"crop={w}:{h},eq=brightness=-1:saturation=0[bg];"
+            )
             if not ken_burns:
                 vf = (
-                    f"[0:v]scale={w}:{h}:force_original_aspect_ratio=decrease:flags=lanczos,"
-                    f"pad={w}:{h}:(ow-iw)/2:(oh-ih)/2:black[vout]"
+                    bg
+                    + f"[fg_in]scale={fw}:{fh}:flags=lanczos,format=rgba[fg];"
+                    + _fg_shadow_overlay("[fg]", "[bg]")
                 )
             else:
-                # zoom_in / zoom_out — standart siyah arka plan, jitter-free scale+crop+scale
-                kb = _build_kenburns_vf("", "[vout]")
+                kb = _build_kenburns_vf("[fg_fit]", "[fg]", fw, fh) + ";"
                 vf = (
-                    f"[0:v]scale={w}:{h}:force_original_aspect_ratio=decrease:flags=lanczos,"
-                    f"pad={w}:{h}:(ow-iw)/2:(oh-ih)/2:black,"
+                    bg
+                    + f"[fg_in]scale={fw}:{fh}:flags=lanczos,format=rgba[fg_fit];"
                     + kb
+                    + _fg_shadow_overlay("[fg]", "[bg]")
                 )
 
         # Watermark overlay
