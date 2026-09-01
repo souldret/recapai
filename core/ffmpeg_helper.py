@@ -99,7 +99,10 @@ def get_media_duration(file_path: str) -> float:
             text=True,
             timeout=15,
         )
-        return float(result.stdout.strip())
+        raw = (result.stdout or "").strip()
+        if not raw or raw.upper() == "N/A":
+            return 0.0
+        return float(raw)
     except Exception as exc:
         logger.warning("FFprobe süre hatası (%s): %s", file_path, exc)
         return 0.0

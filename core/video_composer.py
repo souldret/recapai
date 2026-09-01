@@ -527,8 +527,7 @@ class VideoComposer:
             return (
                 f"{fg_label}split=2[fg_main][fg_sh];"
                 f"[fg_sh]format=rgba,"
-                f"colorchannelmixer=rr=0:rg=0:rb=0:ra=0:gr=0:gg=0:gb=0:ga=0:"
-                f"br=0:bg=0:bb=0:ba=0:ar=0:ag=0:ab=0:aa=0.32,"
+                f"colorchannelmixer=0:0:0:0:0:0:0:0:0:0:0:0:0:0:0:0.32,"
                 f"boxblur={sh_blur}:1[sh];"
                 f"{bg_label}[sh]overlay={ox + sh_dx}:{oy + sh_dy}:format=auto[bgsh];"
                 f"[bgsh][fg_main]overlay={ox}:{oy}:format=auto{out_label}"
@@ -540,12 +539,12 @@ class VideoComposer:
                 "unsharp=5:5:0.4:5:5:0.0",
             ]
             if bg_effect == "vignette_blur":
-                parts.append("vignette=angle=PI/5")
+                parts.append("vignette=PI/5")
             elif bg_effect == "cinematic":
                 parts.append("colorbalance=rs=0.04:gs=-0.01:bs=-0.05")
-                parts.append("vignette=angle=PI/6")
+                parts.append("vignette=PI/6")
             elif bg_effect in ("gradient_tb", "gradient_lr"):
-                parts.append("vignette=angle=PI/4.5")
+                parts.append("vignette=PI/4.5")
             return f"{src}{','.join(parts)}{dst}"
 
         # ── VF zinciri oluştur ─────────────────────────────────────────────────
@@ -777,7 +776,11 @@ class VideoComposer:
         if not get_ffprobe_path():
             return True
         dur = get_media_duration(str(p))
-        return dur > 0.05
+        if dur > 0.05:
+            return True
+        if dur == 0.0 and p.stat().st_size > 8192:
+            return True
+        return False
 
     def _concat_clips(
         self,
