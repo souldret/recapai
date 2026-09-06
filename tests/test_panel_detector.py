@@ -100,6 +100,26 @@ class TestGutterDetect:
         assert len(boxes) >= 1
 
 
+class TestReadingOrder:
+    def test_tall_left_panel_is_first_ltr(self):
+        # Sol uzun panel + sağda iki kısa: 1 sol, sonra sağ üst, sağ alt — 3,1,2 olmamalı
+        boxes = [
+            (400, 40, 300, 200),   # sağ üst (yanlışlıkla 1. olmasın)
+            (400, 280, 300, 200),  # sağ alt
+            (40, 40, 320, 500),    # sol uzun — okumada ilk
+        ]
+        det = PanelDetector()
+        ordered = det.sort_panels_ltr(boxes, 600)
+        assert ordered[0][0] < 100
+        assert ordered[1][1] < ordered[2][1]
+
+    def test_strip_sorts_top_to_bottom(self):
+        boxes = [(10, 800, 200, 100), (10, 50, 200, 100), (10, 400, 200, 100)]
+        det = PanelDetector()
+        ordered = det.sort_reading_order(boxes, 2000, 400, "ltr")
+        assert [b[1] for b in ordered] == [50, 400, 800]
+
+
 class TestStripDetect:
     def test_tall_chapter_many_panels(self):
         h, w = 8000, 800

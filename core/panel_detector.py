@@ -80,51 +80,72 @@ class PanelDetector:
     def _row_threshold(self, image_h: int) -> int:
         if self.row_threshold_px > 0:
             return self.row_threshold_px
-        return max(40, int(image_h * 0.035))
+        return max(24, min(120, int(image_h * 0.02)))
 
-    def _cluster_rows(
-        self, boxes: List[PanelBox], image_h: int
-    ) -> Dict[int, List[Tuple[PanelBox, Tuple[int, int]]]]:
-        thresh = self._row_threshold(image_h)
-        centers = [(x + w // 2, y + h // 2) for x, y, w, h in boxes]
-        rows: Dict[int, List] = {}
-        for box, center in zip(boxes, centers):
-            cy = center[1]
-            matched_key = None
-            min_dist = float("inf")
-            for key in rows:
-                d = abs(cy - key)
-                if d < min_dist and d < thresh:
-                    min_dist = d
-                    matched_key = key
-            if matched_key is None:
-                matched_key = cy
-                rows[matched_key] = []
-            rows[matched_key].append((box, center))
+    def _cluster_rows_overlap(
+        self, boxes: List[PanelBox]
+    ) -> List[List[PanelBox]]:
+        """Aynı satır: dikey aralıkları örtüşen kutular. Sıra üst kenara göre."""
+        if not boxes:
+            return []
+        remaining = sorted(boxes, key=lambda b: (b[1], b[0]))
+        rows: List[List[PanelBox]] = []
+        while remaining:
+            seed = remaining.pop(0)
+            row = [seed]
+            sy1, sy2 = seed[1], seed[1] + seed[3]
+            changed = True
+            while changed:
+                changed = False
+                rest = []
+                for b in remaining:
+                    y1, y2 = b[1], b[1] + b[3]
+                    overlap = min(sy2, y2) - max(sy1, y1)
+                    min_h = min(sy2 - sy1, y2 - y1)
+                    if min_h > 0 and overlap / min_h >= 0.45:
+                        row.append(b)
+                        sy1 = min(sy1, y1)
+                        sy2 = max(sy2, y2)
+                        changed = True
+                    else:
+                        rest.append(b)
+                remaining = rest
+            row.sort(key=lambda b: b[1])
+            rows.append(row)
+        rows.sort(key=lambda r: min(b[1] for b in r))
         return rows
 
     def sort_panels(self, boxes: List[PanelBox], image_h: int = 2000) -> List[PanelBox]:
         if not boxes:
             return []
-        rows = self._cluster_rows(boxes, image_h)
         sorted_boxes: List[PanelBox] = []
-        for row_y in sorted(rows.keys()):
-            row_items = rows[row_y]
-            row_items.sort(key=lambda item: item[1][0], reverse=True)
-            for box, _ in row_items:
-                sorted_boxes.append(box)
+        for row in self._cluster_rows_overlap(boxes):
+            row.sort(key=lambda b: b[0], reverse=True)
+            sorted_boxes.extend(row)
         return sorted_boxes
+
+    def sort_reading_order(
+        self,
+        boxes: List[PanelBox],
+        image_h: int,
+        image_w: int = 0,
+        reading_order: str = "ltr",
+    ) -> List[PanelBox]:
+        if not boxes:
+            return []
+        if image_w and image_h / max(image_w, 1) >= 2.2:
+            return sorted(boxes, key=lambda b: (b[1], b[0]))
+        if reading_order == "ltr":
+            return self.sort_panels_ltr(boxes, image_h)
+        return self.sort_panels(boxes, image_h)
 
     def sort_panels_ltr(self, boxes: List[PanelBox], image_h: int = 2000) -> List[PanelBox]:
         if not boxes:
             return []
-        rows = self._cluster_rows(boxes, image_h)
         sorted_boxes: List[PanelBox] = []
-        for row_y in sorted(rows.keys()):
-            row_items = rows[row_y]
-            row_items.sort(key=lambda item: item[1][0])
-            for box, _ in row_items:
-                sorted_boxes.append(box)
+        for row in self._cluster_rows_overlap(boxes):
+            row.sort(key=lambda b: b[0])
+            sorted_boxes.extend(row)
         return sorted_boxes
 
     def detect(
@@ -170,6 +191,8 @@ class PanelDetector:
             boxes = [(0, 0, w, h)]
         inset = max(1, int(min(w, 400) * 0.004))
         boxes = [_inset_box(b, w, h, inset) for b in boxes]
+        if tall:
+            return sorted(boxes, key=lambda b: (b[1], b[0]))
         if reading_order == "ltr":
             return self.sort_panels_ltr(boxes, h)
         return self.sort_panels(boxes, h)

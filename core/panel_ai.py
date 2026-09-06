@@ -224,15 +224,14 @@ def detect_hybrid(
             yolo_boxes = detect_yolo_panels(bgr)
             if len(yolo_boxes) >= 2:
                 h, w = bgr.shape[:2]
-                if reading_order == "ltr":
-                    yolo_boxes = detector.sort_panels_ltr(yolo_boxes, h)
-                else:
-                    yolo_boxes = detector.sort_panels(yolo_boxes, h)
+                yolo_boxes = detector.sort_reading_order(yolo_boxes, h, w, reading_order)
                 if len(yolo_boxes) >= len(cv_boxes):
                     boxes = yolo_boxes
                     used = "yolo"
                 else:
-                    boxes = nms_boxes(yolo_boxes + cv_boxes, iou_thresh=0.5)
+                    boxes = detector.sort_reading_order(
+                        nms_boxes(yolo_boxes + cv_boxes, iou_thresh=0.5), h, w, reading_order
+                    )
                     used = "yolo+opencv"
         except Exception as exc:
             logger.warning("YOLO atlandi: %s", exc)
@@ -243,11 +242,16 @@ def detect_hybrid(
         try:
             v_boxes = detect_vision_panels(image_path, model=vision_model)
             if v_boxes:
+                from PIL import Image as PILImage
+                with PILImage.open(image_path) as im:
+                    vw, vh = im.size
                 if weak or len(v_boxes) > len(boxes):
-                    boxes = v_boxes
+                    boxes = detector.sort_reading_order(v_boxes, vh, vw, reading_order)
                     used = "vision"
                 else:
-                    boxes = nms_boxes(boxes + v_boxes, iou_thresh=0.5)
+                    boxes = detector.sort_reading_order(
+                        nms_boxes(boxes + v_boxes, iou_thresh=0.5), vh, vw, reading_order
+                    )
                     used = used + "+vision"
         except Exception as exc:
             logger.warning("Vision panel atlandi: %s", exc)
