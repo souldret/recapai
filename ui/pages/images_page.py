@@ -28,7 +28,7 @@ from PyQt6.QtWidgets import (
     QStackedWidget, QDialog, QDialogButtonBox, QSlider, QGridLayout,
     QCheckBox, QScrollArea,
 )
-from PyQt6.QtCore import Qt, QSize, QThread, pyqtSignal, QPoint, QRect, QPointF, QRectF
+from PyQt6.QtCore import Qt, QSize, QThread, pyqtSignal, QPoint, QRect, QPointF, QRectF, QTimer
 from PyQt6.QtGui import (
     QPixmap, QIcon, QPainter, QPen, QColor, QBrush, QImage,
     QCursor, QWheelEvent, QKeyEvent, QFont,
@@ -1149,8 +1149,13 @@ class MangaPanelEditor(QWidget):
         self._batch_worker = None
         self._batch_results: dict = {}
         self._all_image_paths: List[str] = []          # batch detection için
-        self._min_area = 0.02
-        self._max_area = 0.80
+        self._min_area = 0.015
+        self._max_area = 0.92
+        self._persist_timer = QTimer(self)
+        self._persist_timer.setSingleShot(True)
+        self._persist_timer.setInterval(400)
+        self._persist_timer.timeout.connect(self._flush_persist)
+        self._pending_persist: Optional[tuple] = None
         self._build_ui()
 
     def _build_ui(self) -> None:
@@ -1376,15 +1381,59 @@ class MangaPanelEditor(QWidget):
     def _on_image_loaded(self, image_path: str, img) -> None:
         """Arka plan yükleyiciden gelen görüntü."""
         self._last_loaded_path = image_path
-        self._cached_image = img          # belleğe cache'le — disk okumayı önle
+        self._cached_image = img
         self.canvas.set_image(img)
-        self.canvas.set_panels([])
-        self.panel_list_widget.load_panels([])
-        self.thumb_strip.clear()
+        restored = self._restore_panels(image_path)
+        self.canvas.set_panels(restored)
+        self.panel_list_widget.load_panels(restored)
+        if restored and img is not None:
+            self.thumb_strip.load_panels(img, restored)
+        else:
+            self.thumb_strip.clear()
         self.btn_detect.setEnabled(True)
-        self.btn_save_panels.setEnabled(False)
-        self.btn_merge.setEnabled(False)
-        self.lbl_status.setText(Path(image_path).name)
+        self.btn_save_panels.setEnabled(bool(restored))
+        self.btn_merge.setEnabled(bool(restored))
+        extra = f"  ·  {len(restored)} panel" if restored else ""
+        self.lbl_status.setText(Path(image_path).name + extra)
+
+    def _restore_panels(self, image_path: str) -> list:
+        boxes = self._batch_results.get(image_path)
+        if boxes:
+            return list(boxes)
+        chapter = getattr(self.ctx.app_state, "current_chapter", None)
+        if chapter is None:
+            return []
+        filename = Path(image_path).name
+        stored = chapter.get_panels_for_image(filename)
+        return [(int(p["x"]), int(p["y"]), int(p["w"]), int(p["h"])) for p in stored]
+
+    def _persist_panels(self, image_path: str, boxes: list, immediate: bool = False) -> None:
+        if not image_path:
+            return
+        self._batch_results[image_path] = list(boxes)
+        self._pending_persist = (image_path, list(boxes))
+        if immediate:
+            self._flush_persist()
+        else:
+            self._persist_timer.start()
+
+    def _flush_persist(self) -> None:
+        if not self._pending_persist:
+            return
+        image_path, boxes = self._pending_persist
+        self._pending_persist = None
+        chapter = getattr(self.ctx.app_state, "current_chapter", None)
+        project = getattr(self.ctx.app_state, "current_project", None)
+        if chapter is None:
+            return
+        order = self.reading_order_combo.currentData() or "rtl"
+        chapter.set_panels_for_image(Path(image_path).name, boxes, reading_order=order)
+        if project is not None:
+            try:
+                from core.project_manager import save_project
+                save_project(project)
+            except Exception:
+                logger.warning("Panel verisi kaydedilemedi.", exc_info=True)
 
     def _on_image_load_error(self, msg: str) -> None:
         self.lbl_status.setText(f"Görüntü yüklenemedi: {msg}")
@@ -1440,9 +1489,10 @@ class MangaPanelEditor(QWidget):
         self.btn_detect.setEnabled(False)
         self.lbl_status.setText("Tespit ediliyor...")
 
+        order = self.reading_order_combo.currentData() or "rtl"
         self._detect_worker = PanelDetectWorker(
             image_path=self._current_image_path,
-            reading_order="rtl",
+            reading_order=order,
             min_area_ratio=self._min_area,
             max_area_ratio=self._max_area,
         )
@@ -1460,9 +1510,9 @@ class MangaPanelEditor(QWidget):
         self.btn_merge.setEnabled(bool(boxes))
         self.lbl_status.setText(f"{len(boxes)} panel tespit edildi.")
         self.ctx.app_state.status_message.emit(f"Panel tespiti: {len(boxes)} panel bulundu.")
-        # Thumbnail şeridini güncelle — cache'den oku, disk erişimi yok
         if self._cached_image is not None and boxes:
             self.thumb_strip.load_panels(self._cached_image, boxes)
+        self._persist_panels(self._current_image_path or "", boxes, immediate=True)
 
     def _on_detection_error(self, msg: str) -> None:
         self.progress_bar.hide()
@@ -1506,12 +1556,13 @@ class MangaPanelEditor(QWidget):
         self.lbl_batch_status.setText(msg)
 
     def _on_batch_page_done(self, page_index: int, image_path: str, boxes: list) -> None:
-        self._batch_results[image_path] = boxes
-        # Aktif sayfanın sonuçlarını anında göster
+        self._persist_panels(image_path, boxes, immediate=True)
         if image_path == self._current_image_path:
             self.canvas.set_panels(boxes)
             self.panel_list_widget.load_panels(boxes)
             self.btn_save_panels.setEnabled(bool(boxes))
+            if self._cached_image is not None and boxes:
+                self.thumb_strip.load_panels(self._cached_image, boxes)
 
     def _on_batch_finished(self, results: dict) -> None:
         self.batch_progress_bar.hide()
@@ -1557,6 +1608,20 @@ class MangaPanelEditor(QWidget):
     def _on_reading_order_changed(self, _index: int) -> None:
         order = self.reading_order_combo.currentData() or "rtl"
         self.canvas.set_reading_order(order)
+        boxes = self.canvas.get_panels()
+        if not boxes:
+            return
+        from core.panel_detector import PanelDetector
+        size = self.canvas.image_size()
+        img_h = size[0] if size else 2000
+        detector = PanelDetector()
+        if order == "ltr":
+            sorted_boxes = detector.sort_panels_ltr(boxes, img_h)
+        else:
+            sorted_boxes = detector.sort_panels(boxes, img_h)
+        self.canvas.set_panels(sorted_boxes)
+        self.panel_list_widget.load_panels(sorted_boxes)
+        self._persist_panels(self._current_image_path or "", sorted_boxes, immediate=True)
 
     # ── Thumbnail Strip ─────────────────────────────────────────────
 
@@ -1582,9 +1647,10 @@ class MangaPanelEditor(QWidget):
         self.panel_list_widget.load_panels(panels, keep_selection=self.canvas.selected_index)
         self.btn_save_panels.setEnabled(bool(panels))
         self.btn_merge.setEnabled(bool(panels))
-        # Thumbnail şeridini güncelle — cache'den oku, her panel hareketinde disk erişimi yok
         if self._cached_image is not None and panels:
             self.thumb_strip.load_panels(self._cached_image, panels)
+        if self._current_image_path:
+            self._persist_panels(self._current_image_path, panels)
 
     def _on_zoom_changed(self, zoom: float) -> None:
         self.lbl_zoom.setText(f"{round(zoom * 100)}%")
@@ -2012,7 +2078,11 @@ class WebtoonPanelEditor(QWidget):
         try:
             img = _load_cv2_image(self._stitched_path)
             from core.panel_detector import detect_horizontal_cuts
-            cut_ys = detect_horizontal_cuts(img, threshold=245, min_consecutive=3, dark_threshold=10)
+            h, w = img.shape[:2]
+            min_run = max(8, int(h * 0.004))
+            cut_ys = detect_horizontal_cuts(
+                img, threshold=242, min_consecutive=min_run, dark_threshold=14,
+            )
             if not cut_ys:
                 QMessageBox.information(
                     self, "Yatay Çizgi Tespiti",
@@ -2020,14 +2090,13 @@ class WebtoonPanelEditor(QWidget):
                     "Eşik değerlerini düşürmeyi deneyin."
                 )
                 return
-            # Her segment arasında birer panel oluştur
-            h, w = img.shape[:2]
+            pad = max(2, int(h * 0.002))
             boundaries = [0] + cut_ys + [h]
             boxes = []
             for i in range(len(boundaries) - 1):
-                y_start = boundaries[i]
-                y_end   = boundaries[i + 1]
-                if y_end - y_start > 30:
+                y_start = boundaries[i] + (pad if i > 0 else 0)
+                y_end = boundaries[i + 1] - (pad if i < len(boundaries) - 2 else 0)
+                if y_end - y_start > 40:
                     boxes.append((0, y_start, w, y_end - y_start))
             if boxes:
                 self.canvas.set_panels(boxes)

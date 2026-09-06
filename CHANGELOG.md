@@ -5,6 +5,7 @@ Bu dosya RecapAI projesindeki önemli değişiklikleri listeler.
 ## [Yayınlanmamış]
 
 ### Eklendi
+- Panel tespiti: gutter ızgarası + ölçekli kontur, NMS, inset kırpma; RTL/LTR tek sayfada da çalışır; sonuçlar projeye kaydedilir.
 - Render: görselin arkasına hafif drop shadow (yalnız letterbox boşluğu varken; tam kadrajda gölge yok).
 - Blur arka plan daha güçlü (`boxblur` 20→32, vinyette 25→36).
 - Manhwa Fresh: YouTube tutma katmanı (açılış kancası, orta rehook, son açık uç, stakes).
