@@ -36,6 +36,7 @@ class ImageLoadWorker(QThread):
         try:
             if self._cancelled:
                 return
+            import logging as _logging
             import cv2
             import numpy as np
             from pathlib import Path
@@ -43,6 +44,7 @@ class ImageLoadWorker(QThread):
             import warnings
             PILImage.MAX_IMAGE_PIXELS = None
             warnings.filterwarnings("ignore", category=PILImage.DecompressionBombWarning)
+            _logging.getLogger("PIL").setLevel(_logging.WARNING)
 
             p = Path(self._path)
             # Pillow kullan: OpenCV'nin ~65535 px yükseklik sınırı yoktur

@@ -133,31 +133,42 @@ class PanelDetector:
         reading_order: str = "rtl",
     ) -> List[PanelBox]:
         h, w = image.shape[:2]
-        work, scale = _detection_scale(image)
-        boxes = detect_content_panels(
-            work,
-            min_area_ratio=self.min_area_ratio,
-            max_area_ratio=self.max_area_ratio,
-        )
-        if len(boxes) < 2:
-            extra = self._detect_contours(work)
-            if len(extra) > len(boxes):
-                boxes = extra
-        if scale != 1.0:
-            boxes = [
-                (
-                    int(x / scale), int(y / scale),
-                    int(bw / scale), int(bh / scale),
+        if h <= 0 or w <= 0:
+            return []
+        tall = h / max(w, 1) >= 2.2
+        if tall:
+            boxes = detect_strip_panels(image)
+        else:
+            work, scale = _detection_scale(image, max_side=2200)
+            boxes = detect_page_panels(
+                work,
+                min_area_ratio=min(self.min_area_ratio, 0.012),
+                max_area_ratio=max(self.max_area_ratio, 0.94),
+            )
+            if len(boxes) < 2:
+                extra = detect_content_panels(
+                    work,
+                    min_area_ratio=min(self.min_area_ratio, 0.008),
+                    max_area_ratio=self.max_area_ratio,
                 )
-                for x, y, bw, bh in boxes
-            ]
+                if len(extra) > len(boxes):
+                    boxes = extra
+            if scale != 1.0:
+                boxes = [
+                    (
+                        int(round(x / scale)), int(round(y / scale)),
+                        int(round(bw / scale)), int(round(bh / scale)),
+                    )
+                    for x, y, bw, bh in boxes
+                ]
         boxes = [_clamp_box(b, w, h) for b in boxes]
-        boxes = nms_boxes(boxes, iou_thresh=0.45)
+        boxes = nms_boxes(boxes, iou_thresh=0.5)
         boxes = merge_contained(boxes)
-        boxes = [b for b in boxes if _box_area(b) >= (w * h) * self.min_area_ratio]
+        min_area = w * max(48, int(h * 0.008 if tall else w * 0.04))
+        boxes = [b for b in boxes if _box_area(b) >= min_area]
         if not boxes:
             boxes = [(0, 0, w, h)]
-        inset = max(2, int(min(w, h) * 0.003))
+        inset = max(1, int(min(w, 400) * 0.004))
         boxes = [_inset_box(b, w, h, inset) for b in boxes]
         if reading_order == "ltr":
             return self.sort_panels_ltr(boxes, h)
@@ -354,7 +365,12 @@ def _gutter_mask(gray: np.ndarray) -> np.ndarray:
     return combined
 
 
-def _split_axis(occupancy: np.ndarray, min_gap: int, min_content: int) -> List[Tuple[int, int]]:
+def _split_axis(
+    occupancy: np.ndarray,
+    min_gap: int,
+    min_content: int,
+    trim_edges: bool = True,
+) -> List[Tuple[int, int]]:
     n = occupancy.size
     gaps: List[Tuple[int, int]] = []
     i = 0
@@ -369,11 +385,17 @@ def _split_axis(occupancy: np.ndarray, min_gap: int, min_content: int) -> List[T
             i += 1
     cuts = [0]
     for gs, ge in gaps:
-        if gs <= 2 or ge >= n - 2:
+        if gs <= 2:
+            if not trim_edges:
+                cuts.append(ge)
+            continue
+        if ge >= n - 2:
+            if not trim_edges:
+                cuts.append(gs)
             continue
         cuts.append((gs + ge) // 2)
     cuts.append(n)
-    cuts = sorted(set(cuts))
+    cuts = sorted(set(int(c) for c in cuts if 0 <= c <= n))
     spans: List[Tuple[int, int]] = []
     for a, b in zip(cuts, cuts[1:]):
         if b - a >= min_content:
@@ -417,6 +439,53 @@ def _boxes_from_region(
     return boxes
 
 
+def detect_strip_panels(image: np.ndarray) -> List[PanelBox]:
+    """Uzun webtoon/manhwa şeridini yatay gutter'lardan panellere böler."""
+    gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
+    h, w = gray.shape
+    row_mean = gray.mean(axis=1)
+    row_std = gray.std(axis=1)
+    border = float(np.median(np.concatenate([gray[0, :], gray[-1, :], gray[:, 0], gray[:, -1]])))
+    light = border >= 128
+    if light:
+        is_gap = (row_mean >= 232) & (row_std < 22)
+    else:
+        is_gap = (row_mean <= 22) & (row_std < 22)
+
+    min_gap = max(6, int(h * 0.0025), int(w * 0.012))
+    min_h = max(36, int(w * 0.12))
+    spans = _split_axis((~is_gap).astype(np.uint8), min_gap, min_h, trim_edges=False)
+    boxes: List[PanelBox] = []
+    for y0, y1 in spans:
+        band = gray[y0:y1, :]
+        if band.size == 0:
+            continue
+        col_std = band.std(axis=0)
+        xs = np.where(col_std > 6)[0]
+        if xs.size == 0:
+            x0, x1 = 0, w
+        else:
+            x0, x1 = int(xs[0]), int(xs[-1]) + 1
+        pad = max(2, w // 200)
+        x0 = max(0, x0 - pad)
+        x1 = min(w, x1 + pad)
+        if y1 - y0 >= min_h and x1 - x0 >= max(24, w // 8):
+            boxes.append((x0, y0, x1 - x0, y1 - y0))
+    return boxes
+
+
+def detect_page_panels(
+    image: np.ndarray,
+    min_area_ratio: float = 0.012,
+    max_area_ratio: float = 0.94,
+) -> List[PanelBox]:
+    """Manga/manhwa sayfası: satır projeksiyonu, sonra her satırda kolon."""
+    boxes = detect_gutter_panels(image, min_area_ratio, max_area_ratio)
+    if len(boxes) >= 2:
+        return boxes
+    return detect_content_panels(image, min_area_ratio, max_area_ratio)
+
+
 def detect_content_panels(
     image: np.ndarray,
     min_area_ratio: float = 0.015,
@@ -446,7 +515,7 @@ def detect_content_panels(
     content = cv2.morphologyEx(content, cv2.MORPH_OPEN, open_k, iterations=1)
 
     num, labels, stats, _ = cv2.connectedComponentsWithStats(content, connectivity=8)
-    min_area = image_area * min_area_ratio
+    min_area = max(80.0, image_area * min(min_area_ratio, 0.006))
     max_area = image_area * max_area_ratio
     boxes: List[PanelBox] = []
     for i in range(1, num):

@@ -8,6 +8,7 @@ from core.panel_detector import (
     merge_contained,
     detect_gutter_panels,
     detect_content_panels,
+    detect_strip_panels,
     detect_horizontal_cuts,
 )
 
@@ -97,6 +98,18 @@ class TestGutterDetect:
         det = PanelDetector()
         boxes = det.detect(img, reading_order="ltr")
         assert len(boxes) >= 1
+
+
+class TestStripDetect:
+    def test_tall_chapter_many_panels(self):
+        h, w = 8000, 800
+        img = np.full((h, w, 3), 255, dtype=np.uint8)
+        for i, y in enumerate(range(80, 7600, 700)):
+            img[y:y + 520, 40:760] = (30 + i, 40, 50)
+            img[y + 20:y + 500, 60:740] = (80, 90, 100)
+        det = PanelDetector(min_area_ratio=0.015)
+        boxes = det.detect(img, reading_order="ltr")
+        assert len(boxes) >= 8
 
 
 class TestHorizontalCuts:
