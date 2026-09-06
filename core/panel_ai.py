@@ -66,7 +66,7 @@ def yolo_status() -> str:
     if _yolo_failed:
         return "yuklenemedi"
     if not yolo_available():
-        return "ultralytics yok — pip install ultralytics"
+        return "ultralytics yok — .venv\\Scripts\\python.exe -m pip install ultralytics"
     if YOLO_WEIGHTS.exists():
         return f"hazir ({YOLO_WEIGHTS.name})"
     return "ilk calistirmada model inecek (~15MB)"
