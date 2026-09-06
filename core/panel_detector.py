@@ -37,7 +37,7 @@ class PanelDetector:
     def preprocess(self, image: np.ndarray) -> np.ndarray:
         gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
         h, w = gray.shape
-        block = int(max(15, min(w, h) * 0.018))
+        block = int(max(15, min(51, min(w, h) * 0.018)))
         if block % 2 == 0:
             block += 1
         binary = cv2.adaptiveThreshold(
@@ -363,6 +363,42 @@ def _split_axis(occupancy: np.ndarray, min_gap: int, min_content: int) -> List[T
     return spans if spans else [(0, n)]
 
 
+def _boxes_from_region(
+    content: np.ndarray,
+    x0: int,
+    y0: int,
+    x1: int,
+    y1: int,
+    min_gap_x: int,
+    min_w: int,
+    min_area: float,
+    max_area: float,
+) -> List[PanelBox]:
+    region = content[y0:y1, x0:x1]
+    if region.size == 0:
+        return []
+    col_occ = (region.sum(axis=0) > (y1 - y0) * 0.08).astype(np.uint8)
+    x_spans = _split_axis(col_occ, min_gap_x, min_w)
+    boxes: List[PanelBox] = []
+    for sx0, sx1 in x_spans:
+        cell = region[:, sx0:sx1]
+        if cell.size == 0 or float(cell.mean()) < 0.12:
+            continue
+        ys = np.where(cell.any(axis=1))[0]
+        xs = np.where(cell.any(axis=0))[0]
+        if ys.size == 0 or xs.size == 0:
+            continue
+        bx = x0 + sx0 + int(xs[0])
+        by = y0 + int(ys[0])
+        bw = int(xs[-1]) - int(xs[0]) + 1
+        bh = int(ys[-1]) - int(ys[0]) + 1
+        area = bw * bh
+        if area < min_area or area > max_area:
+            continue
+        boxes.append((bx, by, bw, bh))
+    return boxes
+
+
 def detect_gutter_panels(
     image: np.ndarray,
     min_area_ratio: float = 0.015,
@@ -373,38 +409,20 @@ def detect_gutter_panels(
     image_area = h * w
     gutter = _gutter_mask(gray)
     content = (gutter == 0).astype(np.uint8)
-    col_occ = (content.sum(axis=0) > h * 0.04).astype(np.uint8)
     row_occ = (content.sum(axis=1) > w * 0.04).astype(np.uint8)
     min_gap_x = max(6, int(w * 0.012))
     min_gap_y = max(6, int(h * 0.010))
     min_w = max(24, int(w * 0.08))
     min_h = max(24, int(h * 0.06))
-    x_spans = _split_axis(col_occ, min_gap_x, min_w)
+    min_area = image_area * min_area_ratio
+    max_area = image_area * max_area_ratio
     y_spans = _split_axis(row_occ, min_gap_y, min_h)
     boxes: List[PanelBox] = []
-    for x0, x1 in x_spans:
-        for y0, y1 in y_spans:
-            region = content[y0:y1, x0:x1]
-            if region.size == 0:
-                continue
-            fill = float(region.mean())
-            if fill < 0.12:
-                continue
-            ys = np.where(region.any(axis=1))[0]
-            xs = np.where(region.any(axis=0))[0]
-            if ys.size == 0 or xs.size == 0:
-                continue
-            yy0, yy1 = int(ys[0]), int(ys[-1]) + 1
-            xx0, xx1 = int(xs[0]), int(xs[-1]) + 1
-            bx, by = x0 + xx0, y0 + yy0
-            bw, bh = xx1 - xx0, yy1 - yy0
-            area = bw * bh
-            if area < image_area * min_area_ratio:
-                continue
-            if area > image_area * max_area_ratio:
-                continue
-            boxes.append((bx, by, bw, bh))
-    if len(x_spans) == 1 and len(y_spans) == 1 and len(boxes) <= 1:
+    for y0, y1 in y_spans:
+        boxes.extend(_boxes_from_region(
+            content, 0, y0, w, y1, min_gap_x, min_w, min_area, max_area,
+        ))
+    if len(y_spans) == 1 and len(boxes) <= 1:
         return []
     return boxes
 

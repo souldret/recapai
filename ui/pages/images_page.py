@@ -1380,6 +1380,8 @@ class MangaPanelEditor(QWidget):
 
     def _on_image_loaded(self, image_path: str, img) -> None:
         """Arka plan yükleyiciden gelen görüntü."""
+        if image_path != self._current_image_path:
+            return
         self._last_loaded_path = image_path
         self._cached_image = img
         self.canvas.set_image(img)
@@ -1405,7 +1407,13 @@ class MangaPanelEditor(QWidget):
             return []
         filename = Path(image_path).name
         stored = chapter.get_panels_for_image(filename)
-        return [(int(p["x"]), int(p["y"]), int(p["w"]), int(p["h"])) for p in stored]
+        out = []
+        for p in stored:
+            try:
+                out.append((int(p["x"]), int(p["y"]), int(p["w"]), int(p["h"])))
+            except (KeyError, TypeError, ValueError):
+                continue
+        return out
 
     def _persist_panels(self, image_path: str, boxes: list, immediate: bool = False) -> None:
         if not image_path:
@@ -1452,7 +1460,9 @@ class MangaPanelEditor(QWidget):
         for w in (self._load_worker, self._detect_worker, self._batch_worker):
             if w and w.isRunning():
                 w.cancel()
-                w.wait(2000)   # max 2 sn bekle — UI thread'ini bloke etme
+                w.wait(2000)
+        self._persist_timer.stop()
+        self._pending_persist = None
         self._current_image_path = None
         self._last_loaded_path = None
         self._cached_image = None

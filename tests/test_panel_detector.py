@@ -64,6 +64,25 @@ class TestGutterDetect:
         assert len(boxes) >= 2
         assert boxes[0][0] > boxes[1][0]
 
+    def test_grid_four_panels(self):
+        img = _page(panels=[
+            (40, 40, 340, 500),
+            (420, 40, 340, 500),
+            (40, 620, 340, 500),
+            (420, 620, 340, 500),
+        ])
+        det = PanelDetector(min_area_ratio=0.02, max_area_ratio=0.92)
+        boxes = det.detect(img, reading_order="ltr")
+        assert len(boxes) == 4
+
+    def test_stacked_not_split_by_phantom_columns(self):
+        img = _page(panels=[
+            (40, 40, 720, 500),
+            (40, 620, 720, 500),
+        ])
+        boxes = detect_gutter_panels(img, min_area_ratio=0.02, max_area_ratio=0.9)
+        assert len(boxes) == 2
+
     def test_empty_page_returns_one(self):
         img = np.full((400, 300, 3), 245, dtype=np.uint8)
         det = PanelDetector()
