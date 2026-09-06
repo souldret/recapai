@@ -15,3 +15,5 @@ logs/
 Thumbs.db
 config/settings.json
 config/render_presets.json
+models/*.pt
+models/*.onnx

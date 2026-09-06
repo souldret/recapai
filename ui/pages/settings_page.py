@@ -1437,6 +1437,19 @@ class SettingsPage(QWidget):
         self.panel_show_arrows_check.setChecked(True)
         pv.addWidget(self.panel_show_arrows_check)
 
+        pv.addWidget(self._field_label("Tespit motoru:"))
+        self.panel_engine_combo = QComboBox()
+        self.panel_engine_combo.addItem("YOLO + OpenCV (yerel, ücretsiz)", "yolo")
+        self.panel_engine_combo.addItem("Sadece OpenCV", "opencv")
+        self.panel_engine_combo.addItem("Vision API (OpenRouter, ücretli)", "vision")
+        self.panel_engine_combo.setFixedWidth(320)
+        pv.addWidget(self.panel_engine_combo)
+        from core.panel_ai import yolo_status
+        self.lbl_panel_yolo = QLabel(f"YOLO durumu: {yolo_status()}")
+        self.lbl_panel_yolo.setObjectName("pageSubtitle")
+        self.lbl_panel_yolo.setWordWrap(True)
+        pv.addWidget(self.lbl_panel_yolo)
+
         v.addWidget(panel_frame)
 
         # ── Stitch Kalite Ayarları ──────────────────────────────────
@@ -1629,6 +1642,8 @@ class SettingsPage(QWidget):
             )
         if hasattr(self, "panel_show_arrows_check"):
             self.panel_show_arrows_check.setChecked(bool(panel.get("show_order_arrows", True)))
+        if hasattr(self, "panel_engine_combo"):
+            self._set_combo_by_data(self.panel_engine_combo, panel.get("engine", "yolo"))
 
         # Stitch ayarları
         stitch = data.get("stitch", {})
@@ -1703,6 +1718,8 @@ class SettingsPage(QWidget):
                 data["panel"]["max_area_ratio"]       = round(self.panel_max_area_spin.value() / 100.0, 4)
                 data["panel"]["default_reading_order"] = self.panel_reading_order_combo.currentData() or "rtl"
                 data["panel"]["show_order_arrows"]    = self.panel_show_arrows_check.isChecked()
+                if hasattr(self, "panel_engine_combo"):
+                    data["panel"]["engine"] = self.panel_engine_combo.currentData() or "yolo"
 
             # Stitch ayarları
             if hasattr(self, "stitch_scale_combo"):

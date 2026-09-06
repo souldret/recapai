@@ -43,6 +43,37 @@ logger = logging.getLogger(__name__)
 PanelBox = Tuple[int, int, int, int]   # (x, y, w, h)
 
 
+def _engine_flags(engine: str) -> Tuple[bool, bool]:
+    if engine == "opencv":
+        return False, False
+    if engine == "vision":
+        return True, True
+    return True, False
+
+
+def _confirm_vision_cost(parent, pages: int) -> bool:
+    from core.panel_ai import estimate_vision_cost
+    from core.settings_manager import SettingsManager
+    model = "google/gemini-2.5-flash"
+    try:
+        model = SettingsManager.instance().get("defaults.vision_model", model)
+    except Exception:
+        pass
+    est = estimate_vision_cost(model, pages)
+    msg = (
+        f"Vision API {est['pages']} sayfa için OpenRouter kotanızı kullanır.\n\n"
+        f"Model: {est['label']}\n"
+        f"Tahmini maliyet: ${est['usd_low']:.4f} – ${est['usd_high']:.4f} USD\n"
+        f"(yaklaşık, gerçek fatura token'a göre değişir)\n\n"
+        "Devam edilsin mi?"
+    )
+    return QMessageBox.question(
+        parent, "Vision API maliyeti", msg,
+        QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+        QMessageBox.StandardButton.No,
+    ) == QMessageBox.StandardButton.Yes
+
+
 # ══════════════════════════════════════════════════════════════════════════════
 # Thumbnail Worker
 # ══════════════════════════════════════════════════════════════════════════════
@@ -983,7 +1014,7 @@ class PanelDetectSettingsDialog(QDialog):
     def __init__(self, parent=None) -> None:
         super().__init__(parent)
         self.setWindowTitle("Panel Tespit Ayarları")
-        self.setFixedSize(360, 200)
+        self.setFixedSize(420, 340)
         self.setModal(True)
         self._build_ui()
 
@@ -1011,11 +1042,24 @@ class PanelDetectSettingsDialog(QDialog):
         self.spin_max.setSuffix(" %")
         grid.addWidget(self.spin_max, 1, 1)
 
+        grid.addWidget(QLabel("Motor:"), 2, 0)
+        self.engine_combo = QComboBox()
+        self.engine_combo.addItem("YOLO + OpenCV (önerilen)", "yolo")
+        self.engine_combo.addItem("Sadece OpenCV", "opencv")
+        self.engine_combo.addItem("Vision API (ücretli)", "vision")
+        grid.addWidget(self.engine_combo, 2, 1)
+
         layout.addLayout(grid)
 
+        from core.panel_ai import yolo_status
+        self.lbl_yolo = QLabel(f"YOLO: {yolo_status()}")
+        self.lbl_yolo.setObjectName("pageSubtitle")
+        self.lbl_yolo.setWordWrap(True)
+        layout.addWidget(self.lbl_yolo)
+
         hint = QLabel(
-            "Min oranı düşürürseniz küçük paneller de yakalanır.\n"
-            "Max oranı düşürürseniz tam sayfa paneller filtrelenir."
+            "YOLO ilk seferde ~15MB model indirir (ücretsiz, yerel).\n"
+            "Vision API OpenRouter kotanızı kullanır; çalıştırmadan önce maliyet gösterilir."
         )
         hint.setObjectName("pageSubtitle")
         hint.setWordWrap(True)
@@ -1031,6 +1075,9 @@ class PanelDetectSettingsDialog(QDialog):
 
     def get_values(self) -> Tuple[float, float]:
         return self.spin_min.value() / 100.0, self.spin_max.value() / 100.0
+
+    def get_engine(self) -> str:
+        return self.engine_combo.currentData() or "yolo"
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -1151,6 +1198,7 @@ class MangaPanelEditor(QWidget):
         self._all_image_paths: List[str] = []          # batch detection için
         self._min_area = 0.015
         self._max_area = 0.92
+        self._engine = "yolo"
         self._persist_timer = QTimer(self)
         self._persist_timer.setSingleShot(True)
         self._persist_timer.setInterval(400)
@@ -1485,13 +1533,21 @@ class MangaPanelEditor(QWidget):
         dlg = PanelDetectSettingsDialog(self)
         dlg.spin_min.setValue(self._min_area * 100)
         dlg.spin_max.setValue(self._max_area * 100)
+        idx = dlg.engine_combo.findData(self._engine)
+        if idx >= 0:
+            dlg.engine_combo.setCurrentIndex(idx)
         if dlg.exec() == QDialog.DialogCode.Accepted:
             self._min_area, self._max_area = dlg.get_values()
+            self._engine = dlg.get_engine()
 
     def _run_detection(self) -> None:
         if not self._current_image_path:
             return
         if self._detect_worker and self._detect_worker.isRunning():
+            return
+
+        use_yolo, use_vision = _engine_flags(self._engine)
+        if use_vision and not _confirm_vision_cost(self, 1):
             return
 
         from ui.workers.panel_worker import PanelDetectWorker
@@ -1505,6 +1561,8 @@ class MangaPanelEditor(QWidget):
             reading_order=order,
             min_area_ratio=self._min_area,
             max_area_ratio=self._max_area,
+            use_yolo=use_yolo,
+            use_vision=use_vision,
         )
         self._detect_worker.progress.connect(self.lbl_status.setText)
         self._detect_worker.finished.connect(self._on_detection_finished)
@@ -1539,6 +1597,10 @@ class MangaPanelEditor(QWidget):
         if self._batch_worker and self._batch_worker.isRunning():
             return
 
+        use_yolo, use_vision = _engine_flags(self._engine)
+        if use_vision and not _confirm_vision_cost(self, len(self._all_image_paths)):
+            return
+
         from ui.workers.panel_worker import PanelBatchDetectWorker
         order = self.reading_order_combo.currentData() or "rtl"
         self._batch_worker = PanelBatchDetectWorker(
@@ -1546,6 +1608,8 @@ class MangaPanelEditor(QWidget):
             reading_order=order,
             min_area_ratio=self._min_area,
             max_area_ratio=self._max_area,
+            use_yolo=use_yolo,
+            use_vision=use_vision,
         )
         self._batch_results: dict = {}
         self.batch_progress_bar.setValue(0)
@@ -1744,7 +1808,8 @@ class WebtoonPanelEditor(QWidget):
         self._stitch_worker = None
         self._detect_worker = None
         self._load_worker = None
-        self._min_area = 0.01   # webtoon için daha küçük eşik
+        self._min_area = 0.01
+        self._engine = "yolo"
         self._max_area = 0.80
         # Stitch kalite ayarları
         self._stitch_scale = 100       # %100 = orijinal
@@ -2078,8 +2143,12 @@ class WebtoonPanelEditor(QWidget):
         dlg = PanelDetectSettingsDialog(self)
         dlg.spin_min.setValue(self._min_area * 100)
         dlg.spin_max.setValue(self._max_area * 100)
+        idx = dlg.engine_combo.findData(getattr(self, "_engine", "yolo"))
+        if idx >= 0:
+            dlg.engine_combo.setCurrentIndex(idx)
         if dlg.exec() == QDialog.DialogCode.Accepted:
             self._min_area, self._max_area = dlg.get_values()
+            self._engine = dlg.get_engine()
 
     def _run_hline_detection(self) -> None:
         """Yatay beyaz/siyah çizgileri panel kesim noktası olarak kullanır."""
@@ -2128,6 +2197,10 @@ class WebtoonPanelEditor(QWidget):
         if self._detect_worker and self._detect_worker.isRunning():
             return
 
+        use_yolo, use_vision = _engine_flags(getattr(self, "_engine", "yolo"))
+        if use_vision and not _confirm_vision_cost(self, 1):
+            return
+
         from ui.workers.panel_worker import PanelDetectWorker
         self.progress_bar.show()
         self.lbl_progress.show()
@@ -2139,6 +2212,8 @@ class WebtoonPanelEditor(QWidget):
             reading_order="ltr",
             min_area_ratio=self._min_area,
             max_area_ratio=self._max_area,
+            use_yolo=use_yolo,
+            use_vision=use_vision,
         )
         self._detect_worker.progress.connect(self.lbl_progress.setText)
         self._detect_worker.finished.connect(self._on_detection_finished)

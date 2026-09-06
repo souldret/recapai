@@ -5,7 +5,7 @@ Bu dosya RecapAI projesindeki önemli değişiklikleri listeler.
 ## [Yayınlanmamış]
 
 ### Eklendi
-- Panel tespiti: bağlı bileşen + gutter yedek, ölçekli çalışma; RTL/LTR kaydı.
+- Panel tespiti: YOLO-World (yerel) + OpenCV + isteğe bağlı Vision API (çalıştırmadan önce USD tahmini).
 - Büyük stitch görsellerinde Pillow DecompressionBomb uyarısı kapatıldı.
 - Render: görselin arkasına hafif drop shadow (yalnız letterbox boşluğu varken; tam kadrajda gölge yok).
 - Blur arka plan daha güçlü (`boxblur` 20→32, vinyette 25→36).

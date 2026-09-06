@@ -117,6 +117,9 @@ class PanelDetectWorker(QThread):
         reading_order: str = "rtl",
         min_area_ratio: float = 0.02,
         max_area_ratio: float = 0.80,
+        use_yolo: bool = True,
+        use_vision: bool = False,
+        vision_model: Optional[str] = None,
         parent=None,
     ) -> None:
         super().__init__(parent)
@@ -124,6 +127,9 @@ class PanelDetectWorker(QThread):
         self._order = reading_order
         self._min_area = min_area_ratio
         self._max_area = max_area_ratio
+        self._use_yolo = use_yolo
+        self._use_vision = use_vision
+        self._vision_model = vision_model
         self._cancelled = False
 
     def cancel(self) -> None:
@@ -133,16 +139,21 @@ class PanelDetectWorker(QThread):
         try:
             if self._cancelled:
                 return
-            from core.panel_detector import PanelDetector
+            from core.panel_ai import detect_hybrid
             self.progress.emit("Panel tespiti başlatıldı...")
-            detector = PanelDetector(
+            boxes, engine = detect_hybrid(
+                self._path,
+                reading_order=self._order,
                 min_area_ratio=self._min_area,
                 max_area_ratio=self._max_area,
+                use_yolo=self._use_yolo,
+                use_vision=self._use_vision,
+                vision_model=self._vision_model,
+                progress=self.progress.emit,
             )
-            boxes = detector.detect_from_path(self._path, reading_order=self._order)
             if self._cancelled:
                 return
-            self.progress.emit(f"{len(boxes)} panel tespit edildi.")
+            self.progress.emit(f"{len(boxes)} panel ({engine}).")
             self.finished.emit(boxes)
         except Exception as exc:
             logger.exception("PanelDetectWorker hatası")
@@ -173,6 +184,9 @@ class PanelBatchDetectWorker(QThread):
         reading_order: str = "rtl",
         min_area_ratio: float = 0.02,
         max_area_ratio: float = 0.80,
+        use_yolo: bool = True,
+        use_vision: bool = False,
+        vision_model: Optional[str] = None,
         parent=None,
     ) -> None:
         super().__init__(parent)
@@ -180,17 +194,16 @@ class PanelBatchDetectWorker(QThread):
         self._order       = reading_order
         self._min_area    = min_area_ratio
         self._max_area    = max_area_ratio
+        self._use_yolo    = use_yolo
+        self._use_vision  = use_vision
+        self._vision_model = vision_model
         self._cancelled   = False
 
     def cancel(self) -> None:
         self._cancelled = True
 
     def run(self) -> None:
-        from core.panel_detector import PanelDetector
-        detector = PanelDetector(
-            min_area_ratio=self._min_area,
-            max_area_ratio=self._max_area,
-        )
+        from core.panel_ai import detect_hybrid
         results: Dict[str, List[PanelBox]] = {}
         total = len(self._paths)
 
@@ -199,7 +212,15 @@ class PanelBatchDetectWorker(QThread):
                 return
             try:
                 self.progress.emit(i, total, f"İşleniyor: {Path(path).name}  ({i+1}/{total})")
-                boxes = detector.detect_from_path(path, reading_order=self._order)
+                boxes, _engine = detect_hybrid(
+                    path,
+                    reading_order=self._order,
+                    min_area_ratio=self._min_area,
+                    max_area_ratio=self._max_area,
+                    use_yolo=self._use_yolo,
+                    use_vision=self._use_vision,
+                    vision_model=self._vision_model,
+                )
                 results[path] = boxes
                 if not self._cancelled:
                     self.page_done.emit(i, path, boxes)

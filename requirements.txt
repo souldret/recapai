@@ -39,6 +39,9 @@ moviepy==1.0.3
 imageio==2.34.0
 imageio-ffmpeg==0.5.1
 
+# === Panel tespiti (YOLO-World, opsiyonel) ===
+ultralytics>=8.2.0
+
 # === Yardimci ===
 tqdm==4.66.5
 
