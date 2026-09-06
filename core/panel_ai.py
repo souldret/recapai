@@ -39,15 +39,16 @@ VISION_RATES = {
 TOKENS_IN_PER_PAGE = 900
 TOKENS_OUT_PER_PAGE = 350
 
-VISION_PROMPT = """You detect comic/manga/manhwa/webtoon PANEL FRAMES on this image.
-Return every story panel as a box. Do NOT box speech bubbles, SFX, or characters.
+VISION_PROMPT = """This image is a manga/manhwa/webtoon PAGE or a VERTICAL STRIP of stacked panels.
+Detect every story PANEL FRAME (the rectangular comic boxes / gutters).
+Do NOT refuse. Even if it looks like stacked rectangles or horizontal bands, those ARE panels.
+Do NOT box speech bubbles, SFX, or single characters.
 
-Return ONLY JSON (no markdown):
+Return ONLY JSON (no markdown, no apology):
 {"panels":[{"x":0,"y":0,"w":100,"h":100}]}
 
-x,y,w,h are PERCENT of the full image (0-100). x,y = top-left.
-Order: top-to-bottom, then left-to-right (manhwa) unless the page is Japanese manga (right-to-left in each row).
-Include every panel, even small ones. Cover the whole strip/page.
+x,y,w,h are PERCENT of THIS image (0-100). x,y = top-left of each panel.
+Order top-to-bottom then left-to-right. Include every panel.
 """
 
 _yolo_model = None
@@ -309,6 +310,34 @@ def detect_hybrid(
     return boxes, used
 
 
+def _jpeg_bytes(img, quality: int = 82) -> bytes:
+    from io import BytesIO
+    buf = BytesIO()
+    img.save(buf, format="JPEG", quality=quality, optimize=True)
+    return buf.getvalue()
+
+
+def _vision_once(client, model, fallback, prompt, image_bytes, w, h) -> List[PanelBox]:
+    result = client.vision_analyze(
+        model,
+        "",
+        prompt,
+        fallback,
+        max_tokens=4096,
+        max_image_px=2048,
+        image_bytes=image_bytes,
+    )
+    content = result.get("content") or ""
+    logger.debug("Vision ham yanit (%d kr): %s", len(content), content[:600])
+    boxes = parse_vision_boxes(content, w, h)
+    if not boxes:
+        logger.warning(
+            "Vision JSON parse bos (model=%s, %d kr). Ornek: %s",
+            result.get("model", model), len(content), content[:400],
+        )
+    return boxes
+
+
 def detect_vision_panels(
     image_path: str,
     model: Optional[str] = None,
@@ -318,29 +347,59 @@ def detect_vision_panels(
     from PIL import Image as PILImage
 
     settings = SettingsManager.instance()
-    model = model or settings.get("defaults.vision_model", "google/gemini-2.5-flash")
-    with PILImage.open(image_path) as im:
-        img_w, img_h = im.size
+    model = model or settings.get("panel.vision_model") or settings.get(
+        "defaults.vision_model", "google/gemini-2.5-flash"
+    )
     client = OpenRouterClient.instance()
     fallback = settings.get("api.vision_fallback_models", []) or []
-    result = client.vision_analyze(
-        model,
-        image_path,
-        VISION_PROMPT,
-        fallback,
-        max_tokens=4096,
-        max_image_px=2048,
-    )
-    content = result.get("content") or ""
-    if not content.strip():
-        logger.warning("Vision bos yanit (model=%s usage=%s)", result.get("model"), result.get("usage"))
-    else:
-        logger.debug("Vision ham yanit (%d kr): %s", len(content), content[:800])
-    boxes = parse_vision_boxes(content, img_w, img_h)
-    if not boxes:
-        logger.warning(
-            "Vision JSON parse bos (model=%s, %d kr). Ornek: %s",
-            result.get("model", model), len(content), content[:500],
-        )
-    logger.info("Vision panel: %d kutu (model=%s)", len(boxes), result.get("model", model))
-    return boxes
+
+    with PILImage.open(image_path) as im:
+        img = im.convert("RGB")
+        img_w, img_h = img.size
+        aspect = img_h / max(img_w, 1)
+
+        if aspect < 2.4:
+            max_side = 2048
+            work = img.copy()
+            if max(work.size) > max_side:
+                work.thumbnail((max_side, max_side), PILImage.Resampling.LANCZOS)
+            boxes = _vision_once(
+                client, model, fallback, VISION_PROMPT, _jpeg_bytes(work), work.size[0], work.size[1],
+            )
+            sx, sy = img_w / work.size[0], img_h / work.size[1]
+            scaled = [(int(x * sx), int(y * sy), int(bw * sx), int(bh * sy)) for x, y, bw, bh in boxes]
+            logger.info("Vision panel: %d kutu (model=%s, tek kare)", len(scaled), model)
+            return scaled
+
+        target_w = min(img_w, 768)
+        if img_w != target_w:
+            target_h = int(img_h * target_w / img_w)
+            strip = img.resize((target_w, target_h), PILImage.Resampling.LANCZOS)
+        else:
+            strip = img
+            target_h = img_h
+        slice_h = min(1600, max(900, target_w * 2))
+        overlap = min(180, slice_h // 8)
+        boxes: List[PanelBox] = []
+        y = 0
+        part = 0
+        while y < target_h:
+            y2 = min(target_h, y + slice_h)
+            crop = strip.crop((0, y, target_w, y2))
+            part += 1
+            logger.info("Vision dilim %d y=%d-%d", part, y, y2)
+            local = _vision_once(
+                client, model, fallback, VISION_PROMPT, _jpeg_bytes(crop), crop.size[0], crop.size[1],
+            )
+            for x, ly, bw, bh in local:
+                boxes.append((x, ly + y, bw, bh))
+            if y2 >= target_h:
+                break
+            y = y2 - overlap
+
+        sx, sy = img_w / target_w, img_h / target_h
+        scaled = [(int(x * sx), int(y * sy), int(bw * sx), int(bh * sy)) for x, y, bw, bh in boxes]
+        from core.panel_detector import nms_boxes, PanelDetector
+        scaled = nms_boxes(scaled, iou_thresh=0.45)
+        logger.info("Vision panel: %d kutu (model=%s, %d dilim)", len(scaled), model, part)
+        return scaled

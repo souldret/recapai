@@ -403,6 +403,7 @@ class OpenRouterClient:
         fallback_models: Optional[List[str]] = None,
         max_tokens: int = 1024,
         max_image_px: Optional[int] = None,
+        image_bytes: Optional[bytes] = None,
     ) -> Dict:
         """
         Görseli base64 encode edip vision modeline gönderir.
@@ -417,7 +418,12 @@ class OpenRouterClient:
         Returns:
             {"content": str, "model": str, "usage": dict}
         """
-        b64 = self._encode_image(image_path, max_px=max_image_px)
+        if image_bytes:
+            b64 = base64.b64encode(image_bytes).decode("utf-8")
+        else:
+            if not image_path:
+                raise OpenRouterError("Vision icin gorsel yolu veya bayt gerekli.")
+            b64 = self._encode_image(image_path, max_px=max_image_px)
         messages = [
             {
                 "role": "user",
