@@ -23,6 +23,35 @@ RETRY_COUNT = 3
 RETRY_BASE_DELAY = 1.0    # saniye
 
 
+def _message_text(msg: Any) -> str:
+    """OpenRouter/Gemini message.content + reasoning alanlarini metne cevirir."""
+    if msg is None:
+        return ""
+    if isinstance(msg, str):
+        return msg
+    if not isinstance(msg, dict):
+        return str(msg)
+    chunks: List[str] = []
+
+    def _take(val: Any) -> None:
+        if not val:
+            return
+        if isinstance(val, str):
+            chunks.append(val)
+        elif isinstance(val, list):
+            for part in val:
+                if isinstance(part, str):
+                    chunks.append(part)
+                elif isinstance(part, dict):
+                    chunks.append(str(part.get("text") or part.get("content") or ""))
+
+    _take(msg.get("content"))
+    _take(msg.get("reasoning"))
+    _take(msg.get("reasoning_content"))
+    _take(msg.get("reasoning_details"))
+    return "\n".join(c for c in chunks if c).strip()
+
+
 # ── İstisna ────────────────────────────────────────────────────────────────────
 
 class OpenRouterError(Exception):
@@ -402,19 +431,26 @@ class OpenRouterClient:
             "model": model,
             "messages": messages,
             "max_tokens": max_tokens,
+            "temperature": 0.1,
         }
-        data = self._post_with_fallback("chat/completions", payload, fallback_models)
-        content = data["choices"][0]["message"].get("content")
-        if isinstance(content, list):
-            parts = []
-            for part in content:
-                if isinstance(part, str):
-                    parts.append(part)
-                elif isinstance(part, dict):
-                    parts.append(str(part.get("text") or ""))
-            content = "\n".join(parts)
-        if content is None:
-            content = ""
+        if "gemini" in (model or "").lower() or "thinking" in (model or "").lower():
+            payload["reasoning"] = {"exclude": True}
+        try:
+            data = self._post_with_fallback("chat/completions", payload, fallback_models)
+        except OpenRouterError:
+            payload.pop("reasoning", None)
+            data = self._post_with_fallback("chat/completions", payload, fallback_models)
+        choice = (data.get("choices") or [{}])[0]
+        msg = choice.get("message") or {}
+        content = _message_text(msg)
+        if not content:
+            content = _message_text(choice)
+        if not content:
+            logger.warning(
+                "Vision yanit metni bos. keys=%s msg_keys=%s usage=%s",
+                list(data.keys()), list(msg.keys()) if isinstance(msg, dict) else type(msg),
+                data.get("usage"),
+            )
         return {
             "content": content,
             "model": data.get("model", model),

@@ -23,6 +23,18 @@ def test_parse_markdown_fence():
     assert boxes[0][2] == 100
 
 
+def test_parse_xyxy():
+    text = '{"panels":[{"x1":10,"y1":20,"x2":50,"y2":80}]}'
+    boxes = parse_vision_boxes(text, 100, 100)
+    assert boxes[0] == (10, 20, 40, 60)
+
+
+def test_parse_bbox_list():
+    text = '{"boxes":[[0.1,0.2,0.5,0.6]]}'
+    boxes = parse_vision_boxes(text, 1000, 1000)
+    assert boxes[0] == (100, 200, 400, 400)
+
+
 def test_parse_xywh_fallback():
     text = 'noise {"x": 5, "y": 10, "w": 20, "h": 30} tail'
     boxes = parse_vision_boxes(text, 100, 100)

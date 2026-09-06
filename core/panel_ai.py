@@ -157,25 +157,62 @@ def estimate_vision_cost(model: str, pages: int = 1) -> dict:
     }
 
 
+def _item_to_xywh(it) -> Optional[Tuple[float, float, float, float]]:
+    if isinstance(it, (list, tuple)) and len(it) >= 4:
+        a, b, c, d = float(it[0]), float(it[1]), float(it[2]), float(it[3])
+        if c > a and d > b:
+            return a, b, c - a, d - b
+        return a, b, c, d
+    if not isinstance(it, dict):
+        return None
+    if {"x", "y", "w", "h"} <= set(it):
+        return float(it["x"]), float(it["y"]), float(it["w"]), float(it["h"])
+    bbox = it.get("bbox") or it.get("box") or it.get("rect")
+    if isinstance(bbox, (list, tuple)) and len(bbox) >= 4:
+        return _item_to_xywh(bbox)
+    keys = {k.lower(): k for k in it}
+    def _g(*names):
+        for n in names:
+            k = keys.get(n)
+            if k is not None:
+                return float(it[k])
+        return None
+    x1 = _g("x1", "xmin", "left", "x_min")
+    y1 = _g("y1", "ymin", "top", "y_min")
+    x2 = _g("x2", "xmax", "right", "x_max")
+    y2 = _g("y2", "ymax", "bottom", "y_max")
+    if None not in (x1, y1, x2, y2):
+        return x1, y1, x2 - x1, y2 - y1
+    return None
+
+
 def parse_vision_boxes(text: str, img_w: int, img_h: int) -> List[PanelBox]:
     raw = (text or "").strip()
     if not raw:
         return []
     raw = raw.replace("```json", "").replace("```", "").strip()
     match = re.search(r"\{[\s\S]*\}", raw)
-    if match:
-        raw = match.group(0)
+    blob = match.group(0) if match else raw
+    if not match:
+        arr = re.search(r"\[[\s\S]*\]", raw)
+        if arr:
+            blob = arr.group(0)
     data = None
     try:
-        data = json.loads(raw)
+        data = json.loads(blob)
     except json.JSONDecodeError:
         data = None
     items = []
     if isinstance(data, list):
         items = data
     elif isinstance(data, dict):
-        items = data.get("panels") or data.get("boxes") or data.get("regions") or []
-        if not items and {"x", "y", "w", "h"} <= set(data.keys()):
+        items = data.get("panels") or data.get("boxes") or data.get("regions") or data.get("detections") or []
+        if not items:
+            for v in data.values():
+                if isinstance(v, list) and v and isinstance(v[0], (dict, list)):
+                    items = v
+                    break
+        if not items and _item_to_xywh(data):
             items = [data]
     if not items:
         for m in re.finditer(
@@ -187,15 +224,13 @@ def parse_vision_boxes(text: str, img_w: int, img_h: int) -> List[PanelBox]:
         return []
     boxes: List[PanelBox] = []
     for it in items:
-        if not isinstance(it, dict):
+        xywh = _item_to_xywh(it)
+        if not xywh:
             continue
-        try:
-            x, y, bw, bh = float(it["x"]), float(it["y"]), float(it["w"]), float(it["h"])
-        except (KeyError, TypeError, ValueError):
-            continue
-        if max(x, y, bw, bh) <= 1.5:
+        x, y, bw, bh = xywh
+        if max(abs(x), abs(y), abs(bw), abs(bh)) <= 1.5:
             x, y, bw, bh = x * 100.0, y * 100.0, bw * 100.0, bh * 100.0
-        if max(x, y, bw, bh) <= 100.5:
+        if max(abs(x), abs(y), abs(bw), abs(bh)) <= 100.5:
             x = x / 100.0 * img_w
             y = y / 100.0 * img_h
             bw = bw / 100.0 * img_w
@@ -299,6 +334,13 @@ def detect_vision_panels(
     content = result.get("content") or ""
     if not content.strip():
         logger.warning("Vision bos yanit (model=%s usage=%s)", result.get("model"), result.get("usage"))
+    else:
+        logger.debug("Vision ham yanit (%d kr): %s", len(content), content[:800])
     boxes = parse_vision_boxes(content, img_w, img_h)
+    if not boxes:
+        logger.warning(
+            "Vision JSON parse bos (model=%s, %d kr). Ornek: %s",
+            result.get("model", model), len(content), content[:500],
+        )
     logger.info("Vision panel: %d kutu (model=%s)", len(boxes), result.get("model", model))
     return boxes
