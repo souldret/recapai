@@ -5,7 +5,8 @@ Bu dosya RecapAI projesindeki önemli değişiklikleri listeler.
 ## [Yayınlanmamış]
 
 ### Eklendi
-- Panel tespiti: gutter ızgarası + ölçekli kontur, NMS, inset kırpma; RTL/LTR tek sayfada da çalışır; sonuçlar projeye kaydedilir.
+- Panel tespiti: bağlı bileşen + gutter yedek, ölçekli çalışma; RTL/LTR kaydı.
+- Büyük stitch görsellerinde Pillow DecompressionBomb uyarısı kapatıldı.
 - Render: görselin arkasına hafif drop shadow (yalnız letterbox boşluğu varken; tam kadrajda gölge yok).
 - Blur arka plan daha güçlü (`boxblur` 20→32, vinyette 25→36).
 - Manhwa Fresh: YouTube tutma katmanı (açılış kancası, orta rehook, son açık uç, stakes).

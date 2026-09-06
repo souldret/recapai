@@ -3141,6 +3141,9 @@ def _load_cv2_image(path: str) -> np.ndarray:
     PNG, JPEG, WebP ve tüm Pillow destekli formatları kapsar.
     """
     from PIL import Image as PILImage
+    import warnings
+    PILImage.MAX_IMAGE_PIXELS = None
+    warnings.filterwarnings("ignore", category=PILImage.DecompressionBombWarning)
     try:
         pil_img = PILImage.open(Path(path)).convert("RGB")
         img = cv2.cvtColor(np.array(pil_img), cv2.COLOR_RGB2BGR)

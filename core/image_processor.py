@@ -8,6 +8,10 @@ from pathlib import Path
 from typing import List, Dict, Optional
 
 from PIL import Image
+import warnings
+
+Image.MAX_IMAGE_PIXELS = None
+warnings.filterwarnings("ignore", category=Image.DecompressionBombWarning)
 
 logger = logging.getLogger(__name__)
 

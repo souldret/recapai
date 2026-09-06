@@ -44,6 +44,7 @@ from PyQt6.QtCore import Qt
 from PyQt6.QtGui import QFont
 
 from core.constants import THEME_PATH, APP_LOG_PATH, ERROR_LOG_PATH, LOGS_DIR, CONFIG_DIR, SETTINGS_PATH
+from core import image_processor  # noqa: F401  — büyük stitch için PIL limiti
 
 # Log dizini oluştur
 LOGS_DIR.mkdir(exist_ok=True)

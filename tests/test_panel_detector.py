@@ -7,6 +7,7 @@ from core.panel_detector import (
     nms_boxes,
     merge_contained,
     detect_gutter_panels,
+    detect_content_panels,
     detect_horizontal_cuts,
 )
 
@@ -35,6 +36,14 @@ class TestNmsAndMerge:
 
 
 class TestGutterDetect:
+    def test_content_detect_two_side(self):
+        img = _page(panels=[
+            (40, 40, 340, 500),
+            (420, 40, 340, 500),
+        ])
+        boxes = detect_content_panels(img, min_area_ratio=0.02, max_area_ratio=0.9)
+        assert len(boxes) >= 2
+
     def test_two_vertical_panels(self):
         img = _page(panels=[
             (40, 40, 340, 500),

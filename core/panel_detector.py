@@ -4,11 +4,16 @@ Gutter (ara boşluk) ızgarası + kontur yedek. Tam bölüm sayfalarını panell
 """
 
 import logging
+import warnings
 from pathlib import Path
 from typing import List, Tuple, Dict, Optional
 
 import cv2
 import numpy as np
+from PIL import Image as PILImage
+
+PILImage.MAX_IMAGE_PIXELS = None
+warnings.filterwarnings("ignore", category=PILImage.DecompressionBombWarning)
 
 logger = logging.getLogger(__name__)
 
@@ -128,30 +133,31 @@ class PanelDetector:
         reading_order: str = "rtl",
     ) -> List[PanelBox]:
         h, w = image.shape[:2]
-        image_area = h * w
-        gutter_boxes = detect_gutter_panels(
-            image,
+        work, scale = _detection_scale(image)
+        boxes = detect_content_panels(
+            work,
             min_area_ratio=self.min_area_ratio,
             max_area_ratio=self.max_area_ratio,
         )
-        contour_boxes = self._detect_contours(image)
-        if len(gutter_boxes) >= 2:
-            boxes = gutter_boxes
-        elif gutter_boxes and not contour_boxes:
-            boxes = gutter_boxes
-        elif len(contour_boxes) >= 2 and (
-            not gutter_boxes or _coverage(contour_boxes, image_area) > _coverage(gutter_boxes, image_area)
-        ):
-            boxes = contour_boxes
-        else:
-            boxes = gutter_boxes or contour_boxes
-
-        boxes = nms_boxes(boxes, iou_thresh=0.55)
+        if len(boxes) < 2:
+            extra = self._detect_contours(work)
+            if len(extra) > len(boxes):
+                boxes = extra
+        if scale != 1.0:
+            boxes = [
+                (
+                    int(x / scale), int(y / scale),
+                    int(bw / scale), int(bh / scale),
+                )
+                for x, y, bw, bh in boxes
+            ]
+        boxes = [_clamp_box(b, w, h) for b in boxes]
+        boxes = nms_boxes(boxes, iou_thresh=0.45)
         boxes = merge_contained(boxes)
-        boxes = [b for b in boxes if _box_area(b) >= image_area * self.min_area_ratio]
+        boxes = [b for b in boxes if _box_area(b) >= (w * h) * self.min_area_ratio]
         if not boxes:
             boxes = [(0, 0, w, h)]
-        inset = max(2, int(min(w, h) * 0.004))
+        inset = max(2, int(min(w, h) * 0.003))
         boxes = [_inset_box(b, w, h, inset) for b in boxes]
         if reading_order == "ltr":
             return self.sort_panels_ltr(boxes, h)
@@ -171,7 +177,6 @@ class PanelDetector:
         reading_order: str = "rtl",
     ) -> List[PanelBox]:
         image_path = Path(image_path)
-        from PIL import Image as PILImage
         try:
             pil_img = PILImage.open(image_path).convert("RGB")
             image = cv2.cvtColor(np.array(pil_img), cv2.COLOR_RGB2BGR)
@@ -202,8 +207,6 @@ class PanelDetector:
         ext: str = ".jpg",
         jpeg_quality: int = 95,
     ) -> List[str]:
-        from PIL import Image as PILImage
-
         output_dir = Path(output_dir)
         output_dir.mkdir(parents=True, exist_ok=True)
         paths: List[str] = []
@@ -244,14 +247,29 @@ class PanelDetector:
         return debug
 
 
+def _clamp_box(box: PanelBox, img_w: int, img_h: int) -> PanelBox:
+    x, y, bw, bh = box
+    x = max(0, min(x, img_w - 2))
+    y = max(0, min(y, img_h - 2))
+    bw = max(2, min(bw, img_w - x))
+    bh = max(2, min(bh, img_h - y))
+    return (x, y, bw, bh)
+
+
+def _detection_scale(image: np.ndarray, max_side: int = 1600) -> Tuple[np.ndarray, float]:
+    h, w = image.shape[:2]
+    longest = max(h, w)
+    if longest <= max_side:
+        return image, 1.0
+    scale = max_side / float(longest)
+    nw = max(32, int(w * scale))
+    nh = max(32, int(h * scale))
+    small = cv2.resize(image, (nw, nh), interpolation=cv2.INTER_AREA)
+    return small, scale
+
+
 def _box_area(box: PanelBox) -> int:
     return max(0, box[2]) * max(0, box[3])
-
-
-def _coverage(boxes: List[PanelBox], image_area: int) -> float:
-    if image_area <= 0:
-        return 0.0
-    return sum(_box_area(b) for b in boxes) / image_area
 
 
 def _inset_box(box: PanelBox, img_w: int, img_h: int, inset: int) -> PanelBox:
@@ -399,6 +417,62 @@ def _boxes_from_region(
     return boxes
 
 
+def detect_content_panels(
+    image: np.ndarray,
+    min_area_ratio: float = 0.015,
+    max_area_ratio: float = 0.92,
+) -> List[PanelBox]:
+    gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
+    h, w = gray.shape
+    image_area = h * w
+    border = np.concatenate([gray[0, :], gray[-1, :], gray[:, 0], gray[:, -1]])
+    light_gutter = float(np.median(border)) >= 128
+    if light_gutter:
+        _, binary = cv2.threshold(gray, 0, 255, cv2.THRESH_BINARY_INV + cv2.THRESH_OTSU)
+        binary[gray >= 240] = 0
+    else:
+        _, binary = cv2.threshold(gray, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
+        binary[gray <= 18] = 0
+
+    kx = max(3, int(w * 0.012))
+    ky = max(3, int(h * 0.010))
+    if kx % 2 == 0:
+        kx += 1
+    if ky % 2 == 0:
+        ky += 1
+    close_k = cv2.getStructuringElement(cv2.MORPH_RECT, (kx, ky))
+    content = cv2.morphologyEx(binary, cv2.MORPH_CLOSE, close_k, iterations=1)
+    open_k = cv2.getStructuringElement(cv2.MORPH_RECT, (max(3, kx // 2), max(3, ky // 2)))
+    content = cv2.morphologyEx(content, cv2.MORPH_OPEN, open_k, iterations=1)
+
+    num, labels, stats, _ = cv2.connectedComponentsWithStats(content, connectivity=8)
+    min_area = image_area * min_area_ratio
+    max_area = image_area * max_area_ratio
+    boxes: List[PanelBox] = []
+    for i in range(1, num):
+        x, y, bw, bh, area = stats[i]
+        if area < min_area or bw * bh > max_area:
+            continue
+        aspect = bw / max(bh, 1)
+        if aspect < 0.06 or aspect > 16.0:
+            continue
+        pad = 2
+        boxes.append((
+            max(0, x - pad),
+            max(0, y - pad),
+            min(w - max(0, x - pad), bw + 2 * pad),
+            min(h - max(0, y - pad), bh + 2 * pad),
+        ))
+
+    if len(boxes) < 2:
+        gutter_boxes = detect_gutter_panels(
+            image, min_area_ratio=min_area_ratio, max_area_ratio=max_area_ratio,
+        )
+        if len(gutter_boxes) > len(boxes):
+            return gutter_boxes
+    return boxes
+
+
 def detect_gutter_panels(
     image: np.ndarray,
     min_area_ratio: float = 0.015,
@@ -481,8 +555,6 @@ def stitch_images_vertical(
     gap: int = 0,
     gap_color: Tuple[int, int, int] = (255, 255, 255),
 ) -> str:
-    from PIL import Image as PILImage
-
     if not image_paths:
         raise ValueError("Birleştirilecek görsel listesi boş.")
 

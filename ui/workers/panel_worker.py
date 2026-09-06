@@ -40,6 +40,9 @@ class ImageLoadWorker(QThread):
             import numpy as np
             from pathlib import Path
             from PIL import Image as PILImage
+            import warnings
+            PILImage.MAX_IMAGE_PIXELS = None
+            warnings.filterwarnings("ignore", category=PILImage.DecompressionBombWarning)
 
             p = Path(self._path)
             # Pillow kullan: OpenCV'nin ~65535 px yükseklik sınırı yoktur
@@ -248,6 +251,9 @@ class StitchQualityWorker(QThread):
                 return
             from PIL import Image as PILImage
             from pathlib import Path as _Path
+            import warnings
+            PILImage.MAX_IMAGE_PIXELS = None
+            warnings.filterwarnings("ignore", category=PILImage.DecompressionBombWarning)
 
             self.progress.emit(f"{len(self._paths)} görsel birleştiriliyor (kalite: {self._scale}%)...")
 
