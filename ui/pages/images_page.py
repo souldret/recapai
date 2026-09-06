@@ -47,7 +47,7 @@ def _engine_flags(engine: str) -> Tuple[bool, bool]:
     if engine == "opencv":
         return False, False
     if engine == "vision":
-        return True, True
+        return False, True
     return True, False
 
 

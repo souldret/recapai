@@ -39,15 +39,15 @@ VISION_RATES = {
 TOKENS_IN_PER_PAGE = 900
 TOKENS_OUT_PER_PAGE = 350
 
-VISION_PROMPT = """Bu bir manga/manhwa/webtoon sayfası veya dikey şerittir.
-Her çizgi panelinin (kare) sınır kutusunu tespit et.
-Konuşma balonu, SFX veya karakteri AYRI kutu yapma — sadece tam paneller.
+VISION_PROMPT = """You detect comic/manga/manhwa/webtoon PANEL FRAMES on this image.
+Return every story panel as a box. Do NOT box speech bubbles, SFX, or characters.
 
-SADECE JSON döndür, markdown yok:
+Return ONLY JSON (no markdown):
 {"panels":[{"x":0,"y":0,"w":100,"h":100}]}
 
-Koordinatlar görselin yüzdesi (0-100). x,y sol-üst; w,h genişlik/yükseklik.
-Okuma sırasına göre sırala (manhwa: yukarıdan aşağı, soldan sağa; manga: sağdan sola).
+x,y,w,h are PERCENT of the full image (0-100). x,y = top-left.
+Order: top-to-bottom, then left-to-right (manhwa) unless the page is Japanese manga (right-to-left in each row).
+Include every panel, even small ones. Cover the whole strip/page.
 """
 
 _yolo_model = None
@@ -159,14 +159,30 @@ def estimate_vision_cost(model: str, pages: int = 1) -> dict:
 
 def parse_vision_boxes(text: str, img_w: int, img_h: int) -> List[PanelBox]:
     raw = (text or "").strip()
+    if not raw:
+        return []
+    raw = raw.replace("```json", "").replace("```", "").strip()
     match = re.search(r"\{[\s\S]*\}", raw)
     if match:
         raw = match.group(0)
+    data = None
     try:
         data = json.loads(raw)
     except json.JSONDecodeError:
-        return []
-    items = data.get("panels") or data.get("boxes") or []
+        data = None
+    items = []
+    if isinstance(data, list):
+        items = data
+    elif isinstance(data, dict):
+        items = data.get("panels") or data.get("boxes") or data.get("regions") or []
+        if not items and {"x", "y", "w", "h"} <= set(data.keys()):
+            items = [data]
+    if not items:
+        for m in re.finditer(
+            r'\{\s*"x"\s*:\s*([-\d.]+)\s*,\s*"y"\s*:\s*([-\d.]+)\s*,\s*"w"\s*:\s*([-\d.]+)\s*,\s*"h"\s*:\s*([-\d.]+)',
+            text or "",
+        ):
+            items.append({"x": m.group(1), "y": m.group(2), "w": m.group(3), "h": m.group(4)})
     if not isinstance(items, list):
         return []
     boxes: List[PanelBox] = []
@@ -210,6 +226,25 @@ def detect_hybrid(
             progress(msg)
 
     detector = PanelDetector(min_area_ratio=min_area_ratio, max_area_ratio=max_area_ratio)
+    boxes: List[PanelBox] = []
+    used = "none"
+
+    if use_vision:
+        _p("Vision API panelleri isteniyor...")
+        try:
+            v_boxes = detect_vision_panels(image_path, model=vision_model)
+            from PIL import Image as PILImage
+            with PILImage.open(image_path) as im:
+                vw, vh = im.size
+            if v_boxes:
+                boxes = detector.sort_reading_order(v_boxes, vh, vw, reading_order)
+                used = "vision"
+                logger.info("Vision %d panel dondurdu.", len(boxes))
+                return boxes, used
+            logger.warning("Vision JSON parse bos; OpenCV/YOLO yedek.")
+        except Exception as exc:
+            logger.warning("Vision panel hatasi: %s", exc)
+
     _p("OpenCV taranıyor...")
     cv_boxes = detector.detect_from_path(image_path, reading_order=reading_order)
     used = "opencv"
@@ -236,28 +271,6 @@ def detect_hybrid(
         except Exception as exc:
             logger.warning("YOLO atlandi: %s", exc)
 
-    weak = len(boxes) < 2
-    if use_vision:
-        _p("Vision API panelleri isteniyor...")
-        try:
-            v_boxes = detect_vision_panels(image_path, model=vision_model)
-            if v_boxes:
-                from PIL import Image as PILImage
-                with PILImage.open(image_path) as im:
-                    vw, vh = im.size
-                if weak or len(v_boxes) > len(boxes):
-                    boxes = detector.sort_reading_order(v_boxes, vh, vw, reading_order)
-                    used = "vision"
-                else:
-                    boxes = detector.sort_reading_order(
-                        nms_boxes(boxes + v_boxes, iou_thresh=0.5), vh, vw, reading_order
-                    )
-                    used = used + "+vision"
-        except Exception as exc:
-            logger.warning("Vision panel atlandi: %s", exc)
-            if weak:
-                raise
-
     return boxes, used
 
 
@@ -275,7 +288,17 @@ def detect_vision_panels(
         img_w, img_h = im.size
     client = OpenRouterClient.instance()
     fallback = settings.get("api.vision_fallback_models", []) or []
-    result = client.vision_analyze(model, image_path, VISION_PROMPT, fallback)
-    boxes = parse_vision_boxes(result.get("content", ""), img_w, img_h)
+    result = client.vision_analyze(
+        model,
+        image_path,
+        VISION_PROMPT,
+        fallback,
+        max_tokens=4096,
+        max_image_px=2048,
+    )
+    content = result.get("content") or ""
+    if not content.strip():
+        logger.warning("Vision bos yanit (model=%s usage=%s)", result.get("model"), result.get("usage"))
+    boxes = parse_vision_boxes(content, img_w, img_h)
     logger.info("Vision panel: %d kutu (model=%s)", len(boxes), result.get("model", model))
     return boxes

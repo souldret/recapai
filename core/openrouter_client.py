@@ -372,6 +372,8 @@ class OpenRouterClient:
         image_path: str,
         prompt: str,
         fallback_models: Optional[List[str]] = None,
+        max_tokens: int = 1024,
+        max_image_px: Optional[int] = None,
     ) -> Dict:
         """
         Görseli base64 encode edip vision modeline gönderir.
@@ -386,7 +388,7 @@ class OpenRouterClient:
         Returns:
             {"content": str, "model": str, "usage": dict}
         """
-        b64 = self._encode_image(image_path)
+        b64 = self._encode_image(image_path, max_px=max_image_px)
         messages = [
             {
                 "role": "user",
@@ -399,18 +401,29 @@ class OpenRouterClient:
         payload = {
             "model": model,
             "messages": messages,
-            "max_tokens": 1024,
+            "max_tokens": max_tokens,
         }
         data = self._post_with_fallback("chat/completions", payload, fallback_models)
-        content = data["choices"][0]["message"]["content"]
+        content = data["choices"][0]["message"].get("content")
+        if isinstance(content, list):
+            parts = []
+            for part in content:
+                if isinstance(part, str):
+                    parts.append(part)
+                elif isinstance(part, dict):
+                    parts.append(str(part.get("text") or ""))
+            content = "\n".join(parts)
+        if content is None:
+            content = ""
         return {
             "content": content,
             "model": data.get("model", model),
             "usage": data.get("usage", {}),
         }
 
-    def _encode_image(self, path: str) -> str:
-        """Görseli yükler, max 1024px'e küçültür, JPEG base64 döndürür."""
+    def _encode_image(self, path: str, max_px: Optional[int] = None) -> str:
+        """Görseli yükler, max_px'e küçültür, JPEG base64 döndürür."""
+        limit = MAX_IMAGE_PX if max_px is None else max(256, int(max_px))
         try:
             with Image.open(path) as img:
                 # RGBA/P → RGB dönüşümü
@@ -423,8 +436,8 @@ class OpenRouterClient:
                 elif img.mode != "RGB":
                     img = img.convert("RGB")
 
-                if max(img.size) > MAX_IMAGE_PX:
-                    img.thumbnail((MAX_IMAGE_PX, MAX_IMAGE_PX), Image.Resampling.LANCZOS)
+                if max(img.size) > limit:
+                    img.thumbnail((limit, limit), Image.Resampling.LANCZOS)
                     logger.debug("Görsel küçültüldü: %s → %s", path, img.size)
 
                 buf = io.BytesIO()

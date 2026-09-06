@@ -23,6 +23,13 @@ def test_parse_markdown_fence():
     assert boxes[0][2] == 100
 
 
+def test_parse_xywh_fallback():
+    text = 'noise {"x": 5, "y": 10, "w": 20, "h": 30} tail'
+    boxes = parse_vision_boxes(text, 100, 100)
+    assert len(boxes) == 1
+    assert boxes[0] == (5, 10, 20, 30)
+
+
 def test_cost_positive():
     est = estimate_vision_cost("google/gemini-2.5-flash", 10)
     assert est["pages"] == 10
