@@ -6,7 +6,7 @@ import json
 import logging
 import re
 import time
-from typing import Any, Callable, Dict, Optional
+from typing import Any, Callable, Dict, List, Optional
 
 from core.models import Chapter
 from core.openrouter_client import OpenRouterClient, OpenRouterError
@@ -26,6 +26,48 @@ def _load_vision_prompt() -> str:
     except Exception as exc:
         logger.warning("prompts.json yüklenemedi: %s", exc)
         return "Bu görseli analiz et ve JSON formatında döndür."
+
+
+def _known_roster_lines(known_names: Optional[List[str]] = None, project=None) -> List[str]:
+    lines: List[str] = []
+    if project is not None:
+        from core.character_bible import format_known_for_vision
+        lines = [ln.strip() for ln in format_known_for_vision(project) if ln and str(ln).strip()]
+    if not lines:
+        lines = [n.strip() for n in (known_names or []) if n and str(n).strip()]
+    return lines[:40]
+
+
+def _with_known_characters(
+    prompt: str,
+    known_names: Optional[List[str]] = None,
+    project=None,
+) -> str:
+    names = _known_roster_lines(known_names, project)
+    if not names:
+        return prompt
+    roster = "\n".join(f"- {n}" for n in names)
+    extra = (
+        "\n\nBİLİNEN KARAKTERLER (bu serinin kadrosu — isim + görünüm):\n"
+        f"{roster}\n"
+        "Bu panelde aynı kişi varsa characters[].name'e TAM kanonik ismi yaz. "
+        "Görünüm (saç, zırh) roster ile uyuyorsa visual label'ı name'e koyma; ismi yaz. "
+        "Yeni gerçek isim (balon/plaka) varsa ekle. "
+        "İsim yoksa name=\"\" bırak; appearance'a kısa görsel not yazılabilir. "
+        "YASAK name: Protagonist, MC, blonde woman, yellow hair, kızıl saçlı."
+    )
+    return prompt + extra
+
+
+def _sanitize_analysis_characters(parsed: Dict[str, Any], known_names=None, project=None) -> Dict[str, Any]:
+    from core.script_generator import _sanitize_character_records
+
+    parsed["characters"] = _sanitize_character_records(
+        parsed.get("characters") or [],
+        known_names=known_names,
+        project=project,
+    )
+    return parsed
 
 
 def _parse_json_response(text: str) -> Dict:
@@ -55,16 +97,38 @@ def _parse_json_response(text: str) -> Dict:
         except json.JSONDecodeError:
             pass
 
-    # İlk { ... } bloğunu bul
-    match = re.search(r"\{[\s\S]*\}", text)
-    if match:
+    # İlk geçerli { ... } nesnesini raw_decode ile tara (greedy last-} tuzaklarını atla)
+    decoder = json.JSONDecoder()
+    start = text.find("{")
+    while start >= 0:
         try:
-            return _ensure_dict(json.loads(match.group(0)))
+            obj, _ = decoder.raw_decode(text[start:])
+            return _ensure_dict(obj)
         except json.JSONDecodeError:
-            pass
+            start = text.find("{", start + 1)
 
     logger.warning("JSON ayrıştırılamadı, ham metin döndürülüyor.")
     return {"raw_text": text, "parse_error": True}
+
+
+def _is_usable_analysis(data: Any) -> bool:
+    """Önbelleğe alınmış analiz tekrar API çağrısı olmadan kullanılabilir mi?"""
+    if not isinstance(data, dict):
+        return False
+    if data.get("error") or data.get("parse_error"):
+        return False
+    scene = str(data.get("scene") or "").strip()
+    action = str(data.get("action") or "").strip()
+    if scene or action:
+        return True
+    # En azından anlamlı bir alan olsun; yalnızca raw_text yetmez.
+    for key in ("mood", "setting", "characters", "dialogue"):
+        val = data.get(key)
+        if isinstance(val, str) and val.strip():
+            return True
+        if isinstance(val, list) and val:
+            return True
+    return False
 
 
 class AIAnalyzer:
@@ -85,6 +149,8 @@ class AIAnalyzer:
         image_path: str,
         model: str,
         prompt: Optional[str] = None,
+        known_names: Optional[List[str]] = None,
+        project=None,
     ) -> Dict[str, Any]:
         """
         Tek bir görseli analiz eder.
@@ -106,7 +172,9 @@ class AIAnalyzer:
                 "Ayarlar > API Ayarları bölümünden OpenRouter API key'inizi girin ve kaydedin."
             )
 
-        effective_prompt = prompt or _load_vision_prompt()
+        effective_prompt = _with_known_characters(
+            prompt or _load_vision_prompt(), known_names, project=project,
+        )
         logger.debug(
             "analyze_image: model=%s api_key_len=%d path=%s",
             model,
@@ -119,6 +187,7 @@ class AIAnalyzer:
             parsed = _parse_json_response(result["content"])
             parsed["_model"] = result.get("model", model)
             parsed["_usage"] = result.get("usage", {})
+            _sanitize_analysis_characters(parsed, known_names=known_names, project=project)
             tokens = result.get("usage", {}).get("total_tokens", 0)
             logger.info("Görsel analiz OK: %s (token: %d)", image_path, tokens)
             return parsed
@@ -172,6 +241,7 @@ class AIAnalyzer:
         model: str,
         progress_callback: Optional[Callable[[int, int, str], None]] = None,
         stop_flag: Optional[Callable[[], bool]] = None,
+        project=None,
     ) -> Dict[str, Any]:
         """
         Bölümdeki tüm görselleri sırayla analiz eder.
@@ -194,9 +264,22 @@ class AIAnalyzer:
                 logger.info("Analiz kullanıcı tarafından durduruldu.")
                 break
 
-            # Önbellekte varsa atla — her zaman string key kullan
+            # Önbellekte varsa yeniden sanitize et (eski kirli etiketler düşsün)
             cache_key = str(i)
-            if cache_key in results and not results[cache_key].get("error"):
+            if cache_key in results and _is_usable_analysis(results[cache_key]):
+                known = _known_roster_lines(project=project)
+                cleaned = _sanitize_analysis_characters(
+                    dict(results[cache_key]), known_names=known, project=project,
+                )
+                results[cache_key] = cleaned
+                chapter.analysis_data[cache_key] = cleaned
+                if project is not None:
+                    from core.character_bible import extract_records_from_chapter, upsert_characters
+                    upsert_characters(
+                        project,
+                        extract_records_from_chapter(chapter, project),
+                        getattr(chapter, "id", ""),
+                    )
                 msg = f"{i + 1}/{total} önbellekten yüklendi: {image_data.filename}"
                 logger.debug(msg)
                 if progress_callback:
@@ -208,11 +291,21 @@ class AIAnalyzer:
             if progress_callback:
                 progress_callback(i + 1, total, msg)
 
-            result = self.analyze_image(image_data.path, model)
+            known = _known_roster_lines(project=project)
+            result = self.analyze_image(
+                image_data.path, model, known_names=known, project=project,
+            )
             results[cache_key] = result
 
             # chapter.analysis_data'ya hemen kaydet
             chapter.analysis_data[cache_key] = result
+            if project is not None:
+                from core.character_bible import extract_records_from_chapter, upsert_characters
+                upsert_characters(
+                    project,
+                    extract_records_from_chapter(chapter, project),
+                    getattr(chapter, "id", ""),
+                )
 
             # Rate limit: istekler arası bekleme
             delay = self._settings.get("analysis.rate_limit_delay", RATE_LIMIT_DELAY)
@@ -234,6 +327,7 @@ class AIAnalyzer:
         chapter: Chapter,
         image_index: int,
         model: str,
+        project=None,
     ) -> Dict[str, Any]:
         """
         Belirtilen indeksteki görseli önbelleği yok sayarak yeniden analiz eder.
@@ -246,6 +340,16 @@ class AIAnalyzer:
 
         image_data = chapter.images[image_index]
         logger.info("Tekrar analiz: %s", image_data.filename)
-        result = self.analyze_image(image_data.path, model)
+        known = _known_roster_lines(project=project)
+        result = self.analyze_image(
+            image_data.path, model, known_names=known, project=project,
+        )
         chapter.analysis_data[str(image_index)] = result
+        if project is not None:
+            from core.character_bible import extract_records_from_chapter, upsert_characters
+            upsert_characters(
+                project,
+                extract_records_from_chapter(chapter, project),
+                getattr(chapter, "id", ""),
+            )
         return result

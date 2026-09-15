@@ -1,0 +1,77 @@
+"""P0/P1 regression: 429, altyazı overflow, TTS cache, exporter timeline."""
+
+from pathlib import Path
+from unittest.mock import MagicMock
+
+import pytest
+
+from core.openrouter_client import OpenRouterClient, OpenRouterError, RETRY_COUNT
+from core.subtitle_generator import _seconds_to_ass_ts, _seconds_to_srt_ts
+from core.tts_cache import TTSCache
+
+
+class TestSubtitleTimestamps:
+    def test_srt_does_not_overflow_ms(self):
+        assert _seconds_to_srt_ts(1.9996) == "00:00:02,000"
+        assert _seconds_to_srt_ts(59.9996) == "00:01:00,000"
+
+    def test_ass_does_not_overflow_cs(self):
+        assert _seconds_to_ass_ts(1.9996) == "0:00:02.00"
+        assert _seconds_to_ass_ts(0.995) == "0:00:01.00"
+
+
+class TestExporterTimeline:
+    def test_export_srt_has_no_gap(self, tmp_path):
+        from core.exporter import export_srt
+        from core.models import Chapter, SegmentData
+
+        chapter = Chapter(
+            id="c",
+            name="n",
+            segments=[
+                SegmentData(0, "one", duration=1.0),
+                SegmentData(1, "two", duration=1.0),
+            ],
+        )
+        out = tmp_path / "a.srt"
+        export_srt(chapter, str(out))
+        text = out.read_text(encoding="utf-8")
+        assert "00:00:01,000 --> 00:00:02,000" in text
+        assert "00:00:01,300" not in text
+
+
+class TestOpenRouter429:
+    def test_last_429_raises_status(self, monkeypatch):
+        client = OpenRouterClient.__new__(OpenRouterClient)
+        client._settings_manager = None
+        client._explicit_key = "sk-test"
+        client._session = MagicMock()
+        client._total_tokens = 0
+        monkeypatch.setattr(client, "_current_base_url", lambda: "https://example.invalid/v1")
+
+        resp = MagicMock()
+        resp.status_code = 429
+        resp.headers = {}
+        client._session.post.return_value = resp
+
+        sleeps = []
+        monkeypatch.setattr("core.openrouter_client.time.sleep", lambda s: sleeps.append(s))
+
+        with pytest.raises(OpenRouterError) as exc:
+            client._post("chat/completions", {"model": "x"})
+        assert exc.value.status_code == 429
+        assert "Bilinmeyen hata" not in str(exc.value)
+        assert client._session.post.call_count == RETRY_COUNT
+        assert len(sleeps) == RETRY_COUNT - 1
+
+
+class TestTTSCache:
+    def test_put_get_roundtrip(self, tmp_path):
+        cache = TTSCache(tmp_path / "c", max_size_mb=10)
+        src = tmp_path / "a.mp3"
+        src.write_bytes(b"audio")
+        key = cache.get_cache_key("hello", "voice", {"rate": 1})
+        cache.put(key, str(src))
+        hit = cache.get(key)
+        assert hit and Path(hit).exists()
+        assert cache.entry_count() == 1

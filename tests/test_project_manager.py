@@ -97,6 +97,22 @@ class TestSaveProject:
         pm_mod.save_project(p)
         assert datetime.fromisoformat(p.updated_at) > original_ts
 
+    def test_save_unknown_id_raises(self, temp_projects_dir):
+        from core.models import Project
+        p = Project(id="deadbeef", name="Yok", created_at="t", updated_at="t")
+        with pytest.raises(FileNotFoundError, match="bulunamadı"):
+            pm_mod.save_project(p)
+
+    def test_save_is_atomic(self, temp_projects_dir):
+        p = pm_mod.create_project("Atomik Kayit", "manga")
+        manager = pm_mod.ProjectManager.instance()
+        proj_dir = manager.find_project_dir(p.id)
+        p.name = "Yeni Isim"
+        pm_mod.save_project(p)
+        assert not (proj_dir / "project.json.tmp").exists()
+        data = json.loads((proj_dir / "project.json").read_text(encoding="utf-8"))
+        assert data["name"] == "Yeni Isim"
+
 
 # ── delete_project ─────────────────────────────────────────────────────────────
 
@@ -131,6 +147,11 @@ class TestListProjects:
         names = {i["name"] for i in items}
         assert "Proje A" in names
         assert "Proje B" in names
+        for item in items:
+            assert "image_count" in item
+            assert "duration_sec" in item
+            assert item["image_count"] == 0
+            assert item["duration_sec"] == 0.0
 
     def test_empty_directory(self, temp_projects_dir):
         assert pm_mod.list_projects() == []

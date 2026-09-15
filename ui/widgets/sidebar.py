@@ -50,6 +50,8 @@ class SidebarButton(QPushButton):
         self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
 
         self.setText(label)
+        self._base_label = label
+        self._badge = ""
 
         if icon_name:
             icon = Icons.get(icon_name, color=ICON_COLOR_MUTED)
@@ -182,6 +184,15 @@ class Sidebar(QWidget):
             # Style yenile
             btn.style().unpolish(btn)
             btn.style().polish(btn)
+
+    def set_step_badges(self, badges: dict) -> None:
+        """page index → empty | partial | done"""
+        suffix = {"done": " ✓", "partial": " ·", "empty": ""}
+        for btn in self._buttons:
+            mark = suffix.get(badges.get(btn.page_index, "empty"), "")
+            base = getattr(btn, "_base_label", btn.text().split(" ")[0] if btn.text() else "")
+            if hasattr(btn, "_base_label"):
+                btn.setText(btn._base_label + mark)
 
     @property
     def buttons(self) -> List[SidebarButton]:

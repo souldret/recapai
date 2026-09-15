@@ -272,12 +272,15 @@ def detect_hybrid(
             from PIL import Image as PILImage
             with PILImage.open(image_path) as im:
                 vw, vh = im.size
-            if v_boxes:
+            if len(v_boxes) >= 2:
                 boxes = detector.sort_reading_order(v_boxes, vh, vw, reading_order)
                 used = "vision"
                 logger.info("Vision %d panel dondurdu.", len(boxes))
                 return boxes, used
-            logger.warning("Vision JSON parse bos; OpenCV/YOLO yedek.")
+            logger.warning(
+                "Vision %d kutu döndürdü; OpenCV/YOLO yedek deneniyor.",
+                len(v_boxes or []),
+            )
         except Exception as exc:
             logger.warning("Vision panel hatasi: %s", exc)
 

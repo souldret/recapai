@@ -12,7 +12,7 @@ import cv2
 import numpy as np
 from PIL import Image as PILImage
 
-PILImage.MAX_IMAGE_PIXELS = None
+PILImage.MAX_IMAGE_PIXELS = 178_956_970 * 2
 warnings.filterwarnings("ignore", category=PILImage.DecompressionBombWarning)
 
 logger = logging.getLogger(__name__)

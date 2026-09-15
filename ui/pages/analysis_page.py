@@ -10,7 +10,7 @@ from PyQt6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel, QPushButton,
     QFrame, QProgressBar, QComboBox, QTextEdit, QListWidget,
     QListWidgetItem, QSplitter, QAbstractItemView, QFileDialog,
-    QMessageBox, QSizePolicy
+    QMessageBox, QSizePolicy, QLineEdit, QDialog, QDialogButtonBox,
 )
 from PyQt6.QtCore import Qt, QSize
 from PyQt6.QtGui import QPixmap, QColor
@@ -19,6 +19,20 @@ from core.context import AppContext
 from ui.utils.icons import Icons, ICON_COLOR_ACTIVE, ICON_COLOR_SUCCESS, ICON_COLOR_WARNING, ICON_COLOR_ERROR, ICON_COLOR_MUTED
 
 logger = logging.getLogger(__name__)
+
+
+def _save_current_project(widget, project) -> bool:
+    if not project:
+        return False
+    try:
+        from core.project_manager import save_project
+        save_project(project)
+        return True
+    except Exception as exc:
+        logger.error("Proje kaydedilemedi: %s", exc)
+        QMessageBox.warning(widget, "Kayıt hatası", f"Proje kaydedilemedi:\n{exc}")
+        return False
+
 
 STATUS_ICONS = {
     "pending":   (Icons.PENDING, ICON_COLOR_MUTED),
@@ -113,6 +127,8 @@ class AnalysisDetailPanel(QFrame):
                 item.widget().deleteLater()
 
         if not data.get("parse_error") and not data.get("error"):
+            from core.script_generator import format_characters_display
+
             for icon_name, key, label in [
                 (Icons.GLOBE, "setting", "Mekan"),
                 (Icons.MOOD, "mood", "Atmosfer"),
@@ -122,6 +138,13 @@ class AnalysisDetailPanel(QFrame):
                 if isinstance(val, bool):
                     val = "Evet" if val else "Hayır"
                 self.cards_row.addWidget(self._mini_card(icon_name, label, str(val)[:30]))
+            self.cards_row.addWidget(
+                self._mini_card(
+                    Icons.ACCOUNT,
+                    "Karakterler",
+                    format_characters_display(data.get("characters"))[:48],
+                )
+            )
 
         self.cards_row.addStretch()
 
@@ -174,6 +197,81 @@ class AnalysisDetailPanel(QFrame):
         return f
 
 
+class EditCharacterDialog(QDialog):
+    """Kadro kaydı: isim, cinsiyet, görünüm, alias, not."""
+
+    def __init__(self, entry: dict, parent=None) -> None:
+        super().__init__(parent)
+        self.setWindowTitle("Karakteri düzenle")
+        self.setMinimumWidth(420)
+        self.setModal(True)
+        self._entry = entry or {}
+        self._build_ui()
+
+    def _build_ui(self) -> None:
+        vbox = QVBoxLayout(self)
+        vbox.setSpacing(10)
+        vbox.setContentsMargins(24, 20, 24, 20)
+
+        vbox.addWidget(QLabel("İsim:"))
+        self.name_edit = QLineEdit()
+        self.name_edit.setText(self._entry.get("canonical") or "")
+        self.name_edit.setPlaceholderText("Jin-Woo")
+        vbox.addWidget(self.name_edit)
+
+        vbox.addWidget(QLabel("Cinsiyet:"))
+        self.gender_combo = QComboBox()
+        self.gender_combo.addItem("—", "")
+        self.gender_combo.addItem("Erkek", "male")
+        self.gender_combo.addItem("Kadın", "female")
+        self.gender_combo.addItem("Belirsiz", "unknown")
+        gender = self._entry.get("gender") or ""
+        idx = self.gender_combo.findData(gender)
+        self.gender_combo.setCurrentIndex(idx if idx >= 0 else 0)
+        vbox.addWidget(self.gender_combo)
+
+        vbox.addWidget(QLabel("Görünüm:"))
+        self.appearance_edit = QLineEdit()
+        self.appearance_edit.setText(self._entry.get("appearance") or "")
+        self.appearance_edit.setPlaceholderText("black hair, black coat")
+        vbox.addWidget(self.appearance_edit)
+
+        vbox.addWidget(QLabel("Takma adlar (virgülle):"))
+        self.aliases_edit = QLineEdit()
+        aliases = [a for a in (self._entry.get("aliases") or []) if a]
+        self.aliases_edit.setText(", ".join(aliases))
+        self.aliases_edit.setPlaceholderText("Sung, Hunter")
+        vbox.addWidget(self.aliases_edit)
+
+        vbox.addWidget(QLabel("Not:"))
+        self.notes_edit = QLineEdit()
+        self.notes_edit.setText(self._entry.get("notes") or "")
+        vbox.addWidget(self.notes_edit)
+
+        btn_box = QDialogButtonBox(
+            QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel
+        )
+        btn_box.accepted.connect(self.accept)
+        btn_box.rejected.connect(self.reject)
+        ok_btn = btn_box.button(QDialogButtonBox.StandardButton.Ok)
+        if ok_btn:
+            ok_btn.setText("Kaydet")
+            ok_btn.setObjectName("primaryButton")
+        vbox.addWidget(btn_box)
+
+    def values(self) -> dict:
+        aliases = [
+            a.strip() for a in (self.aliases_edit.text() or "").split(",") if a.strip()
+        ]
+        return {
+            "canonical": (self.name_edit.text() or "").strip(),
+            "gender": self.gender_combo.currentData() or "",
+            "appearance": (self.appearance_edit.text() or "").strip(),
+            "aliases": aliases,
+            "notes": (self.notes_edit.text() or "").strip(),
+        }
+
+
 # ── Ana Sayfa ──────────────────────────────────────────────────────────────────
 
 class AnalysisPage(QWidget):
@@ -183,6 +281,7 @@ class AnalysisPage(QWidget):
         super().__init__(parent)
         self.ctx = ctx
         self._worker = None
+        self._live_workers: list = []
         self._build_ui()
         self._connect_app_state()
         logger.debug("AnalysisPage oluşturuldu.")
@@ -210,6 +309,7 @@ class AnalysisPage(QWidget):
         self.image_list.setObjectName("imageStatusList")
         self.image_list.currentRowChanged.connect(self._on_image_selected)
         lv.addWidget(self.image_list, 1)
+        lv.addWidget(self._make_roster_panel())
         splitter.addWidget(left)
 
         # Sağ: detay panel
@@ -294,6 +394,150 @@ class AnalysisPage(QWidget):
 
         vbox.addLayout(row2)
         return frame
+
+    def _make_roster_panel(self) -> QFrame:
+        frame = QFrame()
+        frame.setObjectName("sectionFrame")
+        v = QVBoxLayout(frame)
+        v.setContentsMargins(10, 8, 10, 8)
+        v.setSpacing(6)
+        title = QLabel("Karakter kadrosu")
+        title.setObjectName("pageSubtitle")
+        v.addWidget(title)
+        hint = QLabel("Analiz isim, cinsiyet ve görünümü kaydeder. Script he/she veya saç rengi yerine bu isimleri kullanır.")
+        hint.setObjectName("pageSubtitle")
+        hint.setWordWrap(True)
+        v.addWidget(hint)
+        row = QHBoxLayout()
+        self.roster_name_edit = QLineEdit()
+        self.roster_name_edit.setPlaceholderText("İsim ekle (Jin-Woo)")
+        self.roster_name_edit.returnPressed.connect(self._add_roster_name)
+        row.addWidget(self.roster_name_edit, 1)
+        btn_add = QPushButton("Ekle")
+        btn_add.setObjectName("secondaryBtn")
+        btn_add.clicked.connect(self._add_roster_name)
+        row.addWidget(btn_add)
+        v.addLayout(row)
+        self.roster_list = QListWidget()
+        self.roster_list.setMaximumHeight(140)
+        self.roster_list.itemDoubleClicked.connect(self._edit_roster_name)
+        v.addWidget(self.roster_list)
+        btn_row = QHBoxLayout()
+        btn_edit = QPushButton("  Düzenle")
+        btn_edit.setObjectName("secondaryBtn")
+        btn_edit.setIcon(Icons.get(Icons.EDIT))
+        btn_edit.setIconSize(QSize(16, 16))
+        btn_edit.clicked.connect(self._edit_roster_name)
+        btn_row.addWidget(btn_edit)
+        btn_del = QPushButton("Seçileni sil")
+        btn_del.setObjectName("secondaryBtn")
+        btn_del.clicked.connect(self._remove_roster_name)
+        btn_row.addWidget(btn_del)
+        v.addLayout(btn_row)
+        return frame
+
+    def _refresh_roster(self) -> None:
+        if not hasattr(self, "roster_list"):
+            return
+        self.roster_list.clear()
+        project = self.ctx.app_state.current_project
+        if not project:
+            return
+        from core.character_bible import get_entries, prune_generic_entries
+        prune_generic_entries(project)
+        for ent in get_entries(project):
+            canon = (ent.get("canonical") or "").strip()
+            if not canon:
+                continue
+            bits = [canon]
+            if ent.get("gender"):
+                bits.append(str(ent["gender"]))
+            if ent.get("appearance"):
+                bits.append(str(ent["appearance"]))
+            item = QListWidgetItem(" — ".join(bits))
+            item.setData(Qt.ItemDataRole.UserRole, canon)
+            self.roster_list.addItem(item)
+
+    def _add_roster_name(self) -> None:
+        name = (self.roster_name_edit.text() or "").strip()
+        if not name:
+            return
+        from core.script_generator import _is_generic_character_label, _looks_like_appearance
+        if _is_generic_character_label(name) or _looks_like_appearance(name):
+            QMessageBox.warning(
+                self, "Geçersiz isim",
+                "Görsel tarif eklenemez. Gerçek isim yaz (Jin-Woo, Cha Hae-In).",
+            )
+            return
+        project = self.ctx.app_state.current_project
+        if not project:
+            return
+        from core.character_bible import upsert_names
+        upsert_names(project, [name])
+        self.roster_name_edit.clear()
+        self._refresh_roster()
+        _save_current_project(self, project)
+
+    def _remove_roster_name(self) -> None:
+        item = self.roster_list.currentItem()
+        if not item:
+            return
+        name = item.data(Qt.ItemDataRole.UserRole) or item.text().split(" — ")[0].strip()
+        project = self.ctx.app_state.current_project
+        if not project:
+            return
+        from core.character_bible import get_entries, set_entries
+        set_entries(project, [e for e in get_entries(project) if (e.get("canonical") or "") != name])
+        self._refresh_roster()
+        _save_current_project(self, project)
+
+    def _edit_roster_name(self, item=None) -> None:
+        if not isinstance(item, QListWidgetItem):
+            item = self.roster_list.currentItem()
+        if not item:
+            return
+        name = item.data(Qt.ItemDataRole.UserRole) or item.text().split(" — ")[0].strip()
+        project = self.ctx.app_state.current_project
+        if not project or not name:
+            return
+        from core.character_bible import get_entry, update_character
+        from core.script_generator import _is_generic_character_label, _looks_like_appearance
+
+        entry = get_entry(project, name)
+        if not entry:
+            self._refresh_roster()
+            return
+        dlg = EditCharacterDialog(entry, self)
+        if dlg.exec() != QDialog.DialogCode.Accepted:
+            return
+        vals = dlg.values()
+        new_name = vals["canonical"]
+        if not new_name:
+            QMessageBox.warning(self, "Geçersiz isim", "İsim boş olamaz.")
+            return
+        if _is_generic_character_label(new_name) or _looks_like_appearance(new_name):
+            QMessageBox.warning(
+                self, "Geçersiz isim",
+                "Görsel tarif eklenemez. Gerçek isim yaz (Jin-Woo, Cha Hae-In).",
+            )
+            return
+        updated = update_character(
+            project,
+            name,
+            canonical=new_name,
+            aliases=vals["aliases"],
+            gender=vals["gender"],
+            appearance=vals["appearance"],
+            notes=vals["notes"],
+        )
+        if updated is None:
+            QMessageBox.warning(
+                self, "Kayıt güncellenemedi",
+                "İsim geçersiz veya kayıt bulunamadı.",
+            )
+            return
+        self._refresh_roster()
+        _save_current_project(self, project)
 
     def _make_progress_row(self) -> QWidget:
         w = QWidget()
@@ -390,6 +634,7 @@ class AnalysisPage(QWidget):
         if project:
             for ch in project.chapters:
                 self.chapter_combo.addItem(Icons.get(Icons.BOOK), ch.name, ch.id)
+        self._refresh_roster()
 
     def _on_chapter_changed(self, index: int) -> None:
         if index < 0:
@@ -468,12 +713,24 @@ class AnalysisPage(QWidget):
         chapter = state.current_project.get_chapter(chapter_id)
         if not chapter:
             return
+        if not chapter.images:
+            QMessageBox.warning(
+                self, "Görsel Yok",
+                "Bu bölümde görsel yok. Önce Görseller sayfasından görsel ekleyin.",
+            )
+            return
+        if self._worker and self._worker.isRunning():
+            QMessageBox.information(self, "Bilgi", "Devam eden bir analiz var. Lütfen bitmesini bekleyin.")
+            return
 
         model = self.model_combo.currentData() or "google/gemini-2.0-flash-exp:free"
 
         from ui.workers.analysis_worker import AnalysisWorker
+        from ui.workers.thread_utils import start_worker
         # api_key parametresi artık opsiyonel; worker SettingsManager'dan okur
-        self._worker = AnalysisWorker(chapter, model, api_key)
+        self._worker = AnalysisWorker(
+            chapter, model, api_key, project=state.current_project, parent=self,
+        )
         self._worker.progress.connect(self._on_progress)
         self._worker.image_analyzed.connect(self._on_image_analyzed)
         self._worker.finished.connect(self._on_finished)
@@ -484,11 +741,12 @@ class AnalysisPage(QWidget):
         self.progress_bar.setRange(0, len(chapter.images))
         self._log(f"▶  Analiz başladı: {chapter.name} ({len(chapter.images)} görsel, model: {model})")
 
-        self._worker.start()
+        start_worker(self, self._worker)
 
     def _stop_analysis(self) -> None:
         if self._worker and self._worker.isRunning():
-            self._worker.stop()
+            from ui.workers.thread_utils import abort_worker
+            abort_worker(self, self._worker)
             self._log("⏹  Durdurma sinyali gönderildi…")
 
     def _on_progress(self, current: int, total: int, message: str) -> None:
@@ -512,8 +770,8 @@ class AnalysisPage(QWidget):
         # Projeye kaydet
         state = self.ctx.app_state
         if state.current_project and state.current_chapter:
-            from core.project_manager import save_project
-            save_project(state.current_project)
+            _save_current_project(self, state.current_project)
+            self._refresh_roster()
 
     def _on_finished(self) -> None:
         self.btn_start.setEnabled(True)
@@ -525,8 +783,20 @@ class AnalysisPage(QWidget):
             1 for i in range(total)
             if str(i) in (chapter.analysis_data if chapter else {})
         )
-        self._log(f"<span style='color:#22c55e;'><b>BAŞARILI:</b> Analiz tamamlandı ({done}/{total} görsel işlendi).</span>")
+        stopped = bool(getattr(self._worker, "_stop", False))
+        if stopped:
+            self._log(
+                f"<span style='color:#e0af68;'><b>DURDURULDU:</b> "
+                f"Analiz kesildi ({done}/{total} görsel işlendi).</span>"
+            )
+        else:
+            self._log(
+                f"<span style='color:#22c55e;'><b>BAŞARILI:</b> "
+                f"Analiz tamamlandı ({done}/{total} görsel işlendi).</span>"
+            )
         self._update_progress_label(done, total)
+        if state.current_project:
+            _save_current_project(self, state.current_project)
 
     def _on_error(self, message: str) -> None:
         self._log(f"<span style='color:#ef4444;'><b>HATA:</b> {message}</span>")
@@ -570,12 +840,17 @@ class AnalysisPage(QWidget):
             done = pyqtSignal(int, dict)
             failed = pyqtSignal(str)
 
-            def __init__(self, chapter, idx: int, model_name: str, key: str) -> None:
+            def __init__(self, chapter, idx: int, model_name: str, key: str, project=None) -> None:
                 super().__init__()
                 self._chapter = chapter
                 self._idx = idx
                 self._model = model_name
                 self._key = key
+                self._project = project
+                self._stop = False
+
+            def stop(self) -> None:
+                self._stop = True
 
             def run(self) -> None:
                 try:
@@ -585,12 +860,18 @@ class AnalysisPage(QWidget):
                     if self._key:
                         client.update_api_key(self._key)
                     analyzer = AIAnalyzer(client)
-                    result = analyzer.reanalyze_image(self._chapter, self._idx, self._model)
+                    result = analyzer.reanalyze_image(
+                        self._chapter, self._idx, self._model, project=self._project,
+                    )
+                    if getattr(self, "_stop", False):
+                        return
                     self.done.emit(self._idx, result)
                 except Exception as exc:
                     self.failed.emit(str(exc))
 
-        worker = _ReanalyzeWorker(state.current_chapter, image_index, model, api_key)
+        worker = _ReanalyzeWorker(
+            state.current_chapter, image_index, model, api_key, project=state.current_project,
+        )
         worker.done.connect(self._on_reanalyze_done)
         worker.failed.connect(self._on_reanalyze_failed)
         self._worker = worker
@@ -603,8 +884,8 @@ class AnalysisPage(QWidget):
         self.detail_panel.show_result(image_index, result)
         state = self.ctx.app_state
         if state.current_project:
-            from core.project_manager import save_project
-            save_project(state.current_project)
+            _save_current_project(self, state.current_project)
+            self._refresh_roster()
         self.btn_start.setEnabled(True)
         self.btn_stop.setEnabled(False)
         self._log(
@@ -650,11 +931,28 @@ class AnalysisPage(QWidget):
         state = self.ctx.app_state
         if state.current_project:
             current_data = self.chapter_combo.currentData()
+            self.chapter_combo.blockSignals(True)
             self.chapter_combo.clear()
             for ch in state.current_project.chapters:
                 self.chapter_combo.addItem(Icons.get(Icons.BOOK), ch.name, ch.id)
+            restored = False
             if current_data:
                 idx = self.chapter_combo.findData(current_data)
                 if idx >= 0:
                     self.chapter_combo.setCurrentIndex(idx)
+                    restored = True
+            elif state.current_chapter:
+                idx = self.chapter_combo.findData(state.current_chapter.id)
+                if idx >= 0:
+                    self.chapter_combo.setCurrentIndex(idx)
+                    restored = True
+            self.chapter_combo.blockSignals(False)
+            if restored or self.chapter_combo.currentIndex() >= 0:
+                self._on_chapter_changed(self.chapter_combo.currentIndex())
+        self._refresh_roster()
         super().showEvent(event)
+
+    def hideEvent(self, event) -> None:
+        if self._worker and self._worker.isRunning() and hasattr(self._worker, "stop"):
+            self._worker.stop()
+        super().hideEvent(event)

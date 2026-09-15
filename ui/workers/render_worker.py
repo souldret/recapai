@@ -178,6 +178,16 @@ class PipelineWorker(QThread):
         tts_voice: str,
         audio_dir: str,
         parent=None,
+        skip_analysis: bool = False,
+        skip_script: bool = False,
+        skip_tts: bool = False,
+        hook_variants: int = 1,
+        target_minutes: float | None = None,
+        mix_engines: bool = False,
+        narrator_engine: str = "kokoro",
+        narrator_voice: str = "",
+        dialogue_engine: str = "edge-tts",
+        dialogue_voice: str = "",
     ) -> None:
         super().__init__(parent)
         self._project = project
@@ -193,6 +203,16 @@ class PipelineWorker(QThread):
         self._tts_engine = tts_engine
         self._tts_voice = tts_voice
         self._audio_dir = audio_dir
+        self._skip_analysis = skip_analysis
+        self._skip_script = skip_script
+        self._skip_tts = skip_tts
+        self._hook_variants = max(1, int(hook_variants or 1))
+        self._target_minutes = target_minutes
+        self._mix_engines = mix_engines
+        self._narrator_engine = narrator_engine or "kokoro"
+        self._narrator_voice = narrator_voice or ""
+        self._dialogue_engine = dialogue_engine or "edge-tts"
+        self._dialogue_voice = dialogue_voice or ""
         self._cancelled = False
 
     def cancel(self) -> None:
@@ -202,157 +222,267 @@ class PipelineWorker(QThread):
         chapter = self._chapter
 
         # ── Aşama 1: Analiz ──────────────────────────────────────
-        self._emit_stage("Analiz", 0)
+        if self._skip_analysis:
+            self.log.emit("  [Analiz] Checkpoint: mevcut analiz kullanılıyor.")
+            self._emit_stage_done("Analiz")
+            self.overall_progress.emit(25)
+        else:
+            self._emit_stage("Analiz", 0)
+            try:
+                from core.openrouter_client import OpenRouterClient
+                from core.ai_analyzer import AIAnalyzer
+
+                client = OpenRouterClient.instance()
+                if self._api_key:
+                    client.update_api_key(self._api_key)
+                analyzer = AIAnalyzer(client)
+
+                def analysis_progress(done: int, total: int, msg: str) -> None:
+                    pct = int(done / max(total, 1) * 100)
+                    self.stage_progress.emit(pct, msg)
+                    self.overall_progress.emit(int(0 + pct * 0.25))
+                    self.log.emit(f"  [Analiz] {msg}")
+
+                analyzer.analyze_chapter(
+                    chapter,
+                    self._vision_model,
+                    progress_callback=analysis_progress,
+                    stop_flag=lambda: self._cancelled,
+                    project=self._project,
+                )
+            except Exception as exc:
+                self.error.emit(f"Analiz hatası: {exc}")
+                return
+
+            if self._cancelled:
+                self.error.emit("Pipeline iptal edildi (Analiz sonrası).")
+                return
+            self._emit_stage_done("Analiz")
+            self.overall_progress.emit(25)
+
         try:
-            from core.openrouter_client import OpenRouterClient
-            from core.ai_analyzer import AIAnalyzer
-
-            client = OpenRouterClient.instance()
-            if self._api_key:
-                client.update_api_key(self._api_key)
-            analyzer = AIAnalyzer(client)
-
-            def analysis_progress(done: int, total: int, msg: str) -> None:
-                pct = int(done / max(total, 1) * 100)
-                self.stage_progress.emit(pct, msg)
-                self.overall_progress.emit(int(0 + pct * 0.25))
-                self.log.emit(f"  [Analiz] {msg}")
-
-            analyzer.analyze_chapter(
-                chapter,
-                self._vision_model,
-                progress_callback=analysis_progress,
-                stop_flag=lambda: self._cancelled,
-            )
-        except Exception as exc:
-            self.error.emit(f"Analiz hatası: {exc}")
-            return
-
-        if self._cancelled:
-            self.error.emit("Pipeline iptal edildi (Analiz sonrası).")
-            return
-        self._emit_stage_done("Analiz")
-        self.overall_progress.emit(25)
+            from core.pipeline import require_character_bible
+            n_bible = require_character_bible(self._project, chapter)
+            self.log.emit(f"  [Bible] {n_bible} karakter kaydı hazır.")
+        except Exception as bible_exc:
+            if not self._skip_script:
+                self.error.emit(f"Karakter bible: {bible_exc}")
+                return
+            self.log.emit(f"  [Bible] atlandı: {bible_exc}")
 
         # ── Aşama 2: Script ──────────────────────────────────────
-        self._emit_stage("Script", 25)
-        try:
-            from core.script_generator import ScriptGenerator
-            from core.openrouter_client import OpenRouterClient
-            from core.settings_manager import SettingsManager
+        if self._skip_script:
+            self.log.emit("  [Script] Checkpoint: mevcut script kullanılıyor.")
+            self._emit_stage_done("Script")
+            self.overall_progress.emit(50)
+        else:
+            self._emit_stage("Script", 25)
+            try:
+                from core.script_generator import ScriptGenerator
+                from core.openrouter_client import OpenRouterClient
+                from core.settings_manager import SettingsManager
 
-            sm = SettingsManager.instance()
-            sm.reload()
-            client = OpenRouterClient.instance()
-            if self._api_key and not sm.has_api_key():
-                client.update_api_key(self._api_key)
+                sm = SettingsManager.instance()
+                sm.reload()
+                client = OpenRouterClient.instance()
+                if self._api_key and not sm.has_api_key():
+                    client.update_api_key(self._api_key)
 
-            generator = ScriptGenerator(client)
-            segments = generator.generate_script(
-                chapter,
-                self._script_model,
-                style=self._script_style or "fresh",
-                length=self._script_length,
-                language=self._script_language,
-                niche="power_fantasy",
-                use_hook=None,  # ilk bölüm sezgisi
-                stream_callback=lambda chunk: self.log.emit(chunk),
-            )
-            chapter.segments = segments
-            self.log.emit(f"  [Script] {len(segments)} segment oluşturuldu.")
-        except Exception as exc:
-            self.error.emit(f"Script hatası: {exc}")
-            return
+                generator = ScriptGenerator(client)
+                segments = generator.generate_script(
+                    chapter,
+                    self._script_model,
+                    style=self._script_style or "fresh",
+                    length=self._script_length,
+                    language=self._script_language,
+                    niche="auto",
+                    use_hook=True,
+                    stream_callback=lambda chunk: self.log.emit(chunk),
+                    project=self._project,
+                    auto_niche=True,
+                    include_last_time=None,
+                    target_minutes=self._target_minutes,
+                )
+                if self._hook_variants > 1:
+                    alt = generator.generate_script(
+                        chapter,
+                        self._script_model,
+                        style=self._script_style or "fresh",
+                        length="short",
+                        language=self._script_language,
+                        niche="auto",
+                        use_hook=True,
+                        project=self._project,
+                        auto_niche=True,
+                        include_last_time=False,
+                        target_minutes=self._target_minutes,
+                    )
+                    alt_hook = next(
+                        (s.text for s in (alt or []) if getattr(s, "role", "") == "cold_open"),
+                        "",
+                    )
+                    if alt_hook:
+                        for s in segments:
+                            if getattr(s, "role", "") == "cold_open":
+                                s.text = f"{s.text}\n\n[B kanca] {alt_hook}"
+                                break
+                        self.log.emit("  [Script] A/B kanca eklendi.")
+                chapter.segments = segments
+                self.log.emit(f"  [Script] {len(segments)} segment oluşturuldu.")
+            except Exception as exc:
+                self.error.emit(f"Script hatası: {exc}")
+                return
 
-        if self._cancelled:
-            self.error.emit("Pipeline iptal edildi (Script sonrası).")
-            return
-        self._emit_stage_done("Script")
-        self.overall_progress.emit(50)
+            if self._cancelled:
+                self.error.emit("Pipeline iptal edildi (Script sonrası).")
+                return
+            self._emit_stage_done("Script")
+            self.overall_progress.emit(50)
 
         # ── Aşama 3: TTS ─────────────────────────────────────────
-        self._emit_stage("Seslendirme", 50)
-        try:
-            from core.tts_engine import TTSManager
-            from core.tts_cache import TTSCache
-            from core.audio_processor import get_duration as _get_dur
+        if self._skip_tts:
+            self.log.emit("  [TTS] Checkpoint: mevcut sesler kullanılıyor.")
+            self._emit_stage_done("Seslendirme")
+            self.overall_progress.emit(75)
+        else:
+            self._emit_stage("Seslendirme", 50)
+            try:
+                from core.tts_engine import TTSManager
+                from core.tts_cache import TTSCache
+                from core.audio_processor import get_duration as _get_dur, remove_silence
 
-            audio_dir = Path(self._audio_dir)
-            audio_dir.mkdir(parents=True, exist_ok=True)
+                audio_dir = Path(self._audio_dir)
+                audio_dir.mkdir(parents=True, exist_ok=True)
 
-            # Global cache kullan (settings'te açıksa), yoksa proje-yerel cache
-            cache = TTSCache.get_global_cache()
-
-            manager = TTSManager.get_instance()
-            engine = manager.get_engine(self._tts_engine)
-
-            total_segs = len(chapter.segments)
-            for i, seg in enumerate(chapter.segments):
-                if self._cancelled:
-                    break
-                if not seg.text.strip():
-                    continue
-
-                pct_seg = int(i / max(total_segs, 1) * 100)
-                self.stage_progress.emit(pct_seg, f"Segment {i+1}/{total_segs}")
-                self.overall_progress.emit(int(50 + pct_seg * 0.25))
-
-                out_path = str(audio_dir / f"segment_{i:04d}.mp3")
-
-                # Varsayılan TTS hızını settings'ten al
+                cache = TTSCache.get_global_cache()
+                manager = TTSManager.get_instance()
+                mix = bool(self._mix_engines)
                 try:
                     from core.settings_manager import SettingsManager
-                    default_speed = float(
-                        SettingsManager.instance().get("tts.default_speed", 1.0)
-                    )
+                    tts_cfg = SettingsManager.instance().get("tts", {}) or {}
+                    if not mix:
+                        mix = bool(tts_cfg.get("mix_engines", False))
+                    if mix:
+                        self._narrator_engine = tts_cfg.get("narrator_engine") or self._narrator_engine
+                        self._narrator_voice = tts_cfg.get("narrator_voice") or self._narrator_voice
+                        self._dialogue_engine = tts_cfg.get("dialogue_engine") or self._dialogue_engine
+                        self._dialogue_voice = tts_cfg.get("dialogue_voice") or self._dialogue_voice
                 except Exception:
-                    default_speed = 1.0
+                    pass
+                if mix:
+                    self.log.emit("  [TTS] Karışık motor: anlatıcı Kokoro, diyalog Edge.")
 
-                synth_params = {"engine": self._tts_engine}
-                if self._tts_engine == "kokoro":
-                    synth_params["speed"] = default_speed
-                elif self._tts_engine == "edge-tts":
-                    rate_pct = int(round((default_speed - 1.0) * 100))
-                    rate_pct = max(-50, min(50, rate_pct))
-                    synth_params["rate"] = f"{rate_pct:+d}%"
+                from ui.workers.tts_worker import engine_for_segment, voice_for_engine
 
-                # Cache kontrolü — hız parametresi dahil
-                cache_key = cache.get_cache_key(seg.text, self._tts_voice, synth_params)
-                cached = cache.get(cache_key)
-                if cached and Path(cached).exists():
-                    seg.audio_path = cached
-                    seg.duration = _get_dur(cached)
-                    self.log.emit(f"  [TTS] Segment {i+1}: cache'den")
-                    continue
-
+                silence_cfg = None
                 try:
-                    call_kwargs = {
-                        k: v for k, v in synth_params.items() if k != "engine"
-                    }
-                    duration = engine.synthesize(
-                        text=seg.text,
-                        voice=self._tts_voice,
-                        output_path=out_path,
-                        **call_kwargs,
+                    from core.settings_manager import SettingsManager
+                    tts_cfg = SettingsManager.instance().get("tts", {}) or {}
+                    if tts_cfg.get("remove_silence", True):
+                        silence_cfg = {
+                            "silence_thresh": float(tts_cfg.get("silence_thresh_db", -40.0)),
+                            "min_silence_len": int(tts_cfg.get("min_silence_len_ms", 400)),
+                            "keep_silence": int(tts_cfg.get("keep_silence_ms", 120)),
+                        }
+                except Exception:
+                    silence_cfg = None
+
+                total_segs = len(chapter.segments)
+                for i, seg in enumerate(chapter.segments):
+                    if self._cancelled:
+                        break
+                    if not seg.text.strip():
+                        continue
+
+                    pct_seg = int(i / max(total_segs, 1) * 100)
+                    self.stage_progress.emit(pct_seg, f"Segment {i+1}/{total_segs}")
+                    self.overall_progress.emit(int(50 + pct_seg * 0.25))
+
+                    out_path = str(audio_dir / f"segment_{i:04d}.mp3")
+                    engine_name = engine_for_segment(
+                        seg,
+                        mix=mix,
+                        default_engine=self._tts_engine,
+                        narrator_engine=self._narrator_engine,
+                        dialogue_engine=self._dialogue_engine,
                     )
-                    if Path(out_path).exists():
-                        cache.put(cache_key, out_path)
-                        seg.audio_path = out_path
-                        seg.duration = duration
-                        self.log.emit(f"  [TTS] Segment {i+1}: Tamamlandı")
-                except Exception as seg_exc:
-                    logger.error("PipelineWorker TTS segment %d hatası: %s", i, seg_exc)
-                    self.log.emit(f"  [TTS] Segment {i+1} HATA: {seg_exc}")
+                    voice = voice_for_engine(
+                        engine_name,
+                        mix=mix,
+                        default_engine=self._tts_engine,
+                        default_voice=self._tts_voice,
+                        narrator_engine=self._narrator_engine,
+                        narrator_voice=self._narrator_voice,
+                        dialogue_engine=self._dialogue_engine,
+                        dialogue_voice=self._dialogue_voice,
+                    )
+                    engine = manager.get_engine(engine_name)
 
-        except Exception as exc:
-            self.error.emit(f"TTS hatası: {exc}")
-            return
+                    try:
+                        from core.settings_manager import SettingsManager
+                        default_speed = float(
+                            SettingsManager.instance().get("tts.default_speed", 1.0)
+                        )
+                    except Exception:
+                        default_speed = 1.0
 
-        if self._cancelled:
-            self.error.emit("Pipeline iptal edildi (TTS sonrası).")
-            return
-        self._emit_stage_done("Seslendirme")
-        self.overall_progress.emit(75)
+                    synth_params = {"engine": engine_name}
+                    if engine_name == "kokoro":
+                        synth_params["speed"] = default_speed
+                    elif engine_name == "edge-tts":
+                        rate_pct = int(round((default_speed - 1.0) * 100))
+                        rate_pct = max(-50, min(50, rate_pct))
+                        synth_params["rate"] = f"{rate_pct:+d}%"
+
+                    cache_key = cache.get_cache_key(seg.text, voice, synth_params)
+                    cached = cache.get(cache_key)
+                    if cached and Path(cached).exists():
+                        seg.audio_path = cached
+                        seg.duration = _get_dur(cached)
+                        self.log.emit(f"  [TTS] Segment {i+1}: cache'den ({engine_name})")
+                        continue
+
+                    try:
+                        call_kwargs = {
+                            k: v for k, v in synth_params.items() if k != "engine"
+                        }
+                        duration = engine.synthesize(
+                            text=seg.text,
+                            voice=voice,
+                            output_path=out_path,
+                            **call_kwargs,
+                        )
+                        if Path(out_path).exists():
+                            if silence_cfg:
+                                try:
+                                    duration = remove_silence(out_path, **silence_cfg)
+                                except Exception as sil_exc:
+                                    self.log.emit(f"  [TTS] Segment {i+1} sessizlik kırpılamadı: {sil_exc}")
+                            cache.put(cache_key, out_path)
+                            seg.audio_path = out_path
+                            seg.duration = duration
+                            self.log.emit(f"  [TTS] Segment {i+1}: Tamamlandı")
+                    except Exception as seg_exc:
+                        logger.error("PipelineWorker TTS segment %d hatası: %s", i, seg_exc)
+                        self.log.emit(f"  [TTS] Segment {i+1} HATA: {seg_exc}")
+
+                voiced = sum(
+                    1 for seg in chapter.segments
+                    if seg.audio_path and Path(seg.audio_path).exists()
+                )
+                if voiced == 0 and any(seg.text.strip() for seg in chapter.segments):
+                    self.error.emit("TTS hatası: hiçbir segment seslendirilemedi.")
+                    return
+
+            except Exception as exc:
+                self.error.emit(f"TTS hatası: {exc}")
+                return
+
+            if self._cancelled:
+                self.error.emit("Pipeline iptal edildi (TTS sonrası).")
+                return
+            self._emit_stage_done("Seslendirme")
+            self.overall_progress.emit(75)
 
         # ── Aşama 4: Render ──────────────────────────────────────
         self._emit_stage("Render", 75)
@@ -382,6 +512,18 @@ class PipelineWorker(QThread):
         except Exception as exc:
             self.error.emit(f"Render hatası: {exc}")
             return
+
+        if self._cancelled:
+            self.error.emit("Pipeline iptal edildi (Render).")
+            return
+
+        try:
+            from core.pipeline import export_youtube_thumbnail
+            thumb = export_youtube_thumbnail(chapter, self._render_output)
+            if thumb:
+                self.log.emit(f"  [Kapak] {thumb}")
+        except Exception as thumb_exc:
+            self.log.emit(f"  [Kapak] yazılamadı: {thumb_exc}")
 
         self._emit_stage_done("Render")
         self.overall_progress.emit(100)

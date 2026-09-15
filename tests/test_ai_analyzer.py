@@ -6,7 +6,12 @@ RecapAI - AIAnalyzer / _parse_json_response testleri.
 import pytest
 
 # _parse_json_response doğrudan test ediyoruz (LLM bağlantısı gerektirmiyor)
-from core.ai_analyzer import _parse_json_response
+from core.ai_analyzer import (
+    _parse_json_response,
+    _sanitize_analysis_characters,
+    _with_known_characters,
+)
+from core.models import Project
 
 
 class TestParseJsonResponse:
@@ -93,3 +98,119 @@ class TestParseJsonResponse:
     def test_whitespace_only_returns_dict(self):
         result = _parse_json_response("   \n\t  ")
         assert isinstance(result, dict)
+
+    def test_object_character_schema_parses(self):
+        text = (
+            '{"characters":[{"name":"Jin-Woo","aliases":["Sung"],'
+            '"gender":"male","appearance":"black hair"}]}'
+        )
+        result = _parse_json_response(text)
+        assert result["characters"][0]["name"] == "Jin-Woo"
+
+
+class TestSanitizeAnalysisCharacters:
+    def test_string_list_becomes_records(self):
+        parsed = _sanitize_analysis_characters({"characters": ["Jin-Woo", "Protagonist"]})
+        names = [r.get("name") for r in parsed["characters"]]
+        assert "Jin-Woo" in names
+        assert "Protagonist" not in names
+
+    def test_object_list_keeps_appearance(self):
+        parsed = _sanitize_analysis_characters({
+            "characters": [
+                {"name": "Jin-Woo", "gender": "male", "appearance": "black hair", "aliases": []},
+                {"name": "yellow hair", "gender": "female", "appearance": "", "aliases": []},
+            ]
+        })
+        named = [r for r in parsed["characters"] if r.get("name")]
+        unnamed = [r for r in parsed["characters"] if not r.get("name")]
+        assert named[0]["name"] == "Jin-Woo"
+        assert unnamed and "yellow" in unnamed[0]["appearance"].lower()
+
+    def test_project_resolves_visual_label(self):
+        from core.character_bible import upsert_characters
+        p = Project(id="p", name="t", created_at="", updated_at="")
+        upsert_characters(p, [{
+            "name": "Jin-Woo",
+            "gender": "male",
+            "appearance": "black hair",
+        }], "c1")
+        parsed = _sanitize_analysis_characters(
+            {"characters": [{"name": "", "appearance": "black hair"}]},
+            project=p,
+        )
+        assert parsed["characters"][0]["name"] == "Jin-Woo"
+
+    def test_with_known_characters_injects_roster(self):
+        from core.character_bible import upsert_characters
+        p = Project(id="p", name="t", created_at="", updated_at="")
+        upsert_characters(p, [{
+            "name": "Jin-Woo",
+            "aliases": ["Sung"],
+            "gender": "male",
+            "appearance": "black hair",
+        }], "c1")
+        out = _with_known_characters("BASE PROMPT", project=p)
+        assert "Jin-Woo" in out
+        assert "black hair" in out
+        assert "BİLİNEN KARAKTERLER" in out
+
+    def test_vision_prompt_uses_object_schema(self):
+        from pathlib import Path
+        import json
+        data = json.loads(
+            (Path(__file__).resolve().parent.parent / "config" / "prompts.json").read_text(encoding="utf-8")
+        )
+        vision = data["vision_analysis"]
+        assert "{name, aliases, gender, appearance}" in vision or '"appearance"' in vision
+        assert "yellow hair" in vision.lower()
+        p1 = data["script_prompt_1_universal"].lower()
+        assert "yellow hair" in p1
+        assert "isim" in p1 or "name" in p1
+
+
+class TestUsableAnalysisCache:
+    def test_parse_error_is_not_usable(self):
+        from core.ai_analyzer import _is_usable_analysis
+        assert not _is_usable_analysis({"raw_text": "oops", "parse_error": True})
+        assert not _is_usable_analysis({"error": "timeout"})
+        assert not _is_usable_analysis({"raw_text": "no fields"})
+        assert _is_usable_analysis({"scene": "gate", "action": "opens"})
+
+    def test_extra_braces_after_object_still_parse(self):
+        text = 'note {ignored} then {"scene": "battle", "action": "slash"} extra }'
+        result = _parse_json_response(text)
+        assert result.get("scene") == "battle"
+        assert result.get("parse_error") is not True
+
+    def test_analyze_chapter_retries_parse_error(self, tmp_path, monkeypatch):
+        from core.models import Chapter, ImageData
+        from core.ai_analyzer import AIAnalyzer
+
+        img = tmp_path / "p.png"
+        img.write_bytes(b"x")
+        chapter = Chapter(
+            id="c1",
+            name="ch",
+            images=[ImageData(path=str(img), filename="p.png", order=0)],
+            analysis_data={"0": {"raw_text": "garbled", "parse_error": True}},
+        )
+        analyzer = AIAnalyzer.__new__(AIAnalyzer)
+        analyzer._client = None
+
+        class _SM:
+            def get(self, *args, **kwargs):
+                return 0
+
+        analyzer._settings = _SM()
+        called = []
+
+        def fake_analyze(path, model, known_names=None, project=None):
+            called.append(path)
+            return {"scene": "gate", "action": "opens"}
+
+        monkeypatch.setattr(analyzer, "analyze_image", fake_analyze)
+        out = analyzer.analyze_chapter(chapter, "dummy-model")
+        assert called
+        assert out["0"]["scene"] == "gate"
+        assert not out["0"].get("parse_error")

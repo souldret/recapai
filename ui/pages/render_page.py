@@ -11,7 +11,7 @@ from pathlib import Path
 from typing import Any, Dict, Optional
 
 from PyQt6.QtWidgets import (
-    QWidget, QVBoxLayout, QHBoxLayout, QLabel, QPushButton,
+    QApplication, QWidget, QVBoxLayout, QHBoxLayout, QLabel, QPushButton,
     QFrame, QComboBox, QSpinBox, QDoubleSpinBox, QProgressBar,
     QCheckBox, QLineEdit, QFileDialog, QTextEdit, QSlider,
     QScrollArea, QSplitter, QSizePolicy, QToolButton, QGroupBox,
@@ -190,6 +190,7 @@ class RenderPage(QWidget):
         self._app_state = self.ctx.app_state
         self._render_worker = None
         self._preview_worker = None
+        self._live_workers: list = []
         self._output_path: Optional[str] = None
 
         # Altyazı renk seçiciler (build sonrası referans için)
@@ -514,24 +515,30 @@ class RenderPage(QWidget):
         motion_lbl.setObjectName("pageSubtitle")
         vbox.addWidget(motion_lbl)
 
-        # FFmpeg zoompan tabanlı Ken Burns modları: zoom_in, zoom_out ve
-        # "random" (her segment için zoom_in/zoom_out karışık uygulanır)
-        _MOTION_OPTIONS = [
-            ("zoom_in",    "Zoom In"),
-            ("zoom_out",   "Zoom Out"),
-            ("random",     "Karışık (Zoom In + Out)"),
+        _MOTION_ROWS = [
+            [
+                ("zoom_in",  "Zoom In"),
+                ("zoom_out", "Zoom Out"),
+                ("random",   "Karışık (Zoom + Pan)"),
+            ],
+            [
+                ("pan_down", "Pan Down"),
+                ("pan_up",   "Pan Up"),
+            ],
         ]
         self._motion_buttons: Dict[str, QPushButton] = {}
-        motion_grid1 = QHBoxLayout()
-        for val, lbl_text in _MOTION_OPTIONS:
-            btn = QPushButton(lbl_text)
-            btn.setCheckable(True)
-            btn.setFixedHeight(36)
-            btn.setObjectName("motionBtn")
-            btn.clicked.connect(lambda checked, v=val: self._select_motion(v))
-            self._motion_buttons[val] = btn
-            motion_grid1.addWidget(btn)
-        vbox.addLayout(motion_grid1)
+        for row_opts in _MOTION_ROWS:
+            motion_row = QHBoxLayout()
+            for val, lbl_text in row_opts:
+                btn = QPushButton(lbl_text)
+                btn.setCheckable(True)
+                btn.setFixedHeight(36)
+                btn.setObjectName("motionBtn")
+                btn.clicked.connect(lambda checked, v=val: self._select_motion(v))
+                self._motion_buttons[val] = btn
+                motion_row.addWidget(btn)
+            motion_row.addStretch(1)
+            vbox.addLayout(motion_row)
         # Varsayılan: zoom_in seçili
         self._current_motion = "zoom_in"
         self._motion_buttons["zoom_in"].setChecked(True)
@@ -832,6 +839,20 @@ class RenderPage(QWidget):
         self.btn_render.clicked.connect(self._start_render)
         render_row.addWidget(self.btn_render, 1)
 
+        self.btn_queue = QPushButton("Kuyruğa ekle")
+        self.btn_queue.setObjectName("secondaryBtn")
+        self.btn_queue.setMinimumHeight(48)
+        self.btn_queue.setToolTip("Bu bölümü kuyruğa at; çalışan iş bitince sırayla render edilir.")
+        self.btn_queue.clicked.connect(self._enqueue_current)
+        render_row.addWidget(self.btn_queue)
+
+        self.btn_queue_all = QPushButton("Tüm bölümler")
+        self.btn_queue_all.setObjectName("secondaryBtn")
+        self.btn_queue_all.setMinimumHeight(48)
+        self.btn_queue_all.setToolTip("Projedeki sesli tüm bölümleri kuyruğa ekle.")
+        self.btn_queue_all.clicked.connect(self._enqueue_all_chapters)
+        render_row.addWidget(self.btn_queue_all)
+
         self.btn_cancel = QPushButton("  İptal")
         self.btn_cancel.setIcon(Icons.get(Icons.STOP, color="#ef4444"))
         self.btn_cancel.setIconSize(QSize(16, 16))
@@ -907,11 +928,18 @@ class RenderPage(QWidget):
     def _refresh_chapters(self, project=None) -> None:
         if project is None:
             project = self._app_state.current_project
+        current_id = self.chapter_combo.currentData()
+        if current_id is None and self._app_state.current_chapter:
+            current_id = self._app_state.current_chapter.id
         self.chapter_combo.blockSignals(True)
         self.chapter_combo.clear()
         if project:
             for ch in project.chapters:
                 self.chapter_combo.addItem(ch.name, ch.id)
+            if current_id is not None:
+                idx = self.chapter_combo.findData(current_id)
+                if idx >= 0:
+                    self.chapter_combo.setCurrentIndex(idx)
         self.chapter_combo.blockSignals(False)
         self._update_output_path()
         self._update_estimate()
@@ -1256,9 +1284,8 @@ class RenderPage(QWidget):
         out_dir = proj_dir / "output"
         out_dir.mkdir(parents=True, exist_ok=True)
 
-        ts = datetime.now().strftime("%Y%m%d_%H%M%S")
-        safe_name = "".join(c for c in chapter.name if c.isalnum() or c in " _-").strip()
-        filename = f"{safe_name}_{ts}.mp4"
+        from core.pipeline import output_filename
+        filename = output_filename(project, chapter)
         self.output_path_edit.setText(str(out_dir / filename))
 
     # ─────────────────────────────────────────────────────────────────────────
@@ -1306,6 +1333,7 @@ class RenderPage(QWidget):
             output_path = self.output_path_edit.text().strip()
 
         settings = self._collect_settings()
+        self._release_player()
 
         self._post_render_widget.setVisible(False)
         self.progress_bar.setValue(0)
@@ -1314,18 +1342,20 @@ class RenderPage(QWidget):
         self.log_area.clear()
 
         from ui.workers.render_worker import RenderWorker
-        self._render_worker = RenderWorker(chapter, settings, output_path)
+        from ui.workers.thread_utils import start_worker
+        self._render_worker = RenderWorker(chapter, settings, output_path, parent=self)
         self._render_worker.progress.connect(self._on_render_progress)
         self._render_worker.log.connect(self._log)
         self._render_worker.finished.connect(self._on_render_finished)
         self._render_worker.error.connect(self._on_render_error)
-        self._render_worker.start()
+        start_worker(self, self._render_worker)
 
         self._log(f"<span style='color:#6366f1;'><b>BAŞLADI:</b> Render başlatıldı: {chapter.name}</span>")
 
     def _cancel_render(self) -> None:
         if self._render_worker and self._render_worker.isRunning():
-            self._render_worker.cancel()
+            from ui.workers.thread_utils import abort_worker
+            abort_worker(self, self._render_worker)
             self.btn_cancel.setEnabled(False)
             self.lbl_eta.setText("İptal ediliyor...")
 
@@ -1347,6 +1377,17 @@ class RenderPage(QWidget):
         self._player.setSource(QUrl.fromLocalFile(output_path))
         self.btn_play_preview.setEnabled(True)
         self._log(f"<span style='color:#22c55e;'><b>BAŞARILI:</b> Render tamamlandı: {output_path}</span>")
+        try:
+            from core.pipeline import export_youtube_thumbnail
+            chapter = self._current_chapter()
+            if chapter:
+                thumb = export_youtube_thumbnail(chapter, output_path)
+                if thumb:
+                    self._log(f"<span style='color:#22c55e;'>Kapak karesi: {thumb}</span>")
+        except Exception as extra:
+            self._log(f"Kapak karesi yazılamadı: {extra}")
+        if self.sender() is self._render_worker:
+            self._drain_render_queue()
 
     @pyqtSlot(str)
     def _on_render_error(self, message: str) -> None:
@@ -1355,6 +1396,96 @@ class RenderPage(QWidget):
         self.btn_render.setEnabled(True)
         self.btn_cancel.setEnabled(False)
         self._log(f"<span style='color:#ef4444;'><b>HATA:</b> {message}</span>")
+        self._mark_running_job(done=False, error=message)
+        self._drain_render_queue()
+
+    def _enqueue_current(self) -> None:
+        chapter = self._current_chapter()
+        if not chapter or not chapter.segments:
+            self._log("<span style='color:#ef4444;'><b>HATA:</b> Kuyruk için sesli bölüm gerekli.</span>")
+            return
+        self._update_output_path()
+        output_path = self.output_path_edit.text().strip()
+        if not output_path:
+            return
+        from core.render_queue import get_render_queue
+        job = get_render_queue().add(chapter, self._collect_settings(), output_path)
+        self._log(f"Kuyruğa eklendi: {chapter.name} [{job.job_id}]")
+        self._drain_render_queue()
+
+    def _enqueue_all_chapters(self) -> None:
+        project = self._app_state.current_project
+        if not project:
+            return
+        from core.pipeline import output_filename, tts_complete
+        from core.render_queue import get_render_queue
+        import core.project_manager as pm_mod
+        proj_dir = pm_mod.get_project_dir(project)
+        if not proj_dir:
+            return
+        out_dir = proj_dir / "output"
+        out_dir.mkdir(parents=True, exist_ok=True)
+        n = 0
+        settings = self._collect_settings()
+        q = get_render_queue()
+        for ch in project.chapters:
+            if not tts_complete(ch):
+                continue
+            dest = str(out_dir / output_filename(project, ch))
+            q.add(ch, settings, dest)
+            n += 1
+        self._log(f"{n} bölüm kuyruğa eklendi.")
+        self._drain_render_queue()
+
+    def _drain_render_queue(self) -> None:
+        if self._render_worker and self._render_worker.isRunning():
+            return
+        from core.render_queue import RenderStatus, get_render_queue
+        q = get_render_queue()
+        pending = next((j for j in q.get_jobs() if j.status == RenderStatus.PENDING), None)
+        if pending is None:
+            return
+        project = self._app_state.current_project
+        chapter = None
+        if project:
+            chapter = project.get_chapter(pending.chapter_id)
+        if chapter is None:
+            pending.status = RenderStatus.ERROR
+            pending.error_message = "Bölüm bulunamadı"
+            self._drain_render_queue()
+            return
+        pending.status = RenderStatus.RUNNING
+        from ui.workers.render_worker import RenderWorker
+        from ui.workers.thread_utils import start_worker
+        self._render_worker = RenderWorker(
+            chapter, pending.settings, pending.output_path, parent=self,
+        )
+        self.btn_render.setEnabled(False)
+        self.btn_cancel.setEnabled(True)
+        self._render_worker.progress.connect(self._on_render_progress)
+        self._render_worker.log.connect(self._log)
+        self._render_worker.finished.connect(self._on_queue_job_finished)
+        self._render_worker.error.connect(self._on_render_error)
+        start_worker(self, self._render_worker)
+        self._log(f"Kuyruk işi başladı: {chapter.name}")
+
+    def _mark_running_job(self, *, done: bool, output_path: str = "", error: str = "") -> None:
+        from core.render_queue import RenderStatus, get_render_queue
+        for job in get_render_queue().get_jobs():
+            if job.status != RenderStatus.RUNNING:
+                continue
+            if done:
+                job.status = RenderStatus.DONE
+                job.output_file = output_path
+                job.progress = 100
+            else:
+                job.status = RenderStatus.ERROR
+                job.error_message = error
+            break
+
+    def _on_queue_job_finished(self, output_path: str) -> None:
+        self._mark_running_job(done=True, output_path=output_path)
+        self._on_render_finished(output_path)
 
     # ─────────────────────────────────────────────────────────────────────────
     # Önizleme
@@ -1370,11 +1501,16 @@ class RenderPage(QWidget):
         if not check_ffmpeg():
             self._log("<span style='color:#ef4444;'><b>HATA:</b> FFmpeg bulunamadı. Önizleme üretilemez.</span>")
             return
+        if self._preview_worker and self._preview_worker.isRunning():
+            return
 
         import tempfile
+        from datetime import datetime as _dt
+        stamp = _dt.now().strftime("%Y%m%d_%H%M%S_%f")
         preview_path = str(
-            Path(tempfile.gettempdir()) / f"recapai_preview_{chapter.id}.mp4"
+            Path(tempfile.gettempdir()) / f"recapai_preview_{chapter.id}_{stamp}.mp4"
         )
+        self._release_player()
 
         settings = self._collect_settings()
         self._log("<span style='color:#6366f1;'><b>ÜRETİLİYOR:</b> Önizleme üretiliyor (10 saniye)...</span>")
@@ -1395,7 +1531,7 @@ class RenderPage(QWidget):
                 except Exception as exc:
                     self_inner.error.emit(str(exc))
 
-        self._preview_worker = _PreviewWorker(chapter, settings, preview_path)
+        self._preview_worker = _PreviewWorker(chapter, settings, preview_path, parent=self)
         self._preview_worker.progress.connect(self._on_render_progress)
         self._preview_worker.log.connect(self._log)
         self._preview_worker.finished.connect(self._on_preview_ready)
@@ -1403,10 +1539,15 @@ class RenderPage(QWidget):
             self._log(f"<span style='color:#ef4444;'><b>HATA:</b> Önizleme hatası: {e}</span>"),
             self.btn_gen_preview.setEnabled(True),
         ))
-        self._preview_worker.start()
+        from ui.workers.thread_utils import start_worker
+        start_worker(self, self._preview_worker)
 
     @pyqtSlot(str)
     def _on_preview_ready(self, path: str) -> None:
+        if not path or not Path(path).exists():
+            self._log("<span style='color:#ef4444;'><b>HATA:</b> Önizleme dosyası yazılamadı.</span>")
+            self.btn_gen_preview.setEnabled(True)
+            return
         self._player.setSource(QUrl.fromLocalFile(path))
         self._player.play()
         self.btn_play_preview.setEnabled(True)
@@ -1487,6 +1628,15 @@ class RenderPage(QWidget):
     def _on_resolution_changed(self, index: int) -> None:
         is_custom = index == len(RESOLUTION_OPTIONS) - 1
         self._custom_res_row.setVisible(is_custom)
+
+    def _release_player(self) -> None:
+        """QMediaPlayer kilitini bırakır (Windows'ta dosya silme/üzerine yazma için)."""
+        try:
+            self._player.stop()
+            self._player.setSource(QUrl())
+            QApplication.processEvents()
+        except Exception:
+            pass
 
     def _select_motion(self, value: str) -> None:
         """Animasyon modu seçimi — tek buton aktif."""

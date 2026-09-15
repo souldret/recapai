@@ -40,17 +40,28 @@ class SegmentData:
     text: str = ""
     audio_path: Optional[str] = None
     duration: float = 0.0
+    beat_id: Optional[int] = None
+    role: str = ""
+    lint_issues: List[str] = field(default_factory=list)
+    image_path: Optional[str] = None
 
     def to_dict(self) -> Dict[str, Any]:
         return asdict(self)
 
     @classmethod
     def from_dict(cls, data: Dict[str, Any]) -> "SegmentData":
+        issues = data.get("lint_issues") or []
+        if not isinstance(issues, list):
+            issues = []
         return cls(
             image_index=data["image_index"],
             text=data.get("text", ""),
             audio_path=data.get("audio_path"),
             duration=data.get("duration", 0.0),
+            beat_id=data.get("beat_id"),
+            role=data.get("role") or "",
+            lint_issues=[str(x) for x in issues],
+            image_path=data.get("image_path"),
         )
 
 
@@ -78,7 +89,15 @@ class PanelInfo:
 
     @classmethod
     def from_dict(cls, data: Dict[str, Any]) -> "PanelInfo":
-        return cls(**data)
+        return cls(
+            page_filename=data["page_filename"],
+            page_index=int(data.get("page_index", 0)),
+            x=int(data["x"]),
+            y=int(data["y"]),
+            w=int(data["w"]),
+            h=int(data["h"]),
+            order=int(data.get("order", 0)),
+        )
 
 
 @dataclass
@@ -88,6 +107,7 @@ class Chapter:
     name: str
     images: List[ImageData] = field(default_factory=list)
     analysis_data: Dict[str, Any] = field(default_factory=dict)
+    script_meta: Dict[str, Any] = field(default_factory=dict)
     segments: List[SegmentData] = field(default_factory=list)
     # v2 alanları
     status: str = CHAPTER_STATUS_RAW          # ham / detected / completed
@@ -117,7 +137,11 @@ class Chapter:
         boxes: List[tuple],   # [(x,y,w,h), ...]
         reading_order: str = "ltr",
     ) -> None:
-        """Panel listesini günceller ve status'u 'detected' yapar."""
+        """Panel listesini günceller ve status'u 'detected' yapar.
+
+        `reading_order` API uyumluluğu için durur; sıra çağıranın verdiği
+        kutu listesidir (PanelDetector.sort_reading_order sonucu).
+        """
         self.panel_data[filename] = [
             {"x": x, "y": y, "w": w, "h": h, "order": i}
             for i, (x, y, w, h) in enumerate(boxes)
@@ -131,6 +155,7 @@ class Chapter:
             "name": self.name,
             "images": [img.to_dict() for img in self.images],
             "analysis_data": self.analysis_data,
+            "script_meta": self.script_meta,
             "segments": [seg.to_dict() for seg in self.segments],
             "status": self.status,
             "panel_data": self.panel_data,
@@ -143,6 +168,7 @@ class Chapter:
             name=data["name"],
             images=[ImageData.from_dict(i) for i in data.get("images", [])],
             analysis_data=data.get("analysis_data", {}),
+            script_meta=data.get("script_meta", {}) or {},
             segments=[SegmentData.from_dict(s) for s in data.get("segments", [])],
             status=data.get("status", CHAPTER_STATUS_RAW),
             panel_data=data.get("panel_data", {}),

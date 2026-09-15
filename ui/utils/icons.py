@@ -77,6 +77,7 @@ class Icons:
     MAP_MARKER = "mdi.map-marker"
     CALENDAR = "mdi.calendar"
     BOOK     = "mdi.book-open-variant"
+    ACCOUNT  = "mdi.account"
 
     # ── Media Ikonlari ─────────────────────────────────────────────
     PLAY     = "mdi.play"

@@ -42,13 +42,23 @@ class ImageLoadWorker(QThread):
             from pathlib import Path
             from PIL import Image as PILImage
             import warnings
-            PILImage.MAX_IMAGE_PIXELS = None
+            PILImage.MAX_IMAGE_PIXELS = 178_956_970 * 2
             warnings.filterwarnings("ignore", category=PILImage.DecompressionBombWarning)
             _logging.getLogger("PIL").setLevel(_logging.WARNING)
 
             p = Path(self._path)
             # Pillow kullan: OpenCV'nin ~65535 px yükseklik sınırı yoktur
             pil_img = PILImage.open(p).convert("RGB")
+            max_edge = 4096
+            w, h = pil_img.size
+            if max(w, h) > max_edge:
+                scale = max_edge / float(max(w, h))
+                nw, nh = max(1, int(w * scale)), max(1, int(h * scale))
+                pil_img = pil_img.resize((nw, nh), PILImage.Resampling.BILINEAR)
+                logger.info(
+                    "ImageLoadWorker downscale: %sx%s → %sx%s (%s)",
+                    w, h, nw, nh, p.name,
+                )
             img = cv2.cvtColor(np.array(pil_img), cv2.COLOR_RGB2BGR)
             pil_img.close()
 
@@ -108,7 +118,7 @@ class PanelDetectWorker(QThread):
     """
 
     progress = pyqtSignal(str)
-    finished = pyqtSignal(list)         # List[PanelBox]
+    finished = pyqtSignal(list, str)    # List[PanelBox], engine
     error = pyqtSignal(str)
 
     def __init__(
@@ -154,7 +164,7 @@ class PanelDetectWorker(QThread):
             if self._cancelled:
                 return
             self.progress.emit(f"{len(boxes)} panel ({engine}).")
-            self.finished.emit(boxes)
+            self.finished.emit(boxes, engine)
         except Exception as exc:
             logger.exception("PanelDetectWorker hatası")
             if not self._cancelled:
@@ -275,7 +285,7 @@ class StitchQualityWorker(QThread):
             from PIL import Image as PILImage
             from pathlib import Path as _Path
             import warnings
-            PILImage.MAX_IMAGE_PIXELS = None
+            PILImage.MAX_IMAGE_PIXELS = 178_956_970 * 2
             warnings.filterwarnings("ignore", category=PILImage.DecompressionBombWarning)
 
             self.progress.emit(f"{len(self._paths)} görsel birleştiriliyor (kalite: {self._scale}%)...")

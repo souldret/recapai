@@ -12,11 +12,8 @@ logger = logging.getLogger(__name__)
 
 def _srt_timestamp(seconds: float) -> str:
     """Saniyeyi SRT zaman damgası formatına çevirir: HH:MM:SS,mmm"""
-    ms = int((seconds % 1) * 1000)
-    s = int(seconds) % 60
-    m = int(seconds // 60) % 60
-    h = int(seconds // 3600)
-    return f"{h:02d}:{m:02d}:{s:02d},{ms:03d}"
+    from core.subtitle_generator import _seconds_to_srt_ts
+    return _seconds_to_srt_ts(seconds)
 
 
 def export_txt(chapter: Chapter, path: str) -> None:
@@ -83,7 +80,7 @@ def export_srt(chapter: Chapter, path: str) -> None:
         duration = seg.duration if seg.duration > 0 else _estimate_duration(text)
         start = cursor
         end = cursor + duration
-        cursor = end + 0.3   # segmentler arası 300ms boşluk
+        cursor = end
         srt_index += 1
 
         blocks.append(

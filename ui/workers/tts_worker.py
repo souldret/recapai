@@ -16,6 +16,48 @@ logger = logging.getLogger(__name__)
 # Edge-TTS için maksimum eşzamanlı görev sayısı
 EDGE_MAX_CONCURRENT = 3
 
+NARRATOR_ROLES = {
+    "cold_open", "last_time", "setup", "rehook",
+    "cliffhanger", "filler", "beat", "narrator", "",
+}
+
+
+def engine_for_segment(
+    seg,
+    *,
+    mix: bool,
+    default_engine: str,
+    narrator_engine: str = "kokoro",
+    dialogue_engine: str = "edge-tts",
+) -> str:
+    if not mix:
+        return default_engine
+    role = (getattr(seg, "role", "") or "").lower()
+    if role in NARRATOR_ROLES:
+        return narrator_engine or "kokoro"
+    return dialogue_engine or "edge-tts"
+
+
+def voice_for_engine(
+    engine_name: str,
+    *,
+    mix: bool,
+    default_engine: str,
+    default_voice: str,
+    narrator_engine: str = "kokoro",
+    narrator_voice: str = "",
+    dialogue_engine: str = "edge-tts",
+    dialogue_voice: str = "",
+) -> str:
+    if mix:
+        if engine_name == (narrator_engine or "kokoro") and narrator_voice:
+            return narrator_voice
+        if engine_name == (dialogue_engine or "edge-tts") and dialogue_voice:
+            return dialogue_voice
+    if engine_name == default_engine:
+        return default_voice
+    return dialogue_voice or narrator_voice or default_voice
+
 
 class TTSWorker(QThread):
     """
@@ -44,6 +86,12 @@ class TTSWorker(QThread):
         params: Optional[Dict[str, Any]] = None,
         cache=None,
         parent=None,
+        only_indices: Optional[List[int]] = None,
+        mix_engines: bool = False,
+        narrator_engine: str = "kokoro",
+        narrator_voice: str = "",
+        dialogue_engine: str = "edge-tts",
+        dialogue_voice: str = "",
     ) -> None:
         """
         Args:
@@ -53,6 +101,7 @@ class TTSWorker(QThread):
             audio_dir:   Segment ses dosyalarının kaydedileceği dizin.
             params:      Engine'e özgü parametreler (rate, pitch, speed vb.).
             cache:       TTSCache örneği (None ise kullanılmaz).
+            only_indices: Sadece bu segment indekslerini sentezle (None = hepsi).
         """
         super().__init__(parent)
         self.chapter     = chapter
@@ -61,8 +110,35 @@ class TTSWorker(QThread):
         self.audio_dir   = Path(audio_dir)
         self.params      = params or {}
         self.cache       = cache
+        self._only_indices = set(only_indices) if only_indices is not None else None
+        self._mix_engines = mix_engines
+        self._narrator_engine = narrator_engine or "kokoro"
+        self._narrator_voice = narrator_voice or ""
+        self._dialogue_engine = dialogue_engine or "edge-tts"
+        self._dialogue_voice = dialogue_voice or ""
         self._stop_flag  = False
         self._silence_cfg = self._load_silence_settings()
+
+    def _engine_for_segment(self, seg) -> str:
+        return engine_for_segment(
+            seg,
+            mix=self._mix_engines,
+            default_engine=self.engine_name,
+            narrator_engine=self._narrator_engine,
+            dialogue_engine=self._dialogue_engine,
+        )
+
+    def _voice_for_engine(self, engine_name: str) -> str:
+        return voice_for_engine(
+            engine_name,
+            mix=self._mix_engines,
+            default_engine=self.engine_name,
+            default_voice=self.voice,
+            narrator_engine=self._narrator_engine,
+            narrator_voice=self._narrator_voice,
+            dialogue_engine=self._dialogue_engine,
+            dialogue_voice=self._dialogue_voice,
+        )
 
     @staticmethod
     def _load_silence_settings() -> Optional[Dict[str, Any]]:
@@ -118,7 +194,9 @@ class TTSWorker(QThread):
             self.engine_name, self.voice, total,
         )
 
-        if self.engine_name == "edge-tts":
+        if self._mix_engines:
+            self._run_sequential(segments, total)
+        elif self.engine_name == "edge-tts":
             self._run_edge_parallel(segments, total)
         else:
             self._run_sequential(segments, total)
@@ -222,6 +300,7 @@ class TTSWorker(QThread):
                 asyncio.create_task(_limited(i, seg))
                 for i, seg in enumerate(segments)
                 if seg.text.strip()
+                and (self._only_indices is None or i in self._only_indices)
             ]
             await asyncio.gather(*tasks)
 
@@ -238,19 +317,24 @@ class TTSWorker(QThread):
     def _run_sequential(self, segments, total: int) -> None:
         """Kokoro ve diğerleri için sıralı sentez."""
         from core.tts_engine import TTSManager
-        engine = TTSManager.get_instance().get_engine(self.engine_name)
+        mgr = TTSManager.get_instance()
 
         for idx, seg in enumerate(segments):
             if self._stop_flag:
                 logger.info("TTSWorker: durduruldu (segment %d).", idx)
                 break
 
+            if self._only_indices is not None and idx not in self._only_indices:
+                continue
+
             if not seg.text.strip():
                 continue
 
             from core.tts_engine import normalize_caps
 
-            voice    = self.voice
+            engine_name = self._engine_for_segment(seg)
+            engine = mgr.get_engine(engine_name)
+            voice    = self._voice_for_engine(engine_name)
             out_path = str(self.audio_dir / f"segment_{idx:04d}.mp3")
             params   = self.params.copy()
             tts_text = normalize_caps(seg.text)
@@ -258,7 +342,7 @@ class TTSWorker(QThread):
             # Cache kontrolü
             cache_key = None
             if self.cache:
-                cp = {"engine": self.engine_name, "voice": voice, **params}
+                cp = {"engine": engine_name, "voice": voice, **params}
                 cache_key = self.cache.get_cache_key(tts_text, voice, cp)
                 cached = self.cache.get(cache_key)
                 if cached:
@@ -273,9 +357,8 @@ class TTSWorker(QThread):
             self.progress.emit(idx + 1, total, f"Sentezleniyor: Segment {idx+1}/{total}")
 
             try:
-                # Kokoro: speed açıkça geçir (kwargs kaybına karşı)
                 synth_kwargs = dict(params)
-                if self.engine_name == "kokoro" and "speed" in synth_kwargs:
+                if engine_name == "kokoro" and "speed" in synth_kwargs:
                     try:
                         synth_kwargs["speed"] = float(synth_kwargs["speed"])
                     except (TypeError, ValueError):

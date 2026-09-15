@@ -107,14 +107,22 @@ class ActionCard(QFrame):
         title_lbl = QLabel(title)
         title_lbl.setObjectName("cardTitle")
         layout.addWidget(title_lbl)
+        self._title_lbl = title_lbl
 
         # Açıklama
         desc_lbl = QLabel(description)
         desc_lbl.setObjectName("cardSubtitle")
         desc_lbl.setWordWrap(True)
         layout.addWidget(desc_lbl)
+        self._desc_lbl = desc_lbl
 
         layout.addStretch()
+
+    def set_title(self, title: str) -> None:
+        self._title_lbl.setText(title)
+
+    def set_subtitle(self, text: str) -> None:
+        self._desc_lbl.setText(text)
 
     def mousePressEvent(self, event) -> None:
         self.clicked.emit()

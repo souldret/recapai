@@ -227,6 +227,15 @@ class ProjectListPanel(QWidget):
             project = create_project(name, series_type=series_type)
             self.ctx.app_state.current_project = project
             self.load_projects()
+            parent = self.parent()
+            while parent is not None:
+                if hasattr(parent, "load_project_detail"):
+                    from core.project_manager import get_project_dir
+                    proj_dir = get_project_dir(project)
+                    if proj_dir:
+                        parent.load_project_detail(str(proj_dir))
+                    break
+                parent = parent.parent()
             type_label = "Manga" if series_type == "manga" else "Webtoon"
             self.ctx.app_state.status_message.emit(f"Proje oluşturuldu: {name} [{type_label}]")
         except (ValueError, FileExistsError) as exc:
@@ -250,6 +259,10 @@ class ProjectListPanel(QWidget):
         try:
             from core.project_manager import delete_project
             delete_project(info["id"])
+            cur = self.ctx.app_state.current_project
+            if cur is not None and getattr(cur, "id", None) == info["id"]:
+                self.ctx.app_state.current_chapter = None
+                self.ctx.app_state.current_project = None
             self.load_projects()
             self.project_deleted.emit()
             self.ctx.app_state.status_message.emit(f"Proje silindi: {info['name']}")
@@ -563,7 +576,11 @@ class ProjectDetailPanel(QWidget):
                 QMessageBox.warning(self, "Uyarı", f"'{chapter_name}' eklenemedi:\n{exc}")
 
         if imported:
-            save_project(self._project)
+            try:
+                save_project(self._project)
+            except Exception as exc:
+                QMessageBox.warning(self, "Kayıt hatası", f"Proje kaydedilemedi:\n{exc}")
+                return
             self._render_chapters()
             self.ctx.app_state.status_message.emit(
                 f"{imported} bölüm otomatik olarak içe aktarıldı."
@@ -587,7 +604,11 @@ class ProjectDetailPanel(QWidget):
         }
         ch.status = _cycle.get(ch.status, CHAPTER_STATUS_RAW)
         from core.project_manager import save_project
-        save_project(self._project)
+        try:
+            save_project(self._project)
+        except Exception as exc:
+            QMessageBox.warning(self, "Kayıt hatası", f"Proje kaydedilemedi:\n{exc}")
+            return
         self._render_chapters()
         self.ctx.app_state.status_message.emit(f"'{ch.name}' durumu güncellendi: {ch.status}")
 
@@ -628,7 +649,11 @@ class ProjectDetailPanel(QWidget):
             target_ch.status = CHAPTER_STATUS_DETECTED
 
         from core.project_manager import save_project
-        save_project(self._project)
+        try:
+            save_project(self._project)
+        except Exception as exc:
+            QMessageBox.warning(self, "Kayıt hatası", f"Proje kaydedilemedi:\n{exc}")
+            return
         self._render_chapters()
         self.ctx.app_state.status_message.emit(
             f"'{src_ch.name}' panel düzeni → '{target_ch.name}' kopyalandı."
@@ -649,6 +674,9 @@ class ProjectDetailPanel(QWidget):
             return
         from core.project_manager import delete_chapter
         try:
+            current = self.ctx.app_state.current_chapter
+            if current is not None and getattr(current, "id", None) == chapter_id:
+                self.ctx.app_state.current_chapter = None
             delete_chapter(self._project, chapter_id)
             self._render_chapters()
             self.ctx.app_state.status_message.emit(f"Bölüm silindi: {ch.name}")
@@ -733,6 +761,22 @@ class ProjectPage(QWidget):
         self.right_panel.clear()
 
     def showEvent(self, event) -> None:
-        """Sayfa gösterildiğinde listeyi yenile."""
+        """Sayfa gösterildiğinde listeyi yenile; seçili projeyi koru."""
+        current_id = None
+        if self.right_panel._project is not None:
+            current_id = self.right_panel._project.id
+        elif self.ctx.app_state.current_project is not None:
+            current_id = self.ctx.app_state.current_project.id
         self.left_panel.load_projects()
+        if current_id:
+            lst = self.left_panel.project_list
+            for i in range(lst.count()):
+                item = lst.item(i)
+                info = item.data(Qt.ItemDataRole.UserRole) if item else None
+                if info and info.get("id") == current_id:
+                    lst.blockSignals(True)
+                    lst.setCurrentRow(i)
+                    lst.blockSignals(False)
+                    self.load_project_detail(info["path"])
+                    break
         super().showEvent(event)

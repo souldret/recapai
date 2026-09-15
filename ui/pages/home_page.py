@@ -6,14 +6,13 @@ import logging
 import os
 import subprocess
 import sys
-from datetime import datetime
 from pathlib import Path
 from typing import Optional
 
 from PyQt6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel, QPushButton,
     QFrame, QScrollArea, QProgressBar, QTextEdit, QSizePolicy,
-    QComboBox, QDialog, QDialogButtonBox,
+    QComboBox, QDialog, QDialogButtonBox, QCheckBox,
 )
 from PyQt6.QtCore import Qt, QSize, pyqtSlot
 
@@ -33,9 +32,10 @@ logger = logging.getLogger(__name__)
 class RecentProjectItem(QFrame):
     """Son projeler listesinde tek bir satır."""
 
-    def __init__(self, project, on_open, parent=None) -> None:
+    def __init__(self, summary: dict, on_open, parent=None) -> None:
         super().__init__(parent)
         self.setObjectName("card")
+        self._summary = summary
         hbox = QHBoxLayout(self)
         hbox.setContentsMargins(14, 10, 14, 10)
         hbox.setSpacing(12)
@@ -53,14 +53,15 @@ class RecentProjectItem(QFrame):
         # Bilgi
         vbox = QVBoxLayout()
         vbox.setSpacing(2)
-        name_lbl = QLabel(project.name)
+        name_lbl = QLabel(summary.get("name", "—"))
         name_lbl.setObjectName("cardTitle")
         vbox.addWidget(name_lbl)
 
+        updated = str(summary.get("updated_at") or "")[:10] or "—"
         meta = QLabel(
-            f"{project.chapter_count} bolum  ·  "
-            f"{project.total_images} gorsel  ·  "
-            f"{project.updated_at[:10]}"
+            f"{summary.get('chapter_count', 0)} bolum  ·  "
+            f"{summary.get('image_count', 0)} gorsel  ·  "
+            f"{updated}"
         )
         meta.setObjectName("mutedLabel")
         vbox.addWidget(meta)
@@ -70,7 +71,7 @@ class RecentProjectItem(QFrame):
         btn_open = QPushButton("Ac")
         btn_open.setFixedWidth(60)
         btn_open.setObjectName("ghostButton")
-        btn_open.clicked.connect(lambda: on_open(project))
+        btn_open.clicked.connect(lambda: on_open(summary))
         hbox.addWidget(btn_open)
 
 
@@ -108,16 +109,32 @@ class PipelineConfigDialog(QDialog):
         self.chapter_combo = QComboBox()
         for ch in self._project.chapters:
             self.chapter_combo.addItem(ch.name, ch.id)
+        self.chapter_combo.currentIndexChanged.connect(self._refresh_cost)
         hbox.addWidget(self.chapter_combo, 1)
         vbox.addLayout(hbox)
 
+        self.force_check = QCheckBox("Tum asamalari bastan calistir")
+        self.force_check.setToolTip("Kapalıysa tamamlanan analiz/script/TTS atlanır.")
+        self.force_check.toggled.connect(self._refresh_cost)
+        vbox.addWidget(self.force_check)
+
+        self.ab_hook_check = QCheckBox("A/B kanca (2 cold open)")
+        self.ab_hook_check.setToolTip("İkinci kısa kancayı ilk segmente not olarak ekler.")
+        vbox.addWidget(self.ab_hook_check)
+
+        self.cost_lbl = QLabel("")
+        self.cost_lbl.setObjectName("mutedLabel")
+        self.cost_lbl.setWordWrap(True)
+        vbox.addWidget(self.cost_lbl)
+
         note = QLabel(
-            "Pipeline mevcut uygulama ayarlarini kullanir.\n"
+            "Pipeline kayitli render preset + GPU codec kullanir.\n"
             "Detayli ayarlar icin ilgili sayfalari kullanin."
         )
         note.setObjectName("mutedLabel")
         note.setWordWrap(True)
         vbox.addWidget(note)
+        self._refresh_cost()
 
         btn_box = QDialogButtonBox(
             QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel
@@ -137,6 +154,39 @@ class PipelineConfigDialog(QDialog):
             return self._project.chapters[idx]
         return None
 
+    def force_rerun(self) -> bool:
+        return bool(self.force_check.isChecked())
+
+    def hook_variants(self) -> int:
+        return 2 if self.ab_hook_check.isChecked() else 1
+
+    def _refresh_cost(self) -> None:
+        chapter = self.get_chapter()
+        if not chapter:
+            self.cost_lbl.setText("")
+            return
+        try:
+            from core.pipeline import estimate_pipeline_cost, pending_stages
+            from core.settings_manager import SettingsManager
+            sm = SettingsManager.instance()
+            vision = sm.get("defaults.vision_model", "google/gemini-2.5-flash")
+            script = sm.get("defaults.script_model", "anthropic/claude-sonnet-4")
+            force = self.force_rerun()
+            stages = pending_stages(chapter, force=force)
+            skip_a = "analysis" not in stages
+            skip_s = "script" not in stages
+            est = estimate_pipeline_cost(
+                chapter, vision, script,
+                skip_analysis=skip_a, skip_script=skip_s,
+            )
+            pending = ", ".join(stages) if stages else "render"
+            self.cost_lbl.setText(
+                f"Calisacak: {pending}\n"
+                f"Tahmini maliyet: ${est['usd_low']:.3f} – ${est['usd_high']:.3f} USD"
+            )
+        except Exception as exc:
+            self.cost_lbl.setText(f"Maliyet tahmini yok: {exc}")
+
 
 # ─────────────────────────────────────────────────────────────────────────────
 # HomePage
@@ -151,11 +201,13 @@ class HomePage(QWidget):
         self._app_state = self.ctx.app_state
         self._pipeline_worker = None
         self._pipeline_output: Optional[str] = None
+        self._live_workers: list = []
 
         self._card_projects: Optional[StatCard] = None
         self._card_chapters: Optional[StatCard] = None
         self._card_renders:  Optional[StatCard] = None
         self._card_duration: Optional[StatCard] = None
+        self._stats_loaded = False
 
         self._build_ui()
         self._connect_signals()
@@ -207,6 +259,29 @@ class HomePage(QWidget):
             card.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
             stats_layout.addWidget(card)
         main_vbox.addLayout(stats_layout)
+
+        self._api_banner = QFrame()
+        self._api_banner.setObjectName("card")
+        banner_row = QHBoxLayout(self._api_banner)
+        banner_row.setContentsMargins(16, 10, 16, 10)
+        self._api_banner_lbl = QLabel(
+            "OpenRouter API anahtari yok. Ayarlar'dan ekle — pipeline ve analiz icin gerekli."
+        )
+        self._api_banner_lbl.setWordWrap(True)
+        banner_row.addWidget(self._api_banner_lbl, 1)
+        btn_api = QPushButton("Ayarlara git")
+        btn_api.setObjectName("secondaryBtn")
+        btn_api.clicked.connect(lambda: self._navigate_named("settings"))
+        banner_row.addWidget(btn_api)
+        self._api_banner.setVisible(False)
+        main_vbox.addWidget(self._api_banner)
+
+        self._continue_card = ActionCard(
+            Icons.PIPELINE, "Devam et",
+            "Son projedeki sonraki eksik adim.",
+        )
+        self._continue_card.clicked.connect(self._continue_next_step)
+        main_vbox.addWidget(self._continue_card)
 
         # Iki sutun: son projeler | hizli baslat
         col_layout = QHBoxLayout()
@@ -407,16 +482,24 @@ class HomePage(QWidget):
 
     def showEvent(self, event) -> None:
         super().showEvent(event)
-        self._refresh_all()
+        if not self._stats_loaded:
+            self._refresh_all()
+            self._stats_loaded = True
 
     # ── Yenileme ─────────────────────────────────────────────────
 
     def _refresh_all(self) -> None:
         self._update_stats()
         self._update_recent_projects()
+        self._refresh_continue_card()
+        self._refresh_api_banner()
+        mw = self._get_main_window()
+        if mw and hasattr(mw, "refresh_sidebar_badges"):
+            mw.refresh_sidebar_badges()
 
     def _on_project_changed(self, project) -> None:
         self._refresh_all()
+        self._stats_loaded = True
 
     def _update_stats(self) -> None:
         try:
@@ -425,20 +508,13 @@ class HomePage(QWidget):
 
             total_projects = len(summaries)
             total_chapters = sum(s.get("chapter_count", 0) for s in summaries)
+            total_duration_min = sum(float(s.get("duration_sec") or 0.0) for s in summaries) / 60.0
 
             total_renders = 0
-            total_duration_min = 0.0
             for s in summaries:
                 out_dir = Path(s["path"]) / "output"
                 if out_dir.exists():
                     total_renders += len(list(out_dir.glob("*.mp4")))
-                try:
-                    proj = pm_mod.load_project(s["path"])
-                    for ch in proj.chapters:
-                        for seg in ch.segments:
-                            total_duration_min += seg.duration / 60.0
-                except Exception as exc:
-                    logger.warning("Proje süresi hesaplanırken hata oluştu (%s): %s", s.get("path"), exc)
 
             if self._card_projects:
                 self._card_projects.set_value(str(total_projects))
@@ -474,12 +550,8 @@ class HomePage(QWidget):
             recent = sorted(summaries, key=lambda s: s.get("updated_at", ""), reverse=True)[:5]
 
             for s in recent:
-                try:
-                    proj = pm_mod.load_project(s["path"])
-                    item = RecentProjectItem(proj, self._open_project)
-                    self._recent_list_layout.addWidget(item)
-                except Exception as e:
-                    logger.warning("Proje yuklenemedi (%s): %s", s.get("name"), e)
+                item = RecentProjectItem(s, self._open_project)
+                self._recent_list_layout.addWidget(item)
 
         except Exception as exc:
             logger.warning("Son projeler yuklenemedi: %s", exc)
@@ -487,9 +559,41 @@ class HomePage(QWidget):
 
     # ── Navigasyon ────────────────────────────────────────────────
 
+    def _navigate_named(self, name: str) -> None:
+        mw = self._get_main_window()
+        if mw:
+            mw.navigate_to(name)
+
+    def _continue_next_step(self) -> None:
+        from core.pipeline import next_incomplete_step
+        page, _label = next_incomplete_step(self._app_state.current_project)
+        self._navigate_named(page)
+
+    def _refresh_continue_card(self) -> None:
+        from core.pipeline import next_incomplete_step
+        page, label = next_incomplete_step(self._app_state.current_project)
+        proj = self._app_state.current_project
+        name = getattr(proj, "name", "") if proj else ""
+        title = f"Devam et{f' — {name}' if name else ''}"
+        if hasattr(self._continue_card, "set_title"):
+            self._continue_card.set_title(title)
+        if hasattr(self._continue_card, "set_subtitle"):
+            self._continue_card.set_subtitle(label)
+        else:
+            self._continue_card.setToolTip(f"{title}: {label}")
+
+    def _refresh_api_banner(self) -> None:
+        try:
+            from core.settings_manager import SettingsManager
+            has_key = SettingsManager.instance().has_api_key()
+        except Exception:
+            has_key = bool(self._app_state.get_setting("api", "openrouter_api_key", default=""))
+        self._api_banner.setVisible(not has_key)
+
     def _navigate_to_projects(self) -> None:
         mw = self._get_main_window()
-        if mw: mw.navigate_to("projects")
+        if mw:
+            mw.navigate_to("projects")
 
     def _navigate_to_images(self) -> None:
         mw = self._get_main_window()
@@ -503,7 +607,13 @@ class HomePage(QWidget):
         mw = self._get_main_window()
         if mw: mw.navigate_to("projects")
 
-    def _open_project(self, project) -> None:
+    def _open_project(self, summary: dict) -> None:
+        try:
+            import core.project_manager as pm_mod
+            project = pm_mod.load_project(summary["path"])
+        except Exception as exc:
+            logger.warning("Proje acilamadi (%s): %s", summary.get("name"), exc)
+            return
         self._app_state.current_project = project
         if project.chapters:
             self._app_state.current_chapter = project.chapters[0]
@@ -531,6 +641,10 @@ class HomePage(QWidget):
             from PyQt6.QtWidgets import QMessageBox
             QMessageBox.warning(self, "Bolum Yok", "Projede hic bolum bulunamadi.")
             return
+        if self._pipeline_worker and self._pipeline_worker.isRunning():
+            from PyQt6.QtWidgets import QMessageBox
+            QMessageBox.information(self, "Pipeline", "Zaten bir pipeline calisiyor.")
+            return
 
         dlg = PipelineConfigDialog(project, self)
         if dlg.exec() != QDialog.DialogCode.Accepted:
@@ -539,9 +653,23 @@ class HomePage(QWidget):
         chapter = dlg.get_chapter()
         if not chapter:
             return
+        if not chapter.images:
+            from PyQt6.QtWidgets import QMessageBox
+            QMessageBox.warning(
+                self, "Gorsel Yok",
+                "Secilen bolumde gorsel yok. Once Gorseller sayfasindan ekleyin.",
+            )
+            return
 
         app = self._app_state
         api_key      = app.get_setting("api", "openrouter_api_key", default="")
+        if not api_key:
+            from PyQt6.QtWidgets import QMessageBox
+            QMessageBox.warning(
+                self, "API Anahtari Eksik",
+                "Once Ayarlar sayfasindan OpenRouter API anahtarini girin.",
+            )
+            return
         vision_model = app.get_setting("defaults", "vision_model",  default="google/gemini-2.5-flash")
         script_model = app.get_setting("defaults", "script_model",  default="anthropic/claude-sonnet-4")
         tts_engine   = app.get_setting("defaults", "tts_engine",    default="edge-tts")
@@ -549,33 +677,25 @@ class HomePage(QWidget):
 
         try:
             import core.project_manager as pm_mod
+            from core.pipeline import output_filename, resolve_render_settings
             proj_dir = pm_mod.get_project_dir(project)
             if not proj_dir:
                 raise ValueError("Proje dizini bulunamadı")
-            audio_dir = str(proj_dir / "audio")
+            audio_dir = str(proj_dir / "audio" / chapter.id)
             out_dir = proj_dir / "output"
             out_dir.mkdir(parents=True, exist_ok=True)
-            ts = datetime.now().strftime("%Y%m%d_%H%M%S")
-            safe = "".join(c for c in chapter.name if c.isalnum() or c in " _-").strip()
-            render_output = str(out_dir / f"{safe}_{ts}.mp4")
+            render_output = str(out_dir / output_filename(project, chapter))
         except Exception as exc:
             logger.error("Pipeline cikti yolu hatasi: %s", exc)
             render_output = f"./output/{chapter.name}_pipeline.mp4"
             audio_dir = "./audio"
 
-        render_settings = {
-            "resolution": [1920, 1080], "fps": 30,
-            "codec": "libx264", "bitrate": "8000k",
-            "transitions": "fade", "transition_duration": 0.5,
-            "ken_burns": True, "ken_burns_intensity": 0.15,
-            "subtitles": True,
-            "subtitle_style": {
-                "font": "Arial", "size": 48,
-                "color": "#ffffff", "stroke_color": "#000000",
-                "stroke_width": 2, "position": "bottom",
-            },
-            "bgm_path": None, "bgm_volume": 0.15, "bgm_ducking": True,
-        }
+        from core.pipeline import pending_stages, resolve_render_settings
+        render_settings = resolve_render_settings(app)
+        stages = pending_stages(chapter, force=dlg.force_rerun())
+        skip_analysis = "analysis" not in stages
+        skip_script = "script" not in stages
+        skip_tts = "tts" not in stages
 
         self._pipeline_panel.setVisible(True)
         self._pipeline_title.setText(f"Pipeline: {chapter.name}")
@@ -586,12 +706,20 @@ class HomePage(QWidget):
         self._reset_stage_labels()
 
         from ui.workers.render_worker import PipelineWorker
+        from ui.workers.thread_utils import start_worker
         self._pipeline_worker = PipelineWorker(
             project=project, chapter=chapter,
             render_settings=render_settings, render_output=render_output,
             api_key=api_key, vision_model=vision_model, script_model=script_model,
-            script_style="fresh", script_length="medium", script_language="tr",
+            script_style="fresh", script_length="medium",
+            script_language=app.get_setting("app", "language", default="tr") or "tr",
             tts_engine=tts_engine, tts_voice=tts_voice, audio_dir=audio_dir,
+            parent=self,
+            skip_analysis=skip_analysis,
+            skip_script=skip_script,
+            skip_tts=skip_tts,
+            hook_variants=dlg.hook_variants(),
+            mix_engines=bool(app.get_setting("tts", "mix_engines", default=False)),
         )
         self._pipeline_worker.stage_started.connect(self._on_pipeline_stage_started)
         self._pipeline_worker.stage_progress.connect(self._on_pipeline_stage_progress)
@@ -600,12 +728,25 @@ class HomePage(QWidget):
         self._pipeline_worker.log.connect(self._pipeline_log_append)
         self._pipeline_worker.finished.connect(self._on_pipeline_finished)
         self._pipeline_worker.error.connect(self._on_pipeline_error)
-        self._pipeline_worker.start()
+        start_worker(self, self._pipeline_worker)
         self._pipeline_log_append("Pipeline baslatildi...")
+
+    def _persist_pipeline_project(self) -> None:
+        project = self._app_state.current_project
+        if not project:
+            return
+        try:
+            import core.project_manager as pm_mod
+            pm_mod.save_project(project)
+        except Exception as exc:
+            logger.error("Pipeline proje kaydi basarisiz: %s", exc)
+            from PyQt6.QtWidgets import QMessageBox
+            QMessageBox.warning(self, "Kayıt hatası", f"Pipeline sonrası proje kaydedilemedi:\n{exc}")
 
     def _cancel_pipeline(self) -> None:
         if self._pipeline_worker and self._pipeline_worker.isRunning():
-            self._pipeline_worker.cancel()
+            from ui.workers.thread_utils import abort_worker
+            abort_worker(self, self._pipeline_worker)
             self._btn_cancel_pipeline.setEnabled(False)
             self._pipeline_stage_lbl.setText("Iptal ediliyor...")
             self._pipeline_log_append("Iptal sinyali gonderildi...")
@@ -623,7 +764,8 @@ class HomePage(QWidget):
 
     @pyqtSlot(int, str)
     def _on_pipeline_stage_progress(self, percent: int, msg: str) -> None:
-        pass
+        if msg:
+            self._pipeline_stage_lbl.setText(f"{msg}  %{percent}")
 
     @pyqtSlot(str)
     def _on_pipeline_stage_finished(self, stage: str) -> None:
@@ -646,6 +788,7 @@ class HomePage(QWidget):
         self._pipeline_result_lbl.setStyleSheet("color: #22c55e; font-weight: 600;")
         self._pipeline_result_row.setVisible(True)
         self._pipeline_log_append(f"Tamamlandi: {output_path}")
+        self._persist_pipeline_project()
         self._update_stats()
 
     @pyqtSlot(str)
@@ -657,6 +800,7 @@ class HomePage(QWidget):
         self._pipeline_result_lbl.setStyleSheet("color: #ef4444; font-weight: 600;")
         self._pipeline_result_row.setVisible(True)
         self._pipeline_log_append(f"HATA: {message}")
+        self._persist_pipeline_project()
 
     def _pipeline_log_append(self, msg: str) -> None:
         self._pipeline_log.append(msg)

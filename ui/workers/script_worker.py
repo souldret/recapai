@@ -26,6 +26,7 @@ class ScriptWorker(QThread):
     chunk_received = pyqtSignal(str)
     progress = pyqtSignal(str)
     finished = pyqtSignal(list)
+    cancelled = pyqtSignal()
     error = pyqtSignal(str)
 
     def __init__(
@@ -39,6 +40,12 @@ class ScriptWorker(QThread):
         niche: str = "power_fantasy",
         use_hook: Optional[bool] = None,
         parent=None,
+        project=None,
+        target_minutes: Optional[float] = None,
+        auto_niche: bool = False,
+        include_last_time: Optional[bool] = None,
+        compile_chapters=None,
+        hook_variants: int = 1,
     ) -> None:
         super().__init__(parent)
         self._chapter = chapter
@@ -49,6 +56,12 @@ class ScriptWorker(QThread):
         self._language = language
         self._niche = niche
         self._use_hook = use_hook
+        self._project = project
+        self._target_minutes = target_minutes
+        self._auto_niche = auto_niche
+        self._include_last_time = include_last_time
+        self._compile_chapters = compile_chapters
+        self._hook_variants = max(1, int(hook_variants or 1))
         self._stop = False
 
     def stop(self) -> None:
@@ -99,13 +112,52 @@ class ScriptWorker(QThread):
                 niche=self._niche,
                 use_hook=self._use_hook,
                 stream_callback=on_chunk,
+                project=self._project,
+                target_minutes=self._target_minutes,
+                auto_niche=self._auto_niche,
+                include_last_time=self._include_last_time,
+                compile_chapters=self._compile_chapters,
+                stop_flag=lambda: self._stop,
             )
+            if self._hook_variants > 1 and not self._stop:
+                alt = generator.generate_script(
+                    chapter=self._chapter,
+                    model=self._model,
+                    style=self._style,
+                    length="short",
+                    language=self._language,
+                    niche=self._niche,
+                    use_hook=True,
+                    project=self._project,
+                    target_minutes=self._target_minutes,
+                    auto_niche=self._auto_niche,
+                    include_last_time=False,
+                    stop_flag=lambda: self._stop,
+                    assign=False,
+                )
+                alt_hook = next(
+                    (s.text for s in (alt or []) if getattr(s, "role", "") == "cold_open"),
+                    "",
+                )
+                if alt_hook:
+                    for s in segments:
+                        if getattr(s, "role", "") == "cold_open":
+                            s.text = f"{s.text}\n\n[B kanca] {alt_hook}"
+                            break
+                    self.progress.emit("A/B kanca eklendi.")
 
-            if not self._stop:
+            if self._stop:
+                logger.info("ScriptWorker durduruldu.")
+                self.cancelled.emit()
+            else:
                 self.progress.emit(f"{len(segments)} segment üretildi.")
                 self.finished.emit(segments)
 
         except ValueError as exc:
+            if self._stop or "durduruldu" in str(exc).lower():
+                logger.info("ScriptWorker durduruldu.")
+                self.cancelled.emit()
+                return
             logger.warning("ScriptWorker ValueError: %s", exc)
             self.error.emit(str(exc))
         except OpenRouterError as exc:
@@ -133,6 +185,7 @@ class RegenerateSegmentWorker(QThread):
         length: str = "medium",
         niche: str = "power_fantasy",
         parent=None,
+        project=None,
     ) -> None:
         super().__init__(parent)
         self._chapter = chapter
@@ -143,6 +196,11 @@ class RegenerateSegmentWorker(QThread):
         self._language = language
         self._length = length
         self._niche = niche
+        self._project = project
+        self._stop = False
+
+    def stop(self) -> None:
+        self._stop = True
 
     def run(self) -> None:
         from core.openrouter_client import OpenRouterClient, OpenRouterError
@@ -168,11 +226,15 @@ class RegenerateSegmentWorker(QThread):
                 client.update_api_key(self._api_key)
 
             generator = ScriptGenerator(client)
+            if self._stop:
+                return
             seg = generator.regenerate_segment(
                 self._chapter, self._segment_index,
                 self._model, self._style, self._language, self._length,
-                niche=self._niche,
+                niche=self._niche, project=self._project,
             )
+            if self._stop:
+                return
             self.finished.emit(self._segment_index, seg)
         except OpenRouterError as exc:
             logger.error("RegenerateSegmentWorker OpenRouterError: %s", exc)

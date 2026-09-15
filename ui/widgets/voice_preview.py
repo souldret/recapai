@@ -43,8 +43,9 @@ class _SynthWorker(QThread):
         text: str,
         out_path: str,
         params: Optional[dict] = None,
+        parent=None,
     ):
-        super().__init__()
+        super().__init__(parent)
         self.engine_name = engine_name
         self.voice_id    = voice_id
         self.text        = text
@@ -226,16 +227,18 @@ class VoicePreviewDialog(QDialog):
         self._tmp_path = tmp.name
         tmp.close()
 
+        from ui.workers.thread_utils import start_worker
         self._worker = _SynthWorker(
             engine_name=self._engine_name,
             voice_id=voice_id,
             text=text,
             out_path=self._tmp_path,
             params=self._params,
+            parent=self,
         )
         self._worker.done.connect(self._on_synth_done)
         self._worker.error.connect(self._on_synth_error)
-        self._worker.start()
+        start_worker(self, self._worker)
 
     def _on_synth_done(self, path: str) -> None:
         self._progress.setVisible(False)
@@ -257,10 +260,9 @@ class VoicePreviewDialog(QDialog):
         self.accept()
 
     def closeEvent(self, event) -> None:
+        from ui.workers.thread_utils import abort_worker
         if self._worker and self._worker.isRunning():
-            self._worker.terminate()
-            self._worker.wait(2000)
-        # Geçici dosyayı temizle
+            abort_worker(self, self._worker)
         if self._tmp_path:
             try:
                 Path(self._tmp_path).unlink(missing_ok=True)

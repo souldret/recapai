@@ -7,6 +7,7 @@ import hashlib
 import json
 import logging
 import shutil
+import threading
 import time
 from pathlib import Path
 from typing import Optional
@@ -30,6 +31,7 @@ class TTSCache:
         self.cache_dir.mkdir(parents=True, exist_ok=True)
         self.max_size_mb = max_size_mb
         self._index_path = self.cache_dir / "index.json"
+        self._lock = threading.RLock()
         self._index: dict = self._load_index()
         self._migrate_index()
         logger.debug("TTSCache başlatıldı: %s (limit=%.0fMB)", self.cache_dir, max_size_mb)
@@ -56,10 +58,10 @@ class TTSCache:
 
     def _save_index(self) -> None:
         try:
-            self._index_path.write_text(
-                json.dumps(self._index, indent=2, ensure_ascii=False),
-                encoding="utf-8",
-            )
+            payload = json.dumps(self._index, indent=2, ensure_ascii=False)
+            tmp = self._index_path.with_suffix(".json.tmp")
+            tmp.write_text(payload, encoding="utf-8")
+            tmp.replace(self._index_path)
         except Exception as exc:
             logger.warning("Cache index kaydedilemedi: %s", exc)
 
@@ -76,19 +78,19 @@ class TTSCache:
 
     def get(self, key: str) -> Optional[str]:
         """Cache'de varsa ses dosyasının yolunu döner, yoksa None."""
-        entry = self._index.get(key)
-        if entry is None:
-            return None
-        cached_path = Path(entry["path"])
-        if cached_path.exists():
-            entry["last_used"] = time.time()
+        with self._lock:
+            entry = self._index.get(key)
+            if entry is None:
+                return None
+            cached_path = Path(entry["path"])
+            if cached_path.exists():
+                entry["last_used"] = time.time()
+                self._save_index()
+                logger.debug("Cache hit: %s", key)
+                return str(cached_path)
+            del self._index[key]
             self._save_index()
-            logger.debug("Cache hit: %s", key)
-            return str(cached_path)
-        # Dosya silinmiş, index'ten temizle
-        del self._index[key]
-        self._save_index()
-        return None
+            return None
 
     def put(self, key: str, audio_path: str) -> None:
         """Ses dosyasını cache'e kopyalar ve index'e ekler."""
@@ -101,10 +103,11 @@ class TTSCache:
         dst = self.cache_dir / f"{key}{suffix}"
         try:
             shutil.copy2(src, dst)
-            self._index[key] = {"path": str(dst), "last_used": time.time()}
-            self._save_index()
-            logger.debug("Cache put: %s → %s", key, dst)
-            self._evict_lru()
+            with self._lock:
+                self._index[key] = {"path": str(dst), "last_used": time.time()}
+                self._save_index()
+                logger.debug("Cache put: %s → %s", key, dst)
+                self._evict_lru()
         except Exception as exc:
             logger.warning("Cache put hatası: %s", exc)
 
@@ -134,22 +137,23 @@ class TTSCache:
 
     def clear(self) -> None:
         """Tüm cache'i temizler (dosya ve alt dizinler dahil)."""
-        try:
-            for entry in self.cache_dir.iterdir():
-                if entry.name == "index.json":
-                    continue
-                try:
-                    if entry.is_dir():
-                        shutil.rmtree(entry, ignore_errors=True)
-                    else:
-                        entry.unlink(missing_ok=True)
-                except Exception as entry_exc:
-                    logger.warning("Cache girdisi silinemedi (%s): %s", entry, entry_exc)
-            self._index = {}
-            self._save_index()
-            logger.info("TTS cache temizlendi.")
-        except Exception as exc:
-            logger.error("Cache temizleme hatası: %s", exc)
+        with self._lock:
+            try:
+                for entry in self.cache_dir.iterdir():
+                    if entry.name == "index.json":
+                        continue
+                    try:
+                        if entry.is_dir():
+                            shutil.rmtree(entry, ignore_errors=True)
+                        else:
+                            entry.unlink(missing_ok=True)
+                    except Exception as entry_exc:
+                        logger.warning("Cache girdisi silinemedi (%s): %s", entry, entry_exc)
+                self._index = {}
+                self._save_index()
+                logger.info("TTS cache temizlendi.")
+            except Exception as exc:
+                logger.error("Cache temizleme hatası: %s", exc)
 
     def size_mb(self) -> float:
         """Cache dizininin toplam boyutunu MB cinsinden döner."""

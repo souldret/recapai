@@ -211,10 +211,22 @@ class OpenRouterClient:
                     )
 
                 if resp.status_code == 429:
+                    retry_after = resp.headers.get("Retry-After")
                     wait = RETRY_BASE_DELAY * (2 ** attempt)
+                    try:
+                        if retry_after:
+                            wait = max(wait, float(retry_after))
+                    except (TypeError, ValueError):
+                        pass
+                    last_exc = OpenRouterError(
+                        "Rate limit (429). Lütfen biraz bekleyip tekrar deneyin.",
+                        status_code=429,
+                    )
                     logger.warning("Rate limit, %.1f sn bekleniyor (deneme %d)…", wait, attempt + 1)
-                    time.sleep(wait)
-                    continue
+                    if attempt < RETRY_COUNT - 1:
+                        time.sleep(wait)
+                        continue
+                    raise last_exc
 
                 if resp.status_code >= 500:
                     if attempt < RETRY_COUNT - 1:
@@ -386,9 +398,11 @@ class OpenRouterClient:
             "max_tokens": max_tokens,
         }
         data = self._post_with_fallback("chat/completions", payload, fallback_models)
-        content = data["choices"][0]["message"]["content"]
+        choice = (data.get("choices") or [{}])[0]
+        msg = choice.get("message") or {}
+        content = _message_text(msg) if isinstance(msg, dict) else _message_text(choice)
         return {
-            "content": content,
+            "content": content or "",
             "model": data.get("model", model),
             "usage": data.get("usage", {}),
         }
@@ -439,12 +453,17 @@ class OpenRouterClient:
             "max_tokens": max_tokens,
             "temperature": 0.1,
         }
+        used_reasoning = False
         if "gemini" in (model or "").lower() or "thinking" in (model or "").lower():
             payload["reasoning"] = {"exclude": True}
+            used_reasoning = True
         try:
             data = self._post_with_fallback("chat/completions", payload, fallback_models)
-        except OpenRouterError:
+        except OpenRouterError as exc:
+            if not used_reasoning or exc.status_code in (401, 402):
+                raise
             payload.pop("reasoning", None)
+            logger.info("Vision reasoning parametresi kaldırılıp yeniden deneniyor.")
             data = self._post_with_fallback("chat/completions", payload, fallback_models)
         choice = (data.get("choices") or [{}])[0]
         msg = choice.get("message") or {}

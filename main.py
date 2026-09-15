@@ -52,8 +52,20 @@ LOGS_DIR.mkdir(exist_ok=True)
 
 from logging.handlers import RotatingFileHandler as _RotatingFileHandler
 
+def _resolve_log_level() -> int:
+    level_name = "INFO"
+    try:
+        import json as _json
+        if SETTINGS_PATH.exists():
+            data = _json.loads(SETTINGS_PATH.read_text(encoding="utf-8"))
+            level_name = str((data.get("app") or {}).get("log_level") or "INFO").upper()
+    except Exception:
+        level_name = "INFO"
+    return getattr(logging, level_name, logging.INFO)
+
+
 logging.basicConfig(
-    level=logging.DEBUG,
+    level=_resolve_log_level(),
     format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
     handlers=[
         _RotatingFileHandler(

@@ -11,7 +11,7 @@ from PyQt6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel, QPushButton,
     QFrame, QComboBox, QSplitter, QScrollArea, QTextEdit,
     QFileDialog, QMessageBox, QSizePolicy, QSlider, QAbstractItemView,
-    QCheckBox,
+    QCheckBox, QSpinBox,
 )
 from PyQt6.QtCore import Qt, QTimer, QSize
 from PyQt6.QtGui import QPixmap, QUndoStack, QUndoCommand
@@ -33,14 +33,24 @@ STYLES = [
 ]
 LENGTHS = ["short", "medium", "long"]
 LENGTH_LABELS = {"short": "Kısa", "medium": "Orta", "long": "Uzun"}
-LANGUAGES = [("tr", "Türkçe"), ("en", "İngilizce")]
+LANGUAGES = [("en", "İngilizce"), ("tr", "Türkçe")]
 # Niş modülleri (PDF Prompt 2) — runtime'da list_niches ile de doldurulabilir
 NICHES = [
+    ("auto",          "Otomatik"),
     ("power_fantasy", "Isekai / Power Fantasy"),
     ("romance",       "Romantik / Duygusal"),
     ("dark_action",   "Karanlık Aksiyon / İntikam"),
     ("comedy",        "Komedi / Slice of Life"),
 ]
+ROLE_LABELS = {
+    "cold_open": "Cold open",
+    "last_time": "Last time",
+    "setup": "Setup",
+    "rehook": "Rehook",
+    "cliffhanger": "Cliffhanger",
+    "filler": "Dolgu",
+    "beat": "Beat",
+}
 
 
 # ── Undo Command ───────────────────────────────────────────────────────────────
@@ -55,10 +65,16 @@ class EditSegmentCommand(QUndoCommand):
         self._new = new_text
 
     def undo(self) -> None:
-        self._card.set_text_silent(self._old)
+        try:
+            self._card.set_text_silent(self._old)
+        except RuntimeError:
+            pass
 
     def redo(self) -> None:
-        self._card.set_text_silent(self._new)
+        try:
+            self._card.set_text_silent(self._new)
+        except RuntimeError:
+            pass
 
 
 # ── Focus-aware TextEdit ───────────────────────────────────────────────────────
@@ -124,12 +140,16 @@ class SegmentCard(QFrame):
         mid.setSpacing(4)
 
         hdr = QHBoxLayout()
-        self.lbl_no = QLabel(f"Segment {self.segment_index + 1}")
+        self.lbl_no = QLabel(self._title_label())
         self.lbl_no.setObjectName("cardValue")
         hdr.addWidget(self.lbl_no)
         self.lbl_duration = QLabel(self._dur_label())
         self.lbl_duration.setObjectName("pageSubtitle")
         hdr.addWidget(self.lbl_duration)
+        self.lbl_lint = QLabel("")
+        self.lbl_lint.setObjectName("pageSubtitle")
+        self.lbl_lint.setWordWrap(True)
+        hdr.addWidget(self.lbl_lint, 1)
         hdr.addStretch()
         mid.addLayout(hdr)
 
@@ -163,9 +183,30 @@ class SegmentCard(QFrame):
         root.addLayout(btn_col)
 
         self._building = False
+        self._refresh_lint()
+
+    def _title_label(self) -> str:
+        role = ROLE_LABELS.get(getattr(self.segment, "role", "") or "", "")
+        base = f"Segment {self.segment_index + 1}"
+        return f"{base} · {role}" if role else base
 
     def _dur_label(self) -> str:
         return f"⏱ {self.segment.duration:.1f}s"
+
+    def _refresh_lint(self) -> None:
+        issues = getattr(self.segment, "lint_issues", None) or []
+        if issues:
+            err = any("jenerik" in x.lower() or "panel meta" in x.lower() or "etiket" in x.lower() for x in issues)
+            self.lbl_lint.setText("⚠ " + " · ".join(issues[:3]))
+            self.lbl_lint.setStyleSheet("color: #ef4444;" if err else "color: #f59e0b;")
+            self.setStyleSheet(
+                "#segmentCard { border: 1px solid #7f1d1d; }" if err
+                else "#segmentCard { border: 1px solid #92400e; }"
+            )
+        else:
+            self.lbl_lint.setText("")
+            self.lbl_lint.setStyleSheet("")
+            self.setStyleSheet("")
 
     def _on_text_changed(self) -> None:
         if self._building:
@@ -181,6 +222,14 @@ class SegmentCard(QFrame):
         from core.script_generator import ScriptGenerator
         self.segment.duration = ScriptGenerator.estimate_duration(new_text)
         self.lbl_duration.setText(self._dur_label())
+        from core.script_linter import lint_text
+        self.segment.lint_issues = lint_text(
+            new_text,
+            role=getattr(self.segment, "role", "") or "",
+            is_first=self.segment_index == 0,
+            is_last=False,
+        )
+        self._refresh_lint()
 
     def set_text_silent(self, text: str) -> None:
         """Undo/Redo sırasında signal döngüsünü kırar."""
@@ -197,6 +246,8 @@ class SegmentCard(QFrame):
         self.text_edit.setPlainText(segment.text)
         self._building = False
         self.lbl_duration.setText(self._dur_label())
+        self.lbl_no.setText(self._title_label())
+        self._refresh_lint()
 
 
 # ── Sol Panel: Görsel Önizleme ─────────────────────────────────────────────────
@@ -264,10 +315,17 @@ class ImagePreviewSide(QFrame):
         else:
             self.img_lbl.setText("Yüklenemedi")
 
-        self.lbl_scene.setText(f"Sahne: {analysis.get('scene', '—')[:80]}")
-        chars = ", ".join(analysis.get("characters", [])) or "—"
-        self.lbl_chars.setText(f"Karakterler: {chars}")
-        self.lbl_mood.setText(f"Atmosfer: {analysis.get('mood', '—')}")
+        scene = analysis.get("scene", "—") if isinstance(analysis, dict) else "—"
+        self.lbl_scene.setText(f"Sahne: {str(scene)[:80]}")
+        raw_chars = analysis.get("characters", []) if isinstance(analysis, dict) else []
+        try:
+            from core.script_generator import format_characters_display
+            shown = format_characters_display(raw_chars)
+        except Exception:
+            shown = "—"
+        self.lbl_chars.setText(f"Karakterler: {shown}")
+        mood = analysis.get("mood", "—") if isinstance(analysis, dict) else "—"
+        self.lbl_mood.setText(f"Atmosfer: {mood}")
 
     def clear(self) -> None:
         self.img_lbl.setPixmap(QPixmap())
@@ -287,6 +345,7 @@ class ScriptPage(QWidget):
         self.ctx = ctx
         self._worker = None
         self._regen_worker = None
+        self._live_workers: list = []
         self._cards: List[SegmentCard] = []
         self._active_card_index: int = -1
         self._undo_stack = QUndoStack(self)
@@ -311,7 +370,6 @@ class ScriptPage(QWidget):
 
         splitter = QSplitter(Qt.Orientation.Horizontal)
 
-        # Sol: görsel önizleme
         self.preview_side = ImagePreviewSide()
         self.preview_side.btn_prev.clicked.connect(self._go_prev)
         self.preview_side.btn_next.clicked.connect(self._go_next)
@@ -429,9 +487,6 @@ class ScriptPage(QWidget):
         self.length_slider.setValue(1)
         self.length_slider.setMinimumWidth(120)
         self.length_slider.setTickPosition(QSlider.TickPosition.TicksBelow)
-        self.length_slider.valueChanged.connect(
-            lambda v: self.lbl_length.setText(LENGTH_LABELS[LENGTHS[v]])
-        )
         row1b.addWidget(self.length_slider)
         self.lbl_length = QLabel("Orta")
         self.lbl_length.setMinimumWidth(48)
@@ -446,15 +501,53 @@ class ScriptPage(QWidget):
         self.lang_combo.setMinimumWidth(110)
         row1b.addWidget(self.lang_combo)
 
-        # Chapter 1 Hook (Prompt 3)
-        self.hook_check = QCheckBox("Ch.1 Hook")
+        self.hook_check = QCheckBox("Cold open")
+        self.hook_check.setChecked(True)
         self.hook_check.setToolTip(
-            "Açıkken Prompt 3 (Chapter 1 Hook) eklenir — açılış cümlesini güçlendirir.\n"
-            "Bölüm seçilince otomatik önerilir; istersen kapatabilirsin.\n"
-            "Bölüm 2+ için kapalı tut."
+            "Her videonun ilk 3 saniyesine flash-forward kanca ekler.\n"
+            "Kapalıysa düz kronolojik açılış."
         )
         row1b.addWidget(self.hook_check)
 
+        self.ab_hook_check = QCheckBox("A/B kanca")
+        self.ab_hook_check.setToolTip("İkinci kısa kancayı ilk segmente not olarak ekler.")
+        row1b.addWidget(self.ab_hook_check)
+
+        self.last_time_check = QCheckBox("Last time")
+        self.last_time_check.setToolTip(
+            "Bölüm 2+ için önceki bölümden 1-2 cümle köprü.\n"
+            "İlk bölümde otomatik kapalı önerilir."
+        )
+        row1b.addWidget(self.last_time_check)
+
+        self.auto_duration_check = QCheckBox("Süre otomatik")
+        self.auto_duration_check.setChecked(True)
+        self.auto_duration_check.setToolTip(
+            "Açıkken uzunluk kaydırıcısı hedef süreyi belirler:\n"
+            "Kısa: sıkı 1 cümle/beat · Orta: ~6 dk · Uzun: ~9 dk.\n"
+            "Kapatınca dakikayı elle seçersin (tempo ipucu, hikayeyi kesmez)."
+        )
+        self.auto_duration_check.toggled.connect(self._on_auto_duration_toggled)
+        row1b.addWidget(self.auto_duration_check)
+
+        row1b.addWidget(QLabel("Hedef dk:"))
+        self.minutes_spin = QSpinBox()
+        self.minutes_spin.setRange(2, 180)
+        self.minutes_spin.setValue(6)
+        self.minutes_spin.setEnabled(False)
+        self.minutes_spin.setToolTip(
+            "Elle hedef süre (Orta varsayılan 6 dk, Uzun 9 dk).\n"
+            "Hikayeyi kesmez, yalnızca tempo / kelime bütçesi ipucu."
+        )
+        row1b.addWidget(self.minutes_spin)
+
+        self.compile_check = QCheckBox("Derleme (tüm bölümler)")
+        self.compile_check.setToolTip(
+            "Projedeki analizli bölümleri tek recap'te birleştirir."
+        )
+        row1b.addWidget(self.compile_check)
+
+        self.length_slider.valueChanged.connect(self._on_length_changed)
         row1b.addStretch()
         vbox.addLayout(row1b)
 
@@ -538,6 +631,10 @@ class ScriptPage(QWidget):
         self.lbl_total_dur.setObjectName("pageSubtitle")
         hbox.addWidget(self.lbl_total_dur)
 
+        self.lbl_lint_summary = QLabel("Lint: 0")
+        self.lbl_lint_summary.setObjectName("pageSubtitle")
+        hbox.addWidget(self.lbl_lint_summary)
+
         hbox.addStretch()
 
         btn_txt = QPushButton("  TXT Export")
@@ -557,6 +654,14 @@ class ScriptPage(QWidget):
         hbox.addWidget(btn_srt)
 
         return frame
+
+    def _on_length_changed(self, value: int) -> None:
+        self.lbl_length.setText(LENGTH_LABELS[LENGTHS[value]])
+        defaults = {"short": 4, "medium": 6, "long": 9}
+        self.minutes_spin.setValue(defaults.get(LENGTHS[value], 6))
+
+    def _on_auto_duration_toggled(self, checked: bool) -> None:
+        self.minutes_spin.setEnabled(not checked)
 
     # ── Helpers ────────────────────────────────────────────────────
 
@@ -596,12 +701,15 @@ class ScriptPage(QWidget):
     def _get_api_key(self) -> str:
         return self.ctx.app_state.get_setting("api", "openrouter_api_key", default="")
 
-    def _get_thumbnail(self, image_index: int) -> Optional[str]:
+    def _get_thumbnail(self, image_index: int, image_path: Optional[str] = None) -> Optional[str]:
+        if image_path:
+            return image_path
         state = self.ctx.app_state
-        if not state.current_project or not state.current_chapter:
+        chapter = state.current_chapter
+        if not chapter:
             return None
-        images = state.current_chapter.images
-        if image_index >= len(images):
+        images = chapter.images
+        if image_index < 0 or image_index >= len(images):
             return None
         img = images[image_index]
         if img.thumbnail_path and Path(img.thumbnail_path).exists():
@@ -636,21 +744,23 @@ class ScriptPage(QWidget):
         if chapter:
             state.current_chapter = chapter
             self._load_segments(chapter)
-            # İlk bölüm sezgisine göre hook kutusunu öner
             try:
                 from core.script_generator import _is_first_chapter
-                self.hook_check.setChecked(_is_first_chapter(chapter))
+                first = _is_first_chapter(chapter)
+                self.hook_check.setChecked(True)
+                self.last_time_check.setChecked(not first)
             except Exception:
-                pass
+                self.hook_check.setChecked(True)
 
     # ── Segment Loading ────────────────────────────────────────────
 
     def _load_segments(self, chapter) -> None:
+        self._undo_stack.clear()
         self._clear_cards()
         if not chapter.segments:
             return
         for i, seg in enumerate(chapter.segments):
-            thumb = self._get_thumbnail(seg.image_index)
+            thumb = self._get_thumbnail(seg.image_index, getattr(seg, "image_path", None))
             self._add_card(i, seg, thumb)
         self._update_stats()
         if self._cards:
@@ -690,9 +800,17 @@ class ScriptPage(QWidget):
             return
         images = ch.images
         img_idx = card.segment.image_index
-        if img_idx < len(images):
+        extra = getattr(card.segment, "image_path", None)
+        if extra:
+            image_path = extra
+        elif isinstance(img_idx, int) and 0 <= img_idx < len(images):
             image_path = images[img_idx].path
-            analysis = ch.analysis_data.get(str(img_idx), {})
+        else:
+            image_path = None
+        if image_path:
+            analysis = ch.analysis_data.get(str(img_idx), {}) if 0 <= img_idx < len(images) else {}
+            if not isinstance(analysis, dict):
+                analysis = {}
             self.preview_side.show_panel(image_path, analysis)
 
     def _on_card_focus(self, card: SegmentCard) -> None:
@@ -724,11 +842,19 @@ class ScriptPage(QWidget):
         if not chapter:
             return
 
-        if not chapter.analysis_data:
+        has_analysis = any(str(k).isdigit() for k in (chapter.analysis_data or {}))
+        if not has_analysis and not self.compile_check.isChecked():
             QMessageBox.warning(
                 self, "Analiz Verisi Yok",
                 f"'{chapter.name}' bölümü için önce AI Analiz yapın."
             )
+            return
+
+        try:
+            from core.pipeline import require_character_bible
+            require_character_bible(state.current_project, chapter)
+        except ValueError as bible_exc:
+            QMessageBox.warning(self, "Karakter Bible", str(bible_exc))
             return
 
         api_key = self._get_api_key()
@@ -740,40 +866,83 @@ class ScriptPage(QWidget):
         model = self.model_combo.currentData() or "anthropic/claude-3.5-sonnet"
         style = self.style_combo.currentData() or "fresh"
         length = LENGTHS[self.length_slider.value()]
-        language = self.lang_combo.currentData() or "tr"
-        niche = self.niche_combo.currentData() or "power_fantasy"
-        # Checkbox doğrudan True/False; None kullanma (kullanıcı kapatınca
-        # otomatik ch.1 sezgisi hook'u tekrar açmasın)
+        language = self.lang_combo.currentData() or "en"
+        niche = self.niche_combo.currentData() or "auto"
         use_hook = self.hook_check.isChecked()
+        auto_niche = niche == "auto"
+        compile_chapters = None
+        if self.compile_check.isChecked() and state.current_project:
+            compile_chapters = [
+                ch for ch in state.current_project.chapters
+                if any(str(k).isdigit() for k in (ch.analysis_data or {}))
+            ]
+            if not compile_chapters:
+                QMessageBox.warning(self, "Derleme", "Analizli bölüm yok.")
+                return
+
+        from core.script_generator import resolve_target_minutes
+
+        target_minutes = None
+        if not self.auto_duration_check.isChecked():
+            target_minutes = float(self.minutes_spin.value())
+        resolved_minutes = resolve_target_minutes(length, target_minutes)
 
         from ui.workers.script_worker import ScriptWorker
+        from ui.workers.thread_utils import start_worker
         self._worker = ScriptWorker(
             chapter, model, api_key, style, length, language,
             niche=niche, use_hook=use_hook,
+            project=state.current_project,
+            target_minutes=target_minutes,
+            auto_niche=auto_niche,
+            include_last_time=self.last_time_check.isChecked(),
+            compile_chapters=compile_chapters,
+            hook_variants=2 if self.ab_hook_check.isChecked() else 1,
+            parent=self,
         )
         self._worker.chunk_received.connect(self._on_chunk)
         self._worker.progress.connect(self._on_progress)
         self._worker.finished.connect(self._on_generation_finished)
+        self._worker.cancelled.connect(self._on_generation_cancelled)
         self._worker.error.connect(self._on_generation_error)
 
         self._clear_cards()
         self.btn_generate.setEnabled(False)
         self.btn_stop.setEnabled(True)
-        hook_note = " + Ch.1 Hook" if use_hook else ""
+        extra = []
+        if use_hook:
+            extra.append("cold open")
+        if self.last_time_check.isChecked():
+            extra.append("last time")
+        if self.compile_check.isChecked():
+            extra.append("derleme")
+        if resolved_minutes:
+            extra.append(f"~{int(resolved_minutes)} dk")
+        else:
+            extra.append("kısa / sıkı")
+        note = (" · " + " + ".join(extra)) if extra else ""
         self.lbl_stream.setText(
             f"<span style='color:#6366f1;'><b>ÜRETİLİYOR:</b> "
-            f"{self.style_combo.currentText()} · {self.niche_combo.currentText()}{hook_note}...</span>"
+            f"{self.style_combo.currentText()} · {self.niche_combo.currentText()}{note}...</span>"
         )
         self.ctx.app_state.status_message.emit("Script üretimi başladı…")
         self._autosave_timer.start()
-        self._worker.start()
+        start_worker(self, self._worker)
 
     def _stop_generation(self) -> None:
         if self._worker and self._worker.isRunning():
-            self._worker.stop()
-            self.lbl_stream.setText("<span style='color:#ef4444;'><b>DURDURULDU:</b> İşlem kesildi.</span>")
+            from ui.workers.thread_utils import abort_worker
+            abort_worker(self, self._worker)
+            self.lbl_stream.setText(
+                "<span style='color:#ef4444;'><b>DURDURULDU:</b> Durdurma sinyali gönderildi…</span>"
+            )
+            self.btn_stop.setEnabled(False)
+            return
         self.btn_generate.setEnabled(True)
         self.btn_stop.setEnabled(False)
+        chapter = self.ctx.app_state.current_chapter
+        if chapter and chapter.segments and not self._cards:
+            self._load_segments(chapter)
 
     def _on_chunk(self, chunk: str) -> None:
         current = self.lbl_stream.text()
@@ -785,6 +954,7 @@ class ScriptPage(QWidget):
         self.ctx.app_state.status_message.emit(msg)
 
     def _on_generation_finished(self, segments: list) -> None:
+        self._autosave_timer.stop()
         self.btn_generate.setEnabled(True)
         self.btn_stop.setEnabled(False)
         self.lbl_stream.setText(f"<span style='color:#22c55e;'><b>BAŞARILI:</b> {len(segments)} segment üretildi.</span>")
@@ -799,6 +969,17 @@ class ScriptPage(QWidget):
         self._load_segments(chapter)
         self._save_project()
         self.ctx.app_state.status_message.emit(f"Script hazır: {len(segments)} segment")
+
+    def _on_generation_cancelled(self) -> None:
+        self._autosave_timer.stop()
+        self.btn_generate.setEnabled(True)
+        self.btn_stop.setEnabled(False)
+        self.lbl_stream.setText(
+            "<span style='color:#e0af68;'><b>DURDURULDU:</b> Script üretimi kesildi.</span>"
+        )
+        chapter = self.ctx.app_state.current_chapter
+        if chapter and chapter.segments and not self._cards:
+            self._load_segments(chapter)
 
     def _on_generation_error(self, msg: str) -> None:
         self.btn_generate.setEnabled(True)
@@ -834,7 +1015,7 @@ class ScriptPage(QWidget):
         # Numaraları güncelle
         for i, c in enumerate(self._cards):
             c.segment_index = i
-            c.lbl_no.setText(f"Segment {i + 1}")
+            c.lbl_no.setText(c._title_label())
 
         self._update_stats()
         self._save_project()
@@ -852,20 +1033,25 @@ class ScriptPage(QWidget):
 
         model = self.model_combo.currentData() or "anthropic/claude-3.5-sonnet"
         style = self.style_combo.currentData() or "fresh"
-        language = self.lang_combo.currentData() or "tr"
+        language = self.lang_combo.currentData() or "en"
         length = LENGTHS[self.length_slider.value()]
-        niche = self.niche_combo.currentData() or "power_fantasy"
+        niche = self.niche_combo.currentData() or "auto"
+        if niche == "auto":
+            niche = "power_fantasy"
         idx = self._cards.index(card)
 
         from ui.workers.script_worker import RegenerateSegmentWorker
+        from ui.workers.thread_utils import start_worker
         self._regen_worker = RegenerateSegmentWorker(
             chapter, idx, model, api_key, style, language, length, niche=niche,
+            project=state.current_project,
+            parent=self,
         )
         self._regen_worker.finished.connect(lambda i, s: self._on_regen_done(i, s))
         self._regen_worker.error.connect(lambda m: QMessageBox.critical(self, "Hata", m))
         card.btn_regen.setEnabled(False)
         card.btn_regen.setIcon(Icons.get(Icons.PROCESSING, color="#e0af68"))
-        self._regen_worker.start()
+        start_worker(self, self._regen_worker)
 
     def _on_regen_done(self, index: int, segment: SegmentData) -> None:
         if index < len(self._cards):
@@ -890,6 +1076,14 @@ class ScriptPage(QWidget):
         mins = int(total_dur // 60)
         secs = int(total_dur % 60)
         self.lbl_total_dur.setText(f"Tahmini süre: {mins}:{secs:02d}")
+        issues = 0
+        for card in self._cards:
+            issues += len(getattr(card.segment, "lint_issues", None) or [])
+        self.lbl_lint_summary.setText(f"Lint: {issues}")
+        if issues:
+            self.lbl_lint_summary.setStyleSheet("color: #f59e0b;")
+        else:
+            self.lbl_lint_summary.setStyleSheet("color: #22c55e;")
 
     # ── Save ───────────────────────────────────────────────────────
 
@@ -912,6 +1106,7 @@ class ScriptPage(QWidget):
                 logger.debug("Proje otomatik kaydedildi.")
             except Exception as exc:
                 logger.error("Kaydetme hatası: %s", exc)
+                QMessageBox.warning(self, "Kayıt hatası", f"Proje kaydedilemedi:\n{exc}")
 
     def _autosave(self) -> None:
         self._save_project()
@@ -958,16 +1153,31 @@ class ScriptPage(QWidget):
         state = self.ctx.app_state
         if state.current_project:
             current_data = self.chapter_combo.currentData()
+            self.chapter_combo.blockSignals(True)
             self.chapter_combo.clear()
             for ch in state.current_project.chapters:
                 self.chapter_combo.addItem(Icons.get(Icons.BOOK), ch.name, ch.id)
+            restored = False
             if current_data:
                 idx = self.chapter_combo.findData(current_data)
                 if idx >= 0:
                     self.chapter_combo.setCurrentIndex(idx)
+                    restored = True
+            elif state.current_chapter:
+                idx = self.chapter_combo.findData(state.current_chapter.id)
+                if idx >= 0:
+                    self.chapter_combo.setCurrentIndex(idx)
+                    restored = True
+            self.chapter_combo.blockSignals(False)
+            if restored or self.chapter_combo.currentIndex() >= 0:
+                self._on_chapter_changed(self.chapter_combo.currentIndex())
         super().showEvent(event)
 
     def hideEvent(self, event) -> None:
         self._autosave_timer.stop()
+        if self._worker and self._worker.isRunning():
+            self._worker.stop()
+        if self._regen_worker and self._regen_worker.isRunning() and hasattr(self._regen_worker, "stop"):
+            self._regen_worker.stop()
         self._save_project()
         super().hideEvent(event)

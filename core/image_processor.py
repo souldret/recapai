@@ -10,7 +10,8 @@ from typing import List, Dict, Optional
 from PIL import Image
 import warnings
 
-Image.MAX_IMAGE_PIXELS = None
+# Pillow varsayılanı ~89.5 MP; manhwa stitch için yükselt ama sınırsız bırakma.
+Image.MAX_IMAGE_PIXELS = 178_956_970 * 2
 warnings.filterwarnings("ignore", category=Image.DecompressionBombWarning)
 
 logger = logging.getLogger(__name__)

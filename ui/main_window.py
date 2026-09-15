@@ -150,6 +150,15 @@ class MainWindow(QMainWindow):
     def _on_project_changed(self, project) -> None:
         name = project.name if project else "—"
         self.set_active_project(name)
+        self.refresh_sidebar_badges()
+
+    def refresh_sidebar_badges(self) -> None:
+        try:
+            from core.pipeline import step_badges
+            badges = step_badges(self.ctx.app_state.current_project)
+            self.sidebar.set_step_badges(badges)
+        except Exception as exc:
+            logger.debug("Sidebar rozetleri güncellenemedi: %s", exc)
 
     def _select_page(self, index: int) -> None:
         self.sidebar.set_active(index)
@@ -164,6 +173,7 @@ class MainWindow(QMainWindow):
             QApplication.restoreOverrideCursor()
             
         self.stack.setCurrentIndex(index)
+        self.refresh_sidebar_badges()
         logger.debug("Sayfa degisti: %d", index)
 
     # Sayfa adı → index eşleşmesi
@@ -209,3 +219,54 @@ class MainWindow(QMainWindow):
         self._update_api_icon(connected)
         self.lbl_api.style().unpolish(self.lbl_api)
         self.lbl_api.style().polish(self.lbl_api)
+
+    def closeEvent(self, event) -> None:
+        """Pencere kapanırken çalışan QThread'leri durdur — aksi halde native crash."""
+        from ui.workers.thread_utils import shutdown_page
+        for page in list(getattr(self, "_page_cache", {}).values()):
+            shutdown_page(page)
+        super().closeEvent(event)
+
+    @staticmethod
+    def _stop_qthread(worker, timeout_ms: int = 3000) -> None:
+        if worker is None or not hasattr(worker, "isRunning"):
+            return
+        if not worker.isRunning():
+            return
+        if hasattr(worker, "stop"):
+            try:
+                worker.stop()
+            except Exception:
+                pass
+        if hasattr(worker, "cancel"):
+            try:
+                worker.cancel()
+            except Exception:
+                pass
+        if not worker.wait(timeout_ms):
+            try:
+                worker.terminate()
+                worker.wait(1000)
+            except Exception:
+                pass
+
+    def _shutdown_page(self, page) -> None:
+        workers = []
+        for attr in (
+            "_worker", "_pipeline_worker", "_render_worker",
+            "_preview_worker", "_regen_worker",
+            "_test_worker", "_refresh_worker", "_model_test_worker",
+            "_api_test_worker", "_kokoro_dl_worker", "_fix_worker",
+        ):
+            workers.append(getattr(page, attr, None))
+        workers.extend(getattr(page, "_regen_workers", None) or [])
+        workers.extend(getattr(page, "_live_workers", None) or [])
+        for nested_name in ("manga_panel_editor", "webtoon_editor"):
+            nested = getattr(page, nested_name, None)
+            if nested is None:
+                continue
+            workers.extend(getattr(nested, "_live_workers", None) or [])
+            for attr in ("_load_worker", "_detect_worker", "_batch_worker", "_stitch_worker"):
+                workers.append(getattr(nested, attr, None))
+        for w in workers:
+            self._stop_qthread(w)

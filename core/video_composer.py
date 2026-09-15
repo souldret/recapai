@@ -23,7 +23,7 @@ DEFAULT_SETTINGS: Dict[str, Any] = {
     "transition_duration": 0.5,
     "ken_burns": True,
     "ken_burns_intensity": 0.15,
-    "image_motion": "zoom_in",   # zoom_in, zoom_out, random (segment başına karışık)
+    "image_motion": "zoom_in",   # zoom_in, zoom_out, pan_down, pan_up, random
     "blur_background": False,
     "bg_effect": "none",
     "subtitles": True,
@@ -41,7 +41,7 @@ DEFAULT_SETTINGS: Dict[str, Any] = {
     "intro_path": None,
     "outro_path": None,
     "codec": "libx264",
-        "bitrate": "12000k",
+    "bitrate": "12000k",
     "watermark_path": None,
     "watermark_position": "br",
     "watermark_scale": 0.08,
@@ -66,6 +66,218 @@ def _parse_resolution(value: Any) -> tuple:
     )
 
 
+def _even(n: int) -> int:
+    n = int(n)
+    return n if n % 2 == 0 else n - 1
+
+
+def compute_fitted_size(img_w: int, img_h: int, canvas_w: int, canvas_h: int) -> tuple:
+    """Görseli tuvale sığdıran (letterbox) çift piksel boyut."""
+    if img_w <= 0 or img_h <= 0 or canvas_w <= 0 or canvas_h <= 0:
+        return canvas_w, canvas_h
+    scale = min(canvas_w / img_w, canvas_h / img_h)
+    fw = _even(max(2, int(img_w * scale)))
+    fh = _even(max(2, int(img_h * scale)))
+    return min(fw, canvas_w), min(fh, canvas_h)
+
+
+RANDOM_MOTIONS = ("zoom_in", "zoom_out", "pan_down", "pan_up")
+
+
+def _is_lock_error(exc: BaseException) -> bool:
+    if isinstance(exc, PermissionError):
+        return True
+    errno = getattr(exc, "errno", None)
+    winerr = getattr(exc, "winerror", None)
+    return errno in (13, 11) or winerr in (5, 32)
+
+
+def _copy_output(src: str, dst: str) -> str:
+    """Hedef dosya kilitliyse (Windows oynatıcı) benzersiz ada yazar."""
+    src_path = Path(src)
+    dst_path = Path(dst)
+    if not src_path.exists():
+        raise FileNotFoundError(f"Render çıktısı bulunamadı: {src}")
+    dst_path.parent.mkdir(parents=True, exist_ok=True)
+    try:
+        shutil.copy2(src_path, dst_path)
+        return str(dst_path)
+    except OSError as exc:
+        if not _is_lock_error(exc):
+            raise
+        stamp = datetime.now().strftime("%Y%m%d_%H%M%S_%f")
+        alt_path = dst_path.with_name(f"{dst_path.stem}_{stamp}{dst_path.suffix}")
+        shutil.copy2(src_path, alt_path)
+        logger.warning("Hedef kilitli, alternatif yazıldı: %s", alt_path)
+        return str(alt_path)
+
+
+def _zoom_expr(image_motion: str, intensity: float, n_max: int) -> str:
+    return _motion_zoompan_exprs(image_motion, intensity, n_max)[0]
+
+
+def _motion_zoompan_exprs(image_motion: str, intensity: float, n_max: int) -> tuple:
+    """(z, x, y) zoompan ifadeleri. pan_down/up sabit yakınlıkta dikey kayar.
+
+    x/y float tutulur: trunc() her karede 1px snap yapıp wiggle üretir.
+    """
+    intensity = max(0.0, float(intensity))
+    n_max = max(1, int(n_max))
+    max_zoom = 1.0 + intensity
+    x_c = "iw/2-(iw/zoom/2)"
+    y_c = "ih/2-(ih/zoom/2)"
+    if image_motion == "zoom_out":
+        return f"({max_zoom:.6f})-({intensity:.6f})*on/{n_max}", x_c, y_c
+    if image_motion == "pan_down":
+        return f"{max_zoom:.6f}", x_c, f"(ih-ih/zoom)*on/{n_max}"
+    if image_motion == "pan_up":
+        return f"{max_zoom:.6f}", x_c, f"(ih-ih/zoom)*(1-on/{n_max})"
+    return f"1+({intensity:.6f})*on/{n_max}", x_c, y_c
+
+
+def _ken_burns_fullframe(
+    src: str,
+    dst: str,
+    w: int,
+    h: int,
+    fps: int,
+    z_expr: str,
+    x_expr: Optional[str] = None,
+    y_expr: Optional[str] = None,
+) -> str:
+    """
+    Tuvalin tamamına Ken Burns.
+    zoom: merkeze dolly. pan_down/up: sabit zoom ile dikey kaydırma.
+
+    yuv444p: zoompan yuv420p'de x/y'yi chroma hizasına (2px) yapıştırır; her
+    karede 2px sıçrama wiggle üretir. Float merkez + 2x kaynak titremeyi keser.
+    """
+    if x_expr is None:
+        x_expr = "iw/2-(iw/zoom/2)"
+    if y_expr is None:
+        y_expr = "ih/2-(ih/zoom/2)"
+    src_w, src_h = w * 2, h * 2
+    return (
+        f"{src}format=yuv444p,scale={src_w}:{src_h}:flags=lanczos,"
+        f"zoompan=z='{z_expr}':x='{x_expr}':y='{y_expr}'"
+        f":d=1:s={w}x{h}:fps={fps}{dst}"
+    )
+
+
+def _place_fg_with_shadow(
+    fg_label: str,
+    bg_label: str,
+    ox: int,
+    oy: int,
+    use_shadow: bool,
+    sh_dx: int,
+    sh_dy: int,
+    sh_blur: int,
+    out_label: str = "[vpre]",
+) -> str:
+    """Görseli tuvale yerleştirir; letterbox varken yumuşak siyah silüet gölge."""
+    if not use_shadow:
+        return f"{bg_label}{fg_label}overlay={ox}:{oy}:format=auto{out_label}"
+    pad = _even(max(4, int(sh_blur) * 2))
+    ox_sh = _even(ox + sh_dx - pad)
+    oy_sh = _even(oy + sh_dy - pad)
+    return (
+        f"{fg_label}split=2[fg_main][fg_sh];"
+        f"[fg_sh]format=rgba,lutrgb=r=0:g=0:b=0,"
+        f"colorchannelmixer=aa=0.38,"
+        f"pad=iw+{pad * 2}:ih+{pad * 2}:{pad}:{pad}:black@0,"
+        f"boxblur={sh_blur}:1:{sh_blur}:1:{sh_blur}:1[sh];"
+        f"{bg_label}[sh]overlay={ox_sh}:{oy_sh}:format=auto[bgsh];"
+        f"[bgsh][fg_main]overlay={ox}:{oy}:format=auto{out_label}"
+    )
+
+
+def _finish_look_chain(src: str, dst: str, bg_effect: str) -> str:
+    parts = [
+        "eq=contrast=1.05:brightness=0.012:saturation=1.08:gamma=1.02",
+        "unsharp=3:3:0.15:3:3:0.0",
+    ]
+    if bg_effect == "vignette_blur":
+        parts.append("vignette=PI/5")
+    elif bg_effect == "cinematic":
+        parts.append("colorbalance=rs=0.04:gs=-0.01:bs=-0.05")
+        parts.append("vignette=PI/6")
+    elif bg_effect in ("gradient_tb", "gradient_lr"):
+        parts.append("vignette=PI/4.5")
+    return f"{src}{','.join(parts)}{dst}"
+
+
+def build_clip_filter(
+    canvas_w: int,
+    canvas_h: int,
+    fps: int,
+    duration: float,
+    fitted_w: int,
+    fitted_h: int,
+    *,
+    ken_burns: bool = True,
+    intensity: float = 0.15,
+    image_motion: str = "zoom_in",
+    bg_effect: str = "none",
+    blur_background: bool = False,
+    clip_index: int = 0,
+) -> str:
+    """Tek klip için filter_complex (watermark hariç, [vout] ile biter)."""
+    w, h = canvas_w, canvas_h
+    fw, fh = _even(fitted_w), _even(fitted_h)
+    ox = _even((w - fw) // 2)
+    oy = _even((h - fh) // 2)
+    use_shadow = (w - fw) >= 24 or (h - fh) >= 24
+    sh_dx = _even(max(12, w // 140))
+    sh_dy = _even(max(14, h // 80))
+    sh_blur = _even(max(14, h // 72))
+
+    if image_motion == "random":
+        import random as _motion_random
+        image_motion = _motion_random.Random(clip_index).choice(list(RANDOM_MOTIONS))
+
+    use_blur = blur_background or bg_effect in ("blur", "vignette_blur", "cinematic")
+    total_frames = max(2, int(round(duration * fps)))
+    n_max = max(1, total_frames - 1)
+
+    if use_blur:
+        blur_str = "boxblur=32:2"
+        if bg_effect == "cinematic":
+            blur_str = "boxblur=24:2,colorchannelmixer=.3:.4:.3:0:.3:.4:.3:0:.3:.4:.3"
+        elif bg_effect == "vignette_blur":
+            blur_str = "boxblur=36:2"
+        bg = (
+            f"[0:v]split=2[bg_in][fg_in];"
+            f"[bg_in]scale={w}:{h}:force_original_aspect_ratio=increase:flags=lanczos,"
+            f"crop={w}:{h},{blur_str},scale={w}:{h}:flags=lanczos[bg];"
+        )
+    elif bg_effect in ("gradient_tb", "gradient_lr"):
+        bg = (
+            f"[0:v]split=2[bg_in][fg_in];"
+            f"[bg_in]scale={w}:{h}:force_original_aspect_ratio=increase:flags=lanczos,"
+            f"crop={w}:{h},boxblur=24:2,scale={w}:{h}:flags=lanczos[bg];"
+        )
+    else:
+        bg = (
+            f"[0:v]split=2[bg_in][fg_in];"
+            f"[bg_in]scale={w}:{h}:force_original_aspect_ratio=increase:flags=lanczos,"
+            f"crop={w}:{h},lutrgb=r=0:g=0:b=0[bg];"
+        )
+
+    vf = (
+        bg
+        + f"[fg_in]scale={fw}:{fh}:flags=lanczos,format=rgba[fg];"
+        + _place_fg_with_shadow("[fg]", "[bg]", ox, oy, use_shadow, sh_dx, sh_dy, sh_blur)
+    )
+    if ken_burns:
+        z_expr, x_expr, y_expr = _motion_zoompan_exprs(image_motion, intensity, n_max)
+        vf += ";" + _ken_burns_fullframe("[vpre]", "[vkb]", w, h, fps, z_expr, x_expr, y_expr)
+        vf += ";" + _finish_look_chain("[vkb]", "[vout]", bg_effect)
+    else:
+        vf += ";" + _finish_look_chain("[vpre]", "[vout]", bg_effect)
+    return vf
+
+
 class VideoComposer:
     """
     FFmpeg kullanarak video birleştirir.
@@ -88,7 +300,7 @@ class VideoComposer:
         self.settings["subtitle_style"] = {**default_sub, **user_sub}
 
         self._width, self._height = _parse_resolution(self.settings.get("resolution", [1920, 1080]))
-        # yuv420p + Ken Burns crop: 4'un kati (chroma + merkez /4)
+        # Son encode yuv420p: 4'un katı (chroma + merkez /4)
         self._width -= self._width % 4
         self._height -= self._height % 4
         self._fps = int(self.settings.get("fps", 30) or 30)
@@ -236,7 +448,7 @@ class VideoComposer:
             # 6) Final kopyalama
             _cb(97, "—")
             self._log("Sonuç kopyalanıyor...")
-            shutil.copy2(final_tmp, output_path)
+            output_path = _copy_output(final_tmp, output_path)
             _cb(100, "0s")
             self._log(f"Render tamamlandı: {output_path}")
             logger.info("Render tamamlandı: %s", output_path)
@@ -296,7 +508,8 @@ class VideoComposer:
                 trim_out,
             ])
 
-            shutil.copy2(trim_out if Path(trim_out).exists() else merged, output_path)
+            src = trim_out if Path(trim_out).exists() else merged
+            output_path = _copy_output(src, output_path)
             _cb(100, "0s")
             return output_path
 
@@ -354,23 +567,24 @@ class VideoComposer:
                 return None
 
             img_path: Optional[str] = None
-            if seg.image_index < len(images):
+            extra_path = getattr(seg, "image_path", None)
+            if extra_path and Path(str(extra_path)).exists():
+                img_path = str(extra_path)
+            elif 0 <= getattr(seg, "image_index", -1) < len(images):
                 img_path = images[seg.image_index].path
 
+            duration = _segment_clip_duration(seg)
+            clip_out = str(tmp_dir / f"clip_{idx:04d}.mp4")
+
             if not img_path or not Path(img_path).exists():
-                logger.warning("Görsel bulunamadı segment %d için, atlanıyor.", idx)
+                logger.warning(
+                    "Görsel bulunamadı segment %d için, placeholder klip üretiliyor.", idx,
+                )
+                if self._make_placeholder_clip(duration, clip_out, cancel_check):
+                    return clip_out
                 return None
 
             audio_path = seg.audio_path
-            duration = seg.duration
-            if duration <= 0:
-                if audio_path and Path(audio_path).exists():
-                    from core.ffmpeg_helper import get_media_duration
-                    duration = get_media_duration(audio_path)
-                if duration <= 0:
-                    duration = 4.0  # fallback
-
-            clip_out = str(tmp_dir / f"clip_{idx:04d}.mp4")
             try:
                 ok = self._make_clip(
                     img_path, audio_path, duration, clip_out,
@@ -385,11 +599,14 @@ class VideoComposer:
                     )
             except Exception as exc:
                 logger.error("Klip oluşturma istisnası (segment %d): %s", idx, exc)
-                return None
+                ok = False
 
             if ok and self._clip_file_ok(clip_out):
                 return clip_out
-            logger.warning("Klip oluşturulamadı: %s", clip_out)
+            logger.warning("Klip oluşturulamadı, placeholder kullanılıyor: %s", clip_out)
+            placeholder = str(tmp_dir / f"clip_{idx:04d}_ph.mp4")
+            if self._make_placeholder_clip(duration, placeholder, cancel_check):
+                return placeholder
             return None
 
         max_workers = self._clip_worker_count()
@@ -417,18 +634,38 @@ class VideoComposer:
                         pending.cancel()
                     break
 
-        # Sıralı listeye çevir (concat sıralaması önemli)
-        clip_paths: List[str] = [
-            results[i] for i in range(total) if results.get(i)
-        ]
+        # Yoğun liste: başarısız klipler placeholder ile doldurulur.
+        # Seyrek concat altyazı/ses zaman çizelgesini kaydırır.
+        clip_paths: List[str] = []
+        missing = 0
+        for i in range(total):
+            path = results.get(i)
+            if path:
+                clip_paths.append(path)
+                continue
+            if cancel_check and cancel_check():
+                break
+            duration = _segment_clip_duration(segments[i])
+            placeholder = str(tmp_dir / f"clip_{i:04d}_gap.mp4")
+            if self._make_placeholder_clip(duration, placeholder, cancel_check):
+                clip_paths.append(placeholder)
+                missing += 1
+            else:
+                missing += 1
+                logger.error("Placeholder klip de üretilemedi (segment %d).", i)
 
         if not clip_paths:
             raise RuntimeError(
                 f"0/{total} klip üretilebildi. Görseller veya FFmpeg filtresi hatalı olabilir."
             )
-        if len(clip_paths) < total:
+        if missing:
             logger.warning(
-                "Bazı klipler atlandı: %d/%d başarılı.", len(clip_paths), total
+                "Bazı klipler placeholder ile dolduruldu: %d/%d.", missing, total,
+            )
+        if len(clip_paths) != total and not (cancel_check and cancel_check()):
+            logger.warning(
+                "Klip sayısı segment sayısıyla uyuşmuyor: %d/%d — altyazı kayabilir.",
+                len(clip_paths), total,
             )
         return clip_paths
 
@@ -444,192 +681,35 @@ class VideoComposer:
     ) -> bool:
         """
         Tek bir görsel + ses'ten MP4 klip üretir.
-        Ken Burns: zoompan (merkeze, 2x kaynak).
+        Ken Burns tuvalin tamamına uygulanır (görsel ekrana yaklaşır).
         Arka plan: none, blur, gradient_tb, gradient_lr, vignette_blur, cinematic
         """
         w, h = self._width, self._height
-        fps = self._fps
         ken_burns = self.settings.get("ken_burns", True) if ken_burns_override is None else ken_burns_override
         intensity = self.settings.get("ken_burns_intensity", 0.15)
         blur_bg = self.settings.get("blur_background", False)
         bg_effect = self.settings.get("bg_effect", "none")
         image_motion = self.settings.get("image_motion", "zoom_in")
 
-        # "random" modu: her segment için zoom_in/zoom_out arasından deterministik
-        # (ama görünüşte rastgele) seçim yapılır. clip_index tohum olarak kullanılır
-        # ki paralel klip üretiminde thread-safe olsun ve aynı render tekrar
-        # çalıştırıldığında aynı sonucu üretsin (reprodüksiyon kolaylığı).
-        if image_motion == "random":
-            import random as _motion_random
-            image_motion = _motion_random.Random(clip_index).choice(["zoom_in", "zoom_out"])
-
-        max_zoom = 1.0 + intensity
-
         out_fps = self._clip_fps
 
-        # bg_effect "blur" ise blur_bg de açık say
-        use_blur = blur_bg or bg_effect in ("blur", "vignette_blur", "cinematic")
+        try:
+            from PIL import Image as _PILImage
+            with _PILImage.open(image_path) as _im:
+                iw, ih = _im.size
+        except Exception:
+            iw, ih = w, h
+        fw, fh = compute_fitted_size(iw, ih, w, h)
 
-        # Ken Burns: zoompan (scale eval=frame Windows'ta 0xC0000005 crash).
-        # Once letterbox, 2x scale, merkeze zoom. zoom=1 tam kadraj.
-        total_frames = max(2, int(round(duration * out_fps)))
-        n_max = max(1, total_frames - 1)
-
-        def _fitted_size() -> tuple:
-            try:
-                from PIL import Image as _PILImage
-                with _PILImage.open(image_path) as _im:
-                    iw, ih = _im.size
-            except Exception:
-                return w, h
-            if iw <= 0 or ih <= 0:
-                return w, h
-            scale = min(w / iw, h / ih)
-            fw = max(2, int(iw * scale))
-            fh = max(2, int(ih * scale))
-            fw -= fw % 2
-            fh -= fh % 2
-            return min(fw, w), min(fh, h)
-
-        fw, fh = _fitted_size()
-        ox = (w - fw) // 2
-        oy = (h - fh) // 2
-        use_shadow = (w - fw) >= 24 or (h - fh) >= 24
-        sh_dx = max(8, w // 160)
-        sh_dy = max(10, h // 90)
-        sh_blur = max(10, h // 90)
-
-        def _build_kenburns_vf(
-            input_label: str,
-            out_label: str = "[vout]",
-            out_w: Optional[int] = None,
-            out_h: Optional[int] = None,
-        ) -> str:
-            ow = out_w if out_w is not None else w
-            oh = out_h if out_h is not None else h
-            src_w, src_h = ow * 2, oh * 2
-            if image_motion == "zoom_out":
-                z_expr = f"({max_zoom:.6f})-({intensity:.6f})*on/{n_max}"
-            else:
-                z_expr = f"1+({intensity:.6f})*on/{n_max}"
-            return (
-                f"{input_label}scale={src_w}:{src_h}:flags=lanczos,"
-                f"zoompan=z='{z_expr}':"
-                f"x='trunc(iw/2-(iw/zoom/2))':y='trunc(ih/2-(ih/zoom/2))'"
-                f":d=1:s={ow}x{oh}:fps={out_fps}{out_label}"
-            )
-
-        def _place_fg(fg_label: str, bg_label: str, out_label: str = "[vpre]") -> str:
-            if not use_shadow:
-                return (
-                    f"{bg_label}{fg_label}overlay={ox}:{oy}:format=auto{out_label}"
-                )
-            return (
-                f"{fg_label}split=2[fg_main][fg_sh];"
-                f"[fg_sh]format=rgba,"
-                f"colorchannelmixer=0:0:0:0:0:0:0:0:0:0:0:0:0:0:0:0.32,"
-                f"boxblur={sh_blur}:1[sh];"
-                f"{bg_label}[sh]overlay={ox + sh_dx}:{oy + sh_dy}:format=auto[bgsh];"
-                f"[bgsh][fg_main]overlay={ox}:{oy}:format=auto{out_label}"
-            )
-
-        def _finish_look(src: str = "[vpre]", dst: str = "[vout]") -> str:
-            parts = [
-                "eq=contrast=1.05:brightness=0.012:saturation=1.08:gamma=1.02",
-                "unsharp=5:5:0.4:5:5:0.0",
-            ]
-            if bg_effect == "vignette_blur":
-                parts.append("vignette=PI/5")
-            elif bg_effect == "cinematic":
-                parts.append("colorbalance=rs=0.04:gs=-0.01:bs=-0.05")
-                parts.append("vignette=PI/6")
-            elif bg_effect in ("gradient_tb", "gradient_lr"):
-                parts.append("vignette=PI/4.5")
-            return f"{src}{','.join(parts)}{dst}"
-
-        # ── VF zinciri oluştur ─────────────────────────────────────────────────
-        # NOT: boxblur=radius:power — 2. parametre (power) filtrenin kaç kez
-        # üst üste uygulanacağını belirtir. radius ile aynı büyük değer verilirse
-        # (örn. 40:40) render süresi katlanarak artar (44s'ye kadar tek klip için).
-        # power değeri her zaman küçük (1-2) tutulmalı.
-        if use_blur:
-            # Arka plan blur filtresi
-            blur_str = "boxblur=32:2"
-            if bg_effect == "cinematic":
-                blur_str = "boxblur=24:2,colorchannelmixer=.3:.4:.3:0:.3:.4:.3:0:.3:.4:.3"
-            elif bg_effect == "vignette_blur":
-                blur_str = "boxblur=36:2"
-
-            bg = (
-                f"[0:v]split=2[bg_in][fg_in];"
-                f"[bg_in]scale={w}:{h}:force_original_aspect_ratio=increase:flags=lanczos,"
-                f"crop={w}:{h},{blur_str},scale={w}:{h}:flags=lanczos[bg];"
-            )
-            if not ken_burns:
-                vf = (
-                    bg
-                    + f"[fg_in]scale={fw}:{fh}:flags=lanczos,format=rgba[fg];"
-                    + _place_fg("[fg]", "[bg]")
-                    + ";" + _finish_look()
-                )
-            else:
-                kb = _build_kenburns_vf("[fg_fit]", "[fg]", fw, fh) + ";"
-                vf = (
-                    bg
-                    + f"[fg_in]scale={fw}:{fh}:flags=lanczos,format=rgba[fg_fit];"
-                    + kb
-                    + _place_fg("[fg]", "[bg]")
-                    + ";" + _finish_look()
-                )
-
-        elif bg_effect in ("gradient_tb", "gradient_lr"):
-            # Gradient: blur gibi split+overlay — color source filter yok
-            grad_blur = "boxblur=24:2"
-            bg = (
-                f"[0:v]split=2[bg_in][fg_in];"
-                f"[bg_in]scale={w}:{h}:force_original_aspect_ratio=increase:flags=lanczos,"
-                f"crop={w}:{h},{grad_blur},scale={w}:{h}:flags=lanczos[bg];"
-            )
-            if not ken_burns:
-                vf = (
-                    bg
-                    + f"[fg_in]scale={fw}:{fh}:flags=lanczos,format=rgba[fg];"
-                    + _place_fg("[fg]", "[bg]")
-                    + ";" + _finish_look()
-                )
-            else:
-                kb = _build_kenburns_vf("[fg_fit]", "[fg]", fw, fh) + ";"
-                vf = (
-                    bg
-                    + f"[fg_in]scale={fw}:{fh}:flags=lanczos,format=rgba[fg_fit];"
-                    + kb
-                    + _place_fg("[fg]", "[bg]")
-                    + ";" + _finish_look()
-                )
-
-        else:
-            # Siyah arka plan + drop shadow (portre panellerde görünür)
-            bg = (
-                f"[0:v]split=2[bg_in][fg_in];"
-                f"[bg_in]scale={w}:{h}:force_original_aspect_ratio=increase:flags=lanczos,"
-                f"crop={w}:{h},lutrgb=r=0:g=0:b=0[bg];"
-            )
-            if not ken_burns:
-                vf = (
-                    bg
-                    + f"[fg_in]scale={fw}:{fh}:flags=lanczos,format=rgba[fg];"
-                    + _place_fg("[fg]", "[bg]")
-                    + ";" + _finish_look()
-                )
-            else:
-                kb = _build_kenburns_vf("[fg_fit]", "[fg]", fw, fh) + ";"
-                vf = (
-                    bg
-                    + f"[fg_in]scale={fw}:{fh}:flags=lanczos,format=rgba[fg_fit];"
-                    + kb
-                    + _place_fg("[fg]", "[bg]")
-                    + ";" + _finish_look()
-                )
+        vf = build_clip_filter(
+            w, h, out_fps, duration, fw, fh,
+            ken_burns=ken_burns,
+            intensity=intensity,
+            image_motion=image_motion,
+            bg_effect=bg_effect,
+            blur_background=blur_bg,
+            clip_index=clip_index,
+        )
 
         # Watermark overlay
         watermark_path = self.settings.get("watermark_path")
@@ -707,7 +787,7 @@ class VideoComposer:
                 log_dir.mkdir(exist_ok=True)
                 ts = datetime.now().strftime("%Y%m%d_%H%M%S_%f")
                 (log_dir / f"vf_fail_{ts}.txt").write_text(
-                    f"image_motion={image_motion}\nbg_effect={bg_effect}\nuse_blur={use_blur}\n"
+                    f"image_motion={image_motion}\nbg_effect={bg_effect}\nblur_background={blur_bg}\n"
                     f"rc={ret}\n\nVF:\n{vf}\n\nCMD:\n{' '.join(str(a) for a in cmd)}",
                     encoding="utf-8",
                 )
@@ -720,6 +800,40 @@ class VideoComposer:
             return False
         if not self._clip_file_ok(output_path):
             logger.error("Klip dosyasi bos veya gecersiz: %s", output_path)
+            try:
+                Path(output_path).unlink(missing_ok=True)
+            except Exception:
+                pass
+            return False
+        return True
+
+    def _make_placeholder_clip(
+        self,
+        duration: float,
+        output_path: str,
+        cancel_check: Optional[Callable[[], bool]] = None,
+    ) -> bool:
+        """Sessiz siyah klip — başarısız segmentin süresini korur, altyazı kaymaz."""
+        duration = max(0.1, float(duration or 4.0))
+        w, h = self._width, self._height
+        fps = self._clip_fps
+        cmd = [
+            "-y",
+            "-f", "lavfi", "-i", f"color=c=black:s={w}x{h}:r={fps}",
+            "-f", "lavfi", "-i", "anullsrc=channel_layout=stereo:sample_rate=44100",
+            "-c:v", self._codec, *self._quality_args(),
+            "-c:a", "aac", "-b:a", "192k",
+            "-ar", "44100", "-ac", "2",
+            "-t", str(duration),
+            "-pix_fmt", "yuv420p",
+            "-r", str(fps),
+            "-shortest",
+            "-movflags", "+faststart",
+            output_path,
+        ]
+        ret = self._run(cmd, cancel_check)
+        if ret != 0 or not self._clip_file_ok(output_path):
+            logger.error("Placeholder klip oluşturulamadı: %s", output_path)
             try:
                 Path(output_path).unlink(missing_ok=True)
             except Exception:
@@ -1148,7 +1262,7 @@ class VideoComposer:
         output_path: str,
         cancel_check: Optional[Callable[[], bool]] = None,
     ) -> None:
-        """ASS altyazıları video üzerine yazar (FFmpeg subtitles filtresi).
+        r"""ASS altyazıları video üzerine yazar (FFmpeg subtitles filtresi).
 
         Windows yol güvenliği:
         - Ters slash → ileri slash
@@ -1312,14 +1426,26 @@ class VideoComposer:
         GPU encoder'ları (nvenc/qsv/amf) -crf desteklemez, kendi kalite
         parametrelerine sahiptir. CRF 18 ≈ görsel olarak kayıpsıza yakın.
         """
+        bitrate = str(self._bitrate or "").strip()
+        use_bitrate = bool(self.settings.get("use_bitrate")) and bool(bitrate)
         if self._codec == "h264_nvenc":
+            if use_bitrate:
+                return ["-preset", "p5", "-rc", "vbr", "-b:v", bitrate, "-maxrate", bitrate]
             return ["-preset", "p5", "-rc", "vbr", "-cq", str(crf), "-b:v", "0"]
         if self._codec == "h264_qsv":
+            if use_bitrate:
+                return ["-preset", "medium", "-b:v", bitrate]
             return ["-preset", "medium", "-global_quality", str(crf)]
         if self._codec == "h264_amf":
+            if use_bitrate:
+                return ["-quality", "quality", "-b:v", bitrate]
             return ["-quality", "quality", "-qp_i", str(crf), "-qp_p", str(crf)]
         if self._codec == "libx265":
+            if use_bitrate:
+                return ["-preset", "medium", "-b:v", bitrate, "-tag:v", "hvc1"]
             return ["-preset", "medium", "-crf", str(crf), "-tag:v", "hvc1"]
+        if use_bitrate:
+            return ["-preset", "medium", "-b:v", bitrate, "-profile:v", "high"]
         return ["-preset", "medium", "-crf", str(crf), "-profile:v", "high"]
 
     def _run(self, args: List[str], cancel_check: Optional[Callable[[], bool]] = None) -> int:
@@ -1385,6 +1511,21 @@ class VideoComposer:
 # Yardımcı
 # ─────────────────────────────────────────────────────────────────────────────
 
+def _segment_clip_duration(seg, default: float = 4.0) -> float:
+    """Klip ve altyazı için aynı süre kaynağı."""
+    duration = float(getattr(seg, "duration", 0) or 0.0)
+    if duration > 0:
+        return duration
+    audio_path = getattr(seg, "audio_path", None)
+    if audio_path and Path(str(audio_path)).exists():
+        try:
+            from core.ffmpeg_helper import get_media_duration
+            duration = float(get_media_duration(str(audio_path)) or 0.0)
+        except Exception:
+            duration = 0.0
+    return duration if duration > 0 else default
+
+
 def _clamp_chapter_to_duration(chapter, max_duration: float):
     """Verilen süreyle sınırlı bir Chapter kopyası döndürür."""
     import copy
@@ -1422,17 +1563,26 @@ def estimate_render_size(chapter, settings: Dict[str, Any]) -> Dict[str, Any]:
     if outro and Path(outro).exists():
         total_sec += get_media_duration(outro)
 
-    # Bit hızına göre tahmini boyut (bitrate MB/s)
-    bitrate_str = settings.get("bitrate", "8000k")
-    try:
-        if bitrate_str.endswith("k"):
-            bitrate_kbps = float(bitrate_str[:-1])
-        elif bitrate_str.endswith("M"):
-            bitrate_kbps = float(bitrate_str[:-1]) * 1000
-        else:
-            bitrate_kbps = float(bitrate_str) / 1000
-    except ValueError:
-        bitrate_kbps = 8000.0
+    # Encode varsayılanı CRF 18'dir; bitrate yalnızca use_bitrate açıksa kullanılır.
+    if settings.get("use_bitrate") and settings.get("bitrate"):
+        bitrate_str = str(settings.get("bitrate") or "8000k")
+        try:
+            if bitrate_str.lower().endswith("k"):
+                bitrate_kbps = float(bitrate_str[:-1])
+            elif bitrate_str.lower().endswith("m"):
+                bitrate_kbps = float(bitrate_str[:-1]) * 1000
+            else:
+                bitrate_kbps = float(bitrate_str) / 1000
+        except ValueError:
+            bitrate_kbps = 8000.0
+    else:
+        # CRF 18 ≈ 1080p30 için kabaca 8–12 Mbps; çözünürlüğe göre ölçekle.
+        res = settings.get("resolution") or [1920, 1080]
+        try:
+            pixels = int(res[0]) * int(res[1])
+        except (TypeError, ValueError, IndexError):
+            pixels = 1920 * 1080
+        bitrate_kbps = max(4000.0, min(20000.0, 8000.0 * (pixels / (1920 * 1080))))
 
     # video + audio (128k)
     total_bits = (bitrate_kbps + 192) * total_sec

@@ -9,14 +9,17 @@ import re
 
 from core.script_generator import (
     _sanitize_characters,
+    _sanitize_character_records,
     _scrub_generic_labels,
     _is_first_chapter,
+    _is_generic_character_label,
+    format_characters_display,
     list_niches,
     CHUNK_SIZE,
     DEFAULT_NICHE,
     VALID_NICHES,
 )
-from core.models import Chapter
+from core.models import Chapter, Project
 
 
 class TestSanitizeCharacters:
@@ -107,12 +110,103 @@ class TestScrubGenericLabels:
         t = _scrub_generic_labels("Jin-Woo draws his blade.", "en")
         assert "Jin-Woo" in t
 
-    def test_keeps_visual_hints(self):
-        # Kısa görsel ipucu silinmemeli
-        result = _sanitize_characters(["kırmızı pelerinli", "saçlı kız", "Protagonist"], "tr")
-        assert "Protagonist" not in result
-        assert "kırmızı pelerinli" in result
-        assert "saçlı kız" in result
+    def test_drops_visual_hints(self):
+        result = _sanitize_characters(
+            ["kırmızı pelerinli", "saçlı kız", "blonde woman", "dark hair man", "Protagonist", "Jin-Woo"],
+            "tr",
+        )
+        assert result == ["Jin-Woo"]
+
+    def test_generic_label_flags(self):
+        assert _is_generic_character_label("blonde woman")
+        assert _is_generic_character_label("dark-haired man")
+        assert _is_generic_character_label("kızıl saçlı elf")
+        assert _is_generic_character_label("yellow hair")
+        assert _is_generic_character_label("black hair")
+        assert _is_generic_character_label("şövalye")
+        assert _is_generic_character_label("knight")
+        assert not _is_generic_character_label("Jin-Woo")
+        assert not _is_generic_character_label("Cha Hae-In")
+
+    def test_drops_yellow_hair_and_knight(self):
+        result = _sanitize_characters(
+            ["yellow hair", "black hair", "şövalye", "genç adam", "Varkas"],
+            language="en",
+        )
+        assert result == ["Varkas"]
+
+    def test_records_keep_unnamed_appearance(self):
+        recs = _sanitize_character_records(
+            [{"name": "", "gender": "male", "appearance": "black hair", "aliases": []}],
+            language="en",
+        )
+        assert len(recs) == 1
+        assert recs[0]["name"] == ""
+        assert recs[0]["appearance"] == "black hair"
+        assert recs[0]["gender"] == "male"
+
+    def test_known_name_resolves_generic(self):
+        result = _sanitize_characters(
+            [{"name": "", "appearance": "black hair"}],
+            language="en",
+            known_names=["Jin-Woo"],
+        )
+        # known_names exact-key eşleşmesi appearance'ı çözmez; isim listesi boş kalır
+        assert result == []
+
+    def test_project_resolves_appearance_to_canonical(self):
+        from core.character_bible import upsert_characters
+        p = Project(id="p", name="t", created_at="", updated_at="")
+        upsert_characters(p, [{
+            "name": "Jin-Woo",
+            "aliases": ["Sung"],
+            "gender": "male",
+            "appearance": "black hair",
+        }], "c1")
+        result = _sanitize_characters(
+            [{"name": "", "appearance": "black hair"}],
+            language="en",
+            project=p,
+        )
+        assert result == ["Jin-Woo"]
+
+    def test_scrub_cast_replaces_yellow_hair(self):
+        t = _scrub_generic_labels(
+            "The yellow hair walks in. The black hair follows.",
+            "en",
+            cast=[{"name": "Cha Hae-In", "appearance": "yellow hair", "gender": "female"}],
+        )
+        low = t.lower()
+        assert "yellow hair" not in low
+        assert "Cha Hae-In" in t
+
+    def test_scrub_project_replaces_black_hair(self):
+        from core.character_bible import upsert_characters
+        p = Project(id="p", name="t", created_at="", updated_at="")
+        upsert_characters(p, [{
+            "name": "Jin-Woo",
+            "gender": "male",
+            "appearance": "black hair",
+        }], "c1")
+        t = _scrub_generic_labels("The black hair draws a blade.", "en", project=p)
+        assert "black hair" not in t.lower()
+        assert "Jin-Woo" in t
+
+    def test_scrub_blonde_woman_to_she_without_cast(self):
+        t = _scrub_generic_labels("The blonde woman opens the door.", "en")
+        assert "blonde woman" not in t.lower()
+        assert "she" in t.lower()
+
+    def test_format_characters_display_named_and_unnamed(self):
+        text = format_characters_display([
+            {"name": "Jin-Woo", "appearance": "black hair"},
+            {"name": "", "appearance": "yellow hair"},
+        ])
+        assert "Jin-Woo" in text
+        assert "+1" in text
+
+    def test_format_characters_display_empty(self):
+        assert format_characters_display([]) == "—"
 
 
 class TestChunkSize:
@@ -188,5 +282,9 @@ class TestNichesAndHook:
             (Path(__file__).resolve().parent.parent / "config" / "prompts.json").read_text(encoding="utf-8")
         )
         assert "script_prompt_retention" in data
+        assert "script_outline" in data
+        assert "script_voiceover" in data
         assert "{retention_layer}" in data["script_generation"]
-        assert "kanca" in data["script_prompt_retention"].lower() or "hook" in data["script_prompt_retention"].lower()
+        assert "{beats_block}" in data["script_voiceover"]
+        ret = data["script_prompt_retention"].lower()
+        assert "kanca" in ret or "hook" in ret or "cold" in ret

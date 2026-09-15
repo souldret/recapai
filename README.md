@@ -30,7 +30,7 @@ python main.py
 
 Opsiyonel yerel TTS (Kokoro): `python tools/install_dependencies.py`
 
-Test: `pytest tests/ -q`
+Test: `pytest tests/ -q` (GitHub Actions: Python 3.10–3.12)
 
 ## Özellikler
 

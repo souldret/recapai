@@ -9,25 +9,29 @@ from typing import Dict, List, Optional, Any
 logger = logging.getLogger(__name__)
 
 
-def _seconds_to_srt_ts(seconds: float) -> str:
-    """Saniyeyi SRT zaman damgası formatına çevirir: HH:MM:SS,mmm"""
+def _split_hms(seconds: float, frac_digits: int) -> tuple:
+    """Saniyeyi saat/dakika/saniye + kesir olarak böler; overflow taşıması yapar."""
     if seconds < 0:
         seconds = 0.0
-    h = int(seconds // 3600)
-    m = int((seconds % 3600) // 60)
-    s = int(seconds % 60)
-    ms = int(round((seconds - int(seconds)) * 1000))
+    scale = 10 ** frac_digits
+    total = int(round(seconds * scale))
+    frac = total % scale
+    whole = total // scale
+    s = whole % 60
+    m = (whole // 60) % 60
+    h = whole // 3600
+    return h, m, s, frac
+
+
+def _seconds_to_srt_ts(seconds: float) -> str:
+    """Saniyeyi SRT zaman damgası formatına çevirir: HH:MM:SS,mmm"""
+    h, m, s, ms = _split_hms(seconds, 3)
     return f"{h:02d}:{m:02d}:{s:02d},{ms:03d}"
 
 
 def _seconds_to_ass_ts(seconds: float) -> str:
     """Saniyeyi ASS zaman damgası formatına çevirir: H:MM:SS.cc"""
-    if seconds < 0:
-        seconds = 0.0
-    h = int(seconds // 3600)
-    m = int((seconds % 3600) // 60)
-    s = int(seconds % 60)
-    cs = int(round((seconds - int(seconds)) * 100))
+    h, m, s, cs = _split_hms(seconds, 2)
     return f"{h}:{m:02d}:{s:02d}.{cs:02d}"
 
 

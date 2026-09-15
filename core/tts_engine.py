@@ -699,6 +699,16 @@ class TTSManager:
                 logger.error("Segment %d seslendirme hatasi: %s", i, exc)
                 segment.audio_path = None
                 segment.duration = 0.0
+                raise RuntimeError(
+                    f"Segment {i + 1} seslendirilemedi: {exc}"
+                ) from exc
+
+        spoken = [s for s in segments if (s.text or "").strip()]
+        missing = [s for s in spoken if not s.audio_path]
+        if missing:
+            raise RuntimeError(
+                f"{len(missing)}/{len(spoken)} konuşma satırı seslendirilemedi."
+            )
 
         if progress_callback:
             progress_callback(total, total, "Tum segmentler tamamlandi.")

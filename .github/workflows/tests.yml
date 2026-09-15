@@ -1,0 +1,27 @@
+name: Tests
+
+on:
+  push:
+    branches: [main, master]
+  pull_request:
+
+jobs:
+  unit:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.10", "3.11", "3.12"]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+      - name: Install deps
+        run: |
+          python -m pip install --upgrade pip
+          pip install pytest PyQt6 Pillow opencv-python-headless numpy requests python-dotenv
+      - name: Run unit tests
+        env:
+          QT_QPA_PLATFORM: offscreen
+        run: pytest tests/ -q --ignore=tests/test_video_composer.py

@@ -242,6 +242,18 @@ class SettingsPanel(QFrame):
         cl.addWidget(self._kokoro_widget)
         self._kokoro_widget.setVisible(False)
 
+        self._mix_check = QCheckBox("Anlatıcı Kokoro, diyalog Edge (karışık motor)")
+        self._mix_check.setToolTip(
+            "Açıkken cold open / beat / filler Kokoro, diyalog ve kanca dışı roller Edge kullanır.\n"
+            "Her iki motor da yüklü olmalı."
+        )
+        try:
+            from core.settings_manager import SettingsManager
+            self._mix_check.setChecked(bool(SettingsManager.instance().get("tts.mix_engines", False)))
+        except Exception:
+            pass
+        cl.addWidget(self._mix_check)
+
         root.addWidget(self._content)
         self._check_gpu()
 
@@ -302,6 +314,9 @@ class SettingsPanel(QFrame):
         if engine_name == "edge-tts":
             return self.get_edge_params()
         return self.get_kokoro_params()
+
+    def mix_engines(self) -> bool:
+        return bool(getattr(self, "_mix_check", None) and self._mix_check.isChecked())
 
     def apply_default_speed(self, speed: float = 1.0) -> None:
         """Ayarlar sayfasındaki varsayılan hızı panellere uygular."""
@@ -430,6 +445,7 @@ class TtsPage(QWidget):
         self._state        = self.ctx.app_state
         self._worker       = None
         self._regen_workers: List = []   # tekli/seçili worker'ları GC'den korur
+        self._live_workers: list = []
         self._cache        = None
         self._segment_items: List[SegmentListItem] = []
         self._selected_idx: Optional[int] = None
@@ -615,6 +631,7 @@ class TtsPage(QWidget):
         self._txt_segment_text = QTextEdit()
         self._txt_segment_text.setReadOnly(True)
         self._txt_segment_text.setMaximumHeight(80)
+        self._txt_segment_text.textChanged.connect(self._on_segment_text_edited)
         v.addWidget(self._txt_segment_text)
 
         self._player = AudioPlayerWidget()
@@ -866,6 +883,17 @@ class TtsPage(QWidget):
         self._txt_segment_text.setReadOnly(False)
         self._txt_segment_text.setFocus()
 
+    def _on_segment_text_edited(self) -> None:
+        if self._txt_segment_text.isReadOnly():
+            return
+        idx = self._selected_idx
+        chapter = self._state.current_chapter
+        if chapter is None or idx is None or idx >= len(chapter.segments):
+            return
+        chapter.segments[idx].text = self._txt_segment_text.toPlainText()
+        if idx < len(self._segment_items):
+            self._segment_items[idx].refresh()
+
     def _update_bottom_panel(self, idx: int) -> None:
         chapter = self._state.current_chapter
         if not chapter or idx >= len(chapter.segments):
@@ -881,6 +909,24 @@ class TtsPage(QWidget):
         total = sum(s.duration for s in chapter.segments if s.duration)
         m, s = divmod(int(total), 60)
         self._lbl_total_dur.setText(f"Toplam sure: {m:02d}:{s:02d}")
+
+    def _mix_kwargs(self, engine_name: str, voice_id: str) -> dict:
+        mix = bool(self._settings_panel.mix_engines())
+        if not mix:
+            return {"mix_engines": False}
+        if engine_name == "kokoro":
+            narrator_voice = voice_id
+            dialogue_voice = "en-US-AndrewNeural"
+        else:
+            dialogue_voice = voice_id
+            narrator_voice = "am_adam"
+        return {
+            "mix_engines": True,
+            "narrator_engine": "kokoro",
+            "narrator_voice": narrator_voice,
+            "dialogue_engine": "edge-tts",
+            "dialogue_voice": dialogue_voice,
+        }
 
     # ── Sentez ────────────────────────────────────────────────────
 
@@ -956,10 +1002,13 @@ class TtsPage(QWidget):
             item.set_status("waiting")
 
         from ui.workers.tts_worker import TTSWorker
+        from ui.workers.thread_utils import start_worker
         self._worker = TTSWorker(
             chapter=chapter, engine_name=engine_name,
             voice=voice_id, audio_dir=str(audio_dir),
             params=params, cache=self._cache,
+            parent=self,
+            **self._mix_kwargs(engine_name, voice_id),
         )
         self._worker.segment_started.connect(self._on_segment_started)
         self._worker.segment_done.connect(self._on_segment_done)
@@ -976,11 +1025,12 @@ class TtsPage(QWidget):
 
         engine_display = "Edge-TTS" if engine_name == "edge-tts" else "Kokoro TTS"
         self._set_status(f"{engine_display} ile {len(chapter.segments)} segment seslendiriliyor...")
-        self._worker.start()
+        start_worker(self, self._worker)
 
     def _cancel_synthesis(self) -> None:
         if self._worker and self._worker.isRunning():
-            self._worker.stop()
+            from ui.workers.thread_utils import abort_worker
+            abort_worker(self, self._worker)
             self._set_status("Iptal edildi.")
         self._btn_cancel.setVisible(False)
         self._btn_synthesize.setEnabled(True)
@@ -1012,17 +1062,15 @@ class TtsPage(QWidget):
             self._segment_items[idx].set_status("processing")
 
         from ui.workers.tts_worker import TTSWorker
+        from ui.workers.thread_utils import start_worker
 
-        class _FakeChapter:
-            def __init__(self, seg, ch_id):
-                self.segments = [seg]
-                self.id = ch_id
-
-        fake = _FakeChapter(seg, chapter.id)
         worker = TTSWorker(
-            chapter=fake, engine_name=engine_name,
+            chapter=chapter, engine_name=engine_name,
             voice=voice_id, audio_dir=str(audio_dir),
             params=params, cache=self._cache,
+            only_indices=[idx],
+            parent=self,
+            **self._mix_kwargs(engine_name, voice_id),
         )
         worker.segment_done.connect(
             lambda i, path, dur, real_idx=idx: self._on_single_done(real_idx, path, dur)
@@ -1033,7 +1081,7 @@ class TtsPage(QWidget):
         # Worker'ı self'e bağla — fonksiyon dönünce GC tarafından yok edilmemesi için
         self._regen_workers.append(worker)
         worker.finished.connect(lambda w=worker: self._regen_workers.remove(w) if w in self._regen_workers else None)
-        worker.start()
+        start_worker(self, worker)
         self._set_status(f"Segment #{idx + 1} yeniden seslendiriliyor...")
 
     def _on_single_done(self, idx: int, path: str, duration: float) -> None:
@@ -1044,6 +1092,7 @@ class TtsPage(QWidget):
         if idx < len(self._segment_items):
             self._segment_items[idx].set_status("done")
             self._segment_items[idx].refresh()
+        self._save_project()
 
     def _regen_selected(self) -> None:
         for i, item in enumerate(self._segment_items):
@@ -1162,6 +1211,7 @@ class TtsPage(QWidget):
                 pm_mod.save_project(project)
         except Exception as exc:
             logger.error("Proje kaydedilemedi: %s", exc)
+            QMessageBox.warning(self, "Kayıt hatası", f"Proje kaydedilemedi:\n{exc}")
 
     def _set_status(self, msg: str, warn: bool = False) -> None:
         self._lbl_status.setText(msg)
@@ -1245,3 +1295,11 @@ class TtsPage(QWidget):
             else:
                 for item in self._segment_items:
                     item.refresh()
+
+    def hideEvent(self, event) -> None:
+        if self._worker and self._worker.isRunning():
+            from ui.workers.thread_utils import abort_worker
+            abort_worker(self, self._worker)
+        if not self._txt_segment_text.isReadOnly():
+            self._save_project()
+        super().hideEvent(event)

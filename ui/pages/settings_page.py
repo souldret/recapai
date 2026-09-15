@@ -778,11 +778,16 @@ class ModelTestTab(QWidget):
     def _get_client(self):
         """Geçerli API key ile OpenRouterClient döner veya None."""
         from core.openrouter_client import OpenRouterClient
+        api_key = ""
         try:
-            data = json.loads(Path("config/settings.json").read_text(encoding="utf-8"))
-            api_key = data.get("api", {}).get("openrouter_api_key", "").strip()
+            api_key = (self.ctx.settings_manager.get_api_key() or "").strip()
         except Exception:
-            api_key = ""
+            try:
+                from core.constants import SETTINGS_PATH
+                data = json.loads(SETTINGS_PATH.read_text(encoding="utf-8"))
+                api_key = data.get("api", {}).get("openrouter_api_key", "").strip()
+            except Exception:
+                api_key = ""
 
         if not api_key:
             QMessageBox.warning(
@@ -1249,6 +1254,16 @@ class SettingsPage(QWidget):
         remove_silence_row.addWidget(self.remove_silence_check)
         remove_silence_row.addStretch()
         gv.addLayout(remove_silence_row)
+
+        mix_row = QHBoxLayout()
+        self.mix_engines_check = QCheckBox("Anlatıcı Kokoro, diyalog Edge (pipeline + TTS)")
+        self.mix_engines_check.setToolTip(
+            "Açıkken cold open / beat / filler Kokoro, diyalog Edge kullanır.\n"
+            "Pipeline tek tıkla da bu ayarı okur."
+        )
+        mix_row.addWidget(self.mix_engines_check)
+        mix_row.addStretch()
+        gv.addLayout(mix_row)
         v.addWidget(gen_frame)
 
         # Edge-TTS sesi
@@ -1523,6 +1538,15 @@ class SettingsPage(QWidget):
         theme_hint.setWordWrap(True)
         tv.addWidget(theme_hint)
 
+        tv.addWidget(self._field_label("Log seviyesi:"))
+        self.log_level_combo = QComboBox()
+        self.log_level_combo.addItem("DEBUG", "DEBUG")
+        self.log_level_combo.addItem("INFO", "INFO")
+        self.log_level_combo.addItem("WARNING", "WARNING")
+        self.log_level_combo.addItem("ERROR", "ERROR")
+        self.log_level_combo.setFixedWidth(160)
+        tv.addWidget(self.log_level_combo)
+
         btn_apply_theme = QPushButton("Temayı Uygula")
         btn_apply_theme.setObjectName("secondaryBtn")
         btn_apply_theme.setFixedWidth(140)
@@ -1622,7 +1646,9 @@ class SettingsPage(QWidget):
         if hasattr(self, "kokoro_gpu_check"):
             self.kokoro_gpu_check.setChecked(bool(tts.get("kokoro_use_gpu", True)))
         if hasattr(self, "remove_silence_check"):
-            self.remove_silence_check.setChecked(bool(tts.get("remove_silence", False)))
+            self.remove_silence_check.setChecked(bool(tts.get("remove_silence", True)))
+        if hasattr(self, "mix_engines_check"):
+            self.mix_engines_check.setChecked(bool(tts.get("mix_engines", False)))
 
         paths = data.get("paths", {})
         self.projects_dir_input.setText(paths.get("projects_dir", "./projects"))
@@ -1673,6 +1699,8 @@ class SettingsPage(QWidget):
         app_conf = data.get("app", {})
         if hasattr(self, "theme_combo"):
             self._set_combo_by_data(self.theme_combo, app_conf.get("theme", "dark"))
+        if hasattr(self, "log_level_combo"):
+            self._set_combo_by_data(self.log_level_combo, app_conf.get("log_level", "INFO"))
 
     def _save_settings(self) -> None:
         try:
@@ -1705,7 +1733,18 @@ class SettingsPage(QWidget):
             data["tts"]["kokoro_use_gpu"]    = self.kokoro_gpu_check.isChecked()
             if hasattr(self, "remove_silence_check"):
                 data["tts"]["remove_silence"] = self.remove_silence_check.isChecked()
+            if hasattr(self, "mix_engines_check"):
+                data["tts"]["mix_engines"] = self.mix_engines_check.isChecked()
 
+            data.setdefault("app", {})
+            if hasattr(self, "theme_combo"):
+                data["app"]["theme"] = self.theme_combo.currentData() or "dark"
+            if hasattr(self, "log_level_combo"):
+                data["app"]["log_level"] = self.log_level_combo.currentData() or "INFO"
+                try:
+                    logging.getLogger().setLevel(getattr(logging, data["app"]["log_level"], logging.INFO))
+                except Exception:
+                    pass
             data.setdefault("paths", {})
             data["paths"]["projects_dir"] = self.projects_dir_input.text().strip() or "./projects"
             data["paths"]["output_dir"]   = self.output_dir_input.text().strip() or "./output"

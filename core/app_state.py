@@ -66,7 +66,13 @@ class AppState(QObject):
 
     @current_project.setter
     def current_project(self, project) -> None:
+        if project is self._current_project:
+            return
+        old_id = getattr(self._current_project, "id", None)
+        new_id = getattr(project, "id", None)
         self._current_project = project
+        if old_id is not None and old_id == new_id:
+            return
         self.project_changed.emit(project)
         name = project.name if project else "—"
         self.status_message.emit(f"Proje yüklendi: {name}")
@@ -79,7 +85,13 @@ class AppState(QObject):
 
     @current_chapter.setter
     def current_chapter(self, chapter) -> None:
+        if chapter is self._current_chapter:
+            return
+        old_id = getattr(self._current_chapter, "id", None)
+        new_id = getattr(chapter, "id", None)
         self._current_chapter = chapter
+        if old_id is not None and old_id == new_id:
+            return
         self.chapter_changed.emit(chapter)
         name = chapter.name if chapter else "—"
         logger.debug("Aktif bölüm: %s", name)

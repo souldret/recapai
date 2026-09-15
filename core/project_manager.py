@@ -33,12 +33,12 @@ def _safe_name(name: str) -> str:
 
 
 def _write_project_json(project_dir: Path, project: Project) -> None:
-    """project.json'u yazar. Sınıf metodlarından çağrılmadan önce tanımlanır."""
+    """project.json'u atomik yazar (tmp + replace). Yarı yazılmış dosya bırakmaz."""
     json_path = project_dir / PROJECT_FILE
-    json_path.write_text(
-        json.dumps(project.to_dict(), indent=2, ensure_ascii=False),
-        encoding="utf-8",
-    )
+    payload = json.dumps(project.to_dict(), indent=2, ensure_ascii=False)
+    tmp_path = json_path.with_suffix(".json.tmp")
+    tmp_path.write_text(payload, encoding="utf-8")
+    tmp_path.replace(json_path)
 
 
 # ── ProjectManager (önbellekli) ────────────────────────────────────────────────
@@ -159,11 +159,14 @@ class ProjectManager:
             raise ValueError(f"Proje dosyası bozuk: {exc}") from exc
 
     def save_project(self, project: Project) -> None:
-        """Projeyi uygun klasöre kaydeder."""
+        """Projeyi uygun klasöre kaydeder.
+
+        Raises:
+            FileNotFoundError: Proje klasörü bulunamazsa.
+        """
         project_dir = self.find_project_dir(project.id)
         if project_dir is None:
-            logger.error("Proje klasörü bulunamadı: %s", project.id)
-            return
+            raise FileNotFoundError(f"Proje klasörü bulunamadı: {project.id}")
         project.updated_at = _now()
         _write_project_json(project_dir, project)
         logger.debug("Proje kaydedildi: %s", project.name)
@@ -201,12 +204,24 @@ class ProjectManager:
                 pid = data.get("id", "")
                 if pid:
                     self._cache[pid] = item  # güncel önbelleği doldur
+                chapters = data.get("chapters", []) or []
+                image_count = 0
+                duration_sec = 0.0
+                for ch in chapters:
+                    image_count += len(ch.get("images") or [])
+                    for seg in ch.get("segments") or []:
+                        try:
+                            duration_sec += float(seg.get("duration") or 0.0)
+                        except (TypeError, ValueError):
+                            continue
                 result.append({
                     "id":            pid,
                     "name":          data.get("name", item.name),
                     "created_at":    data.get("created_at", ""),
                     "updated_at":    data.get("updated_at", ""),
-                    "chapter_count": len(data.get("chapters", [])),
+                    "chapter_count": len(chapters),
+                    "image_count":   image_count,
+                    "duration_sec":  duration_sec,
                     "series_type":   data.get("series_type", "manga"),
                     "path":          str(item),
                 })

@@ -170,6 +170,7 @@ class SettingsManager(QObject):
                 "name": "RecapAI",
                 "version": "1.1.0",
                 "language": "tr",
+                "log_level": "INFO",
             },
             "api": {
                 "openrouter_api_key": "",
@@ -196,10 +197,15 @@ class SettingsManager(QObject):
                 "default_speed": 1.0,
                 "kokoro_cache_path": "",
                 "kokoro_use_gpu": True,
-                "remove_silence": False,
+                "remove_silence": True,
                 "silence_thresh_db": -40.0,
                 "min_silence_len_ms": 400,
                 "keep_silence_ms": 120,
+                "mix_engines": False,
+                "narrator_engine": "kokoro",
+                "narrator_voice": "am_adam",
+                "dialogue_engine": "edge-tts",
+                "dialogue_voice": "en-US-AndrewNeural",
             },
             "analysis": {
                 "rate_limit_delay": 1.0,   # API istekleri arası bekleme (saniye)
