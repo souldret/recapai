@@ -18,6 +18,7 @@ from PyQt6.QtGui import QPixmap, QUndoStack, QUndoCommand, QTextCursor
 
 from core.context import AppContext
 from core.models import SegmentData
+from core.qt_image import load_pixmap
 from ui.utils.icons import Icons
 
 logger = logging.getLogger(__name__)
@@ -154,7 +155,7 @@ class SegmentCard(QFrame):
         thumb.setFixedSize(80, 80)
         thumb.setAlignment(Qt.AlignmentFlag.AlignCenter)
         if self._thumb_path and Path(self._thumb_path).exists():
-            px = QPixmap(self._thumb_path).scaled(
+            px = load_pixmap(self._thumb_path).scaled(
                 80, 80, Qt.AspectRatioMode.KeepAspectRatio,
                 Qt.TransformationMode.SmoothTransformation
             )
@@ -389,7 +390,7 @@ class ImagePreviewSide(QFrame):
         v.addLayout(nav)
 
     def show_panel(self, image_path: str, analysis: dict) -> None:
-        px = QPixmap(image_path)
+        px = load_pixmap(image_path)
         if not px.isNull():
             scaled = px.scaled(
                 self.img_lbl.width() - 8, self.img_lbl.height() - 8,

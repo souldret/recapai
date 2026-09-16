@@ -19,6 +19,10 @@ class _FilteredStderr:
         "Failed to create QVideoSink",
         "defaultServiceProvider",
         "qt.multimedia",
+        "libpng warning",
+        "known incorrect sRGB profile",
+        "iCCP:",
+        "qt.gui.imageio",
     )
 
     def __init__(self, original):

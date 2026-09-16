@@ -23,6 +23,7 @@ from PyQt6.QtGui import (
     QCursor, QWheelEvent, QKeyEvent, QFont,
 )
 
+from core.qt_image import load_pixmap
 from core.qt_image import numpy_rgb_to_qimage as _numpy_rgb_to_qimage
 from ui.utils.icons import Icons
 
@@ -1172,7 +1173,7 @@ class ImagePreviewPanel(QFrame):
 
     def show_image(self, path: str, order: int) -> None:
         from core.image_processor import get_image_info
-        pixmap = QPixmap(path)
+        pixmap = load_pixmap(path)
         if not pixmap.isNull():
             scaled = pixmap.scaled(
                 self.preview_img.width() - 8,

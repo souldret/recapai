@@ -129,7 +129,8 @@ class Sidebar(QWidget):
         
         logo_path = os.path.join("assets", "logo.png")
         if os.path.exists(logo_path):
-            pixmap = QPixmap(logo_path)
+            from core.qt_image import load_pixmap
+            pixmap = load_pixmap(logo_path)
             # Logoyu boyutlandır
             pixmap = pixmap.scaled(180, 80, Qt.AspectRatioMode.KeepAspectRatio, Qt.TransformationMode.SmoothTransformation)
             logo_img.setPixmap(pixmap)

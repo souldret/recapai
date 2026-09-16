@@ -17,6 +17,7 @@ from PyQt6.QtCore import Qt, QSize, QPoint
 from PyQt6.QtGui import QPixmap, QIcon
 
 from core.context import AppContext
+from core.qt_image import load_pixmap
 from ui.pages.images_widgets import (
     ThumbnailWorker,
     ImageGridItem,
@@ -504,7 +505,7 @@ class ImagesPage(QWidget):
             return
         item = self.grid.item(index)
         if item:
-            pixmap = QPixmap(thumb_path)
+            pixmap = load_pixmap(thumb_path)
             if not pixmap.isNull():
                 item.setIcon(QIcon(pixmap))
 

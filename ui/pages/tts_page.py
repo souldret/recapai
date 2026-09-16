@@ -18,6 +18,7 @@ from PyQt6.QtCore import Qt, pyqtSignal, QSize, QTimer
 from PyQt6.QtGui import QPixmap, QFont
 
 from core.context import AppContext
+from core.qt_image import load_pixmap
 from ui.widgets.audio_player import AudioPlayerWidget
 from ui.widgets.page_header import PageHeader
 from ui.utils.icons import Icons, ICON_COLOR_SUCCESS, ICON_COLOR_ERROR
@@ -832,7 +833,7 @@ class TtsPage(QWidget):
                 img = chapter.images[seg.image_index]
                 thumb_path = img.thumbnail_path or img.path
                 if thumb_path and Path(thumb_path).exists():
-                    px = QPixmap(thumb_path)
+                    px = load_pixmap(thumb_path)
                     if not px.isNull():
                         item.set_thumbnail(px)
         except Exception:

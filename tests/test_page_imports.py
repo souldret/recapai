@@ -47,6 +47,43 @@ def test_page_constructs(qapp, ctx, module_path, class_name):
     page.deleteLater()
 
 
+def test_load_pixmap_png_is_silent(qapp, tmp_path, capsys):
+    """PNG yükleme Qt libpng iCCP uyarısı basmamalı."""
+    from PIL import Image
+
+    from core.qt_image import load_pixmap
+
+    src = tmp_path / "panel.png"
+    Image.new("RGB", (16, 16), (12, 34, 56)).save(src, "PNG")
+    pixmap = load_pixmap(src)
+    err = capsys.readouterr().err
+    assert not pixmap.isNull()
+    assert pixmap.width() == 16
+    assert "iCCP" not in err
+    assert "sRGB profile" not in err
+    assert load_pixmap(tmp_path / "missing.png").isNull()
+
+
+def test_stderr_filter_drops_libpng_iccp():
+    from main import _FilteredStderr
+
+    class _Buf:
+        def __init__(self):
+            self.chunks = []
+
+        def write(self, text):
+            self.chunks.append(text)
+
+        def flush(self):
+            pass
+
+    buf = _Buf()
+    filt = _FilteredStderr(buf)
+    filt.write("qt.gui.imageio: libpng warning: iCCP: known incorrect sRGB profile\n")
+    filt.write("Script tamamlandı: 14 segment\n")
+    assert "".join(buf.chunks) == "Script tamamlandı: 14 segment\n"
+
+
 def test_script_card_keeps_cursor_while_typing(qapp):
     """Yazarken/tıklayınca imleç satır başına kaçmamalı."""
     from PyQt6.QtCore import Qt
