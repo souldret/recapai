@@ -12,7 +12,7 @@ from typing import Optional
 from PyQt6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel, QPushButton,
     QFrame, QScrollArea, QProgressBar, QTextEdit, QSizePolicy,
-    QComboBox, QDialog, QDialogButtonBox, QCheckBox,
+    QComboBox, QDialog, QDialogButtonBox, QCheckBox, QMessageBox,
 )
 from PyQt6.QtCore import Qt, QSize, pyqtSlot
 
@@ -634,15 +634,12 @@ class HomePage(QWidget):
     def _launch_pipeline(self) -> None:
         project = self._app_state.current_project
         if not project:
-            from PyQt6.QtWidgets import QMessageBox
             QMessageBox.warning(self, "Proje Yok", "Once bir proje secin veya olusturun.")
             return
         if not project.chapters:
-            from PyQt6.QtWidgets import QMessageBox
             QMessageBox.warning(self, "Bolum Yok", "Projede hic bolum bulunamadi.")
             return
         if self._pipeline_worker and self._pipeline_worker.isRunning():
-            from PyQt6.QtWidgets import QMessageBox
             QMessageBox.information(self, "Pipeline", "Zaten bir pipeline calisiyor.")
             return
 
@@ -654,7 +651,6 @@ class HomePage(QWidget):
         if not chapter:
             return
         if not chapter.images:
-            from PyQt6.QtWidgets import QMessageBox
             QMessageBox.warning(
                 self, "Gorsel Yok",
                 "Secilen bolumde gorsel yok. Once Gorseller sayfasindan ekleyin.",
@@ -664,7 +660,6 @@ class HomePage(QWidget):
         app = self._app_state
         api_key      = app.get_setting("api", "openrouter_api_key", default="")
         if not api_key:
-            from PyQt6.QtWidgets import QMessageBox
             QMessageBox.warning(
                 self, "API Anahtari Eksik",
                 "Once Ayarlar sayfasindan OpenRouter API anahtarini girin.",
@@ -740,7 +735,6 @@ class HomePage(QWidget):
             pm_mod.save_project(project)
         except Exception as exc:
             logger.error("Pipeline proje kaydi basarisiz: %s", exc)
-            from PyQt6.QtWidgets import QMessageBox
             QMessageBox.warning(self, "Kayıt hatası", f"Pipeline sonrası proje kaydedilemedi:\n{exc}")
 
     def _cancel_pipeline(self) -> None:

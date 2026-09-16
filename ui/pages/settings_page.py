@@ -14,7 +14,7 @@ from PyQt6.QtWidgets import (
     QFrame, QGroupBox, QLineEdit, QComboBox, QTabWidget, QFileDialog,
     QMessageBox, QSizePolicy, QDialog, QDialogButtonBox,
     QTextEdit, QScrollArea, QListWidget, QListWidgetItem,
-    QApplication,
+    QApplication, QDoubleSpinBox, QCheckBox, QSpinBox,
 )
 from PyQt6.QtCore import Qt, QSize, pyqtSignal, QThread
 
@@ -1185,7 +1185,6 @@ class SettingsPage(QWidget):
     # ── TTS Sekmesi ────────────────────────────────────────────────
 
     def _make_tts_tab(self) -> QWidget:
-        from PyQt6.QtWidgets import QDoubleSpinBox, QCheckBox
         page = QWidget()
         scroll = QScrollArea()
         scroll.setWidgetResizable(True)
@@ -1411,7 +1410,6 @@ class SettingsPage(QWidget):
     # ── Panel & Dışa Aktarma Sekmesi ──────────────────────────────
 
     def _make_panel_export_tab(self) -> QWidget:
-        from PyQt6.QtWidgets import QDoubleSpinBox, QCheckBox, QSpinBox
         page = QWidget()
         v = QVBoxLayout(page)
         v.setContentsMargins(20, 20, 20, 20)

@@ -101,7 +101,7 @@ class MainWindow(QMainWindow):
             self._page_cache[index] = page
             logger.debug("Sayfa yüklendi (lazy): %s", class_name)
         except Exception as exc:
-            logger.error("Sayfa yüklenirken hata: %s - %s", class_name, exc)
+            logger.error("Sayfa yüklenirken hata: %s - %s", class_name, exc, exc_info=True)
 
     def _build_status_bar(self) -> None:
         bar = QStatusBar()

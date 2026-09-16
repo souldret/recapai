@@ -15,7 +15,7 @@ from PyQt6.QtWidgets import (
     QFileDialog, QSplitter, QAbstractItemView, QMenu, QMessageBox,
     QSizePolicy, QSpinBox, QDoubleSpinBox, QGroupBox,
     QStackedWidget, QDialog, QDialogButtonBox, QSlider, QGridLayout,
-    QCheckBox, QScrollArea,
+    QCheckBox, QScrollArea, QTableWidget, QTableWidgetItem, QHeaderView,
 )
 from PyQt6.QtCore import Qt, QSize, QThread, pyqtSignal, QPoint, QRect, QPointF, QRectF, QTimer
 from PyQt6.QtGui import (
@@ -1404,7 +1404,6 @@ class ShortcutsDialog(QDialog):
         title.setObjectName("headingLabel")
         layout.addWidget(title)
 
-        from PyQt6.QtWidgets import QTableWidget, QTableWidgetItem, QHeaderView
         table = QTableWidget()
         table.setColumnCount(2)
         table.setHorizontalHeaderLabels(["Kısayol", "İşlev"])

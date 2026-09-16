@@ -10,7 +10,7 @@ import numpy as np
 
 from PyQt6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel, QPushButton,
-    QFrame, QComboBox, QProgressBar,
+    QFrame, QComboBox, QProgressBar, QGroupBox, QCheckBox, QToolButton,
     QFileDialog, QSplitter, QMessageBox, QDialog,
 )
 from PyQt6.QtCore import Qt, QSize, QTimer
@@ -105,9 +105,7 @@ class MangaPanelEditor(QWidget):
         self.btn_settings.clicked.connect(self._open_settings)
         tb.addWidget(self.btn_settings)
 
-        # Okuma düzeni seçimi
-        from PyQt6.QtWidgets import QComboBox as _QCB
-        self.reading_order_combo = _QCB()
+        self.reading_order_combo = QComboBox()
         self.reading_order_combo.addItem("RTL (Manga)", "rtl")
         self.reading_order_combo.addItem("LTR (Manhwa)", "ltr")
         self.reading_order_combo.setFixedWidth(130)
@@ -115,9 +113,7 @@ class MangaPanelEditor(QWidget):
         self.reading_order_combo.currentIndexChanged.connect(self._on_reading_order_changed)
         tb.addWidget(self.reading_order_combo)
 
-        # Ok göster/gizle
-        from PyQt6.QtWidgets import QCheckBox as _QCB2
-        self.chk_show_arrows = _QCB2("Oklar")
+        self.chk_show_arrows = QCheckBox("Oklar")
         self.chk_show_arrows.setChecked(True)
         self.chk_show_arrows.setToolTip("Okuma sırası oklarını göster/gizle")
         self.chk_show_arrows.toggled.connect(lambda v: self.canvas.set_show_order_arrows(v))
@@ -146,9 +142,6 @@ class MangaPanelEditor(QWidget):
         sep.setObjectName("separator"); sep.setFixedWidth(1)
         tb.addWidget(sep)
 
-        # Zoom & Undo butonları
-        from PyQt6.QtWidgets import QToolButton
-        
         self.btn_zoom_in = QToolButton()
         self.btn_zoom_in.setText("+")
         self.btn_zoom_in.setToolTip("Yakınlaştır (Ctrl++)")
@@ -821,7 +814,6 @@ class WebtoonPanelEditor(QWidget):
         wtb = QHBoxLayout()
         wtb.setSpacing(6)
 
-        from PyQt6.QtWidgets import QToolButton
         self.btn_zoom_in  = QToolButton()
         self.btn_zoom_in.setText("+")
         self.btn_zoom_in.setToolTip("Yakınlaştır (Ctrl++)")

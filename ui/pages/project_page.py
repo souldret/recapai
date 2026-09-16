@@ -10,7 +10,7 @@ from PyQt6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel, QPushButton,
     QListWidget, QListWidgetItem, QFrame, QLineEdit, QSplitter,
     QDialog, QDialogButtonBox, QMessageBox, QFileDialog, QAbstractItemView,
-    QSizePolicy, QButtonGroup, QRadioButton
+    QSizePolicy, QButtonGroup, QRadioButton, QProgressBar, QInputDialog,
 )
 from PyQt6.QtCore import Qt, QSize, pyqtSignal
 from PyQt6.QtGui import QFont
@@ -400,8 +400,7 @@ class ProjectDetailPanel(QWidget):
 
         if total > 0:
             if not hasattr(self, "_progress_bar"):
-                from PyQt6.QtWidgets import QProgressBar as _PB
-                self._progress_bar = _PB()
+                self._progress_bar = QProgressBar()
                 self._progress_bar.setFixedHeight(6)
                 self._progress_bar.setTextVisible(False)
                 # Listeye üstten ekle
@@ -625,7 +624,6 @@ class ProjectDetailPanel(QWidget):
             QMessageBox.information(self, "Bilgi", "Kopyalama için en az 2 bölüm gereklidir.")
             return
 
-        from PyQt6.QtWidgets import QInputDialog
         chapter_names = [
             ch.name for ch in self._project.chapters if ch.id != chapter_id
         ]
@@ -705,7 +703,6 @@ class ProjectDetailPanel(QWidget):
 
 def _simple_input(parent, title: str, label: str, default: str = "") -> tuple[str, bool]:
     """Basit tek satır metin girişi dialog."""
-    from PyQt6.QtWidgets import QInputDialog
     text, ok = QInputDialog.getText(parent, title, label, text=default)
     return text.strip(), ok
 
