@@ -20,6 +20,18 @@ class TestSubtitleTimestamps:
         assert _seconds_to_ass_ts(0.995) == "0:00:01.00"
 
 
+class TestAudioExportNames:
+    def test_chapter_number_is_short(self):
+        from core.exporter import audio_export_stem
+        assert audio_export_stem("Bölüm 35", 1) == "35_001"
+        assert audio_export_stem("Bolum_35", 12) == "35_012"
+
+    def test_nameless_falls_back(self):
+        from core.exporter import audio_export_stem
+        assert audio_export_stem("Prologue", 3) == "Prologue_003"
+        assert audio_export_stem("", 1) == "s_001"
+
+
 class TestExporterTimeline:
     def test_export_srt_has_no_gap(self, tmp_path):
         from core.exporter import export_srt

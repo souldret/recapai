@@ -9,12 +9,12 @@ from typing import List, Optional
 
 from PyQt6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel, QPushButton,
-    QFrame, QComboBox, QSplitter, QScrollArea, QTextEdit,
-    QFileDialog, QMessageBox, QSizePolicy, QSlider, QAbstractItemView,
+    QFrame, QComboBox, QSplitter, QScrollArea, QPlainTextEdit,
+    QFileDialog, QMessageBox, QSizePolicy, QSlider,
     QCheckBox, QSpinBox,
 )
 from PyQt6.QtCore import Qt, QTimer, QSize
-from PyQt6.QtGui import QPixmap, QUndoStack, QUndoCommand
+from PyQt6.QtGui import QPixmap, QUndoStack, QUndoCommand, QTextCursor
 
 from core.context import AppContext
 from core.models import SegmentData
@@ -56,13 +56,19 @@ ROLE_LABELS = {
 # ── Undo Command ───────────────────────────────────────────────────────────────
 
 class EditSegmentCommand(QUndoCommand):
-    """QUndo için segment metin değişikliği."""
+    """QUndo için segment metin değişikliği.
+
+    push() redo() çağırır; metin zaten yazıldığı için ilk redo atlanır.
+    Aksi halde setPlainText imleci satır başına atar.
+    """
 
     def __init__(self, card: "SegmentCard", old_text: str, new_text: str) -> None:
         super().__init__("Segment Düzenle")
         self._card = card
         self._old = old_text
         self._new = new_text
+        self._closed = False
+        self._skip_redo = True
 
     def undo(self) -> None:
         try:
@@ -71,24 +77,37 @@ class EditSegmentCommand(QUndoCommand):
             pass
 
     def redo(self) -> None:
+        if self._skip_redo:
+            self._skip_redo = False
+            return
         try:
             self._card.set_text_silent(self._new)
         except RuntimeError:
             pass
 
 
-# ── Focus-aware TextEdit ───────────────────────────────────────────────────────
+# ── Focus-aware editor ─────────────────────────────────────────────────────────
 
-class FocusAwareTextEdit(QTextEdit):
-    """focusInEvent zincirini bozmadan odak callback'i tetikleyen editör."""
+class FocusAwareTextEdit(QPlainTextEdit):
+    """Odak callback'i tetikler; yazarken stylesheet imleci sıfırlamaz."""
+
+    def _card(self):
+        w = self.parent()
+        while w is not None and not isinstance(w, SegmentCard):
+            w = w.parent()
+        return w
 
     def focusInEvent(self, event) -> None:  # type: ignore[override]
         super().focusInEvent(event)
-        card = self.parent()
-        while card is not None and not isinstance(card, SegmentCard):
-            card = card.parent()
+        card = self._card()
         if card is not None and getattr(card, "_focus_callback", None):
             card._focus_callback(card)
+
+    def focusOutEvent(self, event) -> None:  # type: ignore[override]
+        super().focusOutEvent(event)
+        card = self._card()
+        if card is not None:
+            card.apply_lint_border()
 
 
 # ── Segment Kartı ──────────────────────────────────────────────────────────────
@@ -112,6 +131,15 @@ class SegmentCard(QFrame):
         self._thumb_path = thumbnail_path
         self._building = False
         self._focus_callback = None
+        self._lint_level = None
+        self._merge_timer = QTimer(self)
+        self._merge_timer.setSingleShot(True)
+        self._merge_timer.setInterval(800)
+        self._merge_timer.timeout.connect(self._close_undo_merge)
+        self._lint_timer = QTimer(self)
+        self._lint_timer.setSingleShot(True)
+        self._lint_timer.setInterval(280)
+        self._lint_timer.timeout.connect(self._run_lint)
         self.setObjectName("segmentCard")
         self._build_ui()
 
@@ -154,6 +182,7 @@ class SegmentCard(QFrame):
         mid.addLayout(hdr)
 
         self.text_edit = FocusAwareTextEdit(self)
+        self.text_edit.setUndoRedoEnabled(False)
         self.text_edit.setPlainText(self.segment.text)
         self.text_edit.setFixedHeight(72)
         self.text_edit.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
@@ -193,19 +222,41 @@ class SegmentCard(QFrame):
     def _dur_label(self) -> str:
         return f"⏱ {self.segment.duration:.1f}s"
 
-    def _refresh_lint(self) -> None:
+    def _lint_state(self) -> str:
         issues = getattr(self.segment, "lint_issues", None) or []
+        if not issues:
+            return ""
+        err = any(
+            "jenerik" in x.lower() or "panel meta" in x.lower() or "etiket" in x.lower()
+            for x in issues
+        )
+        return "error" if err else "warn"
+
+    def _refresh_lint(self, *, apply_border: bool = False) -> None:
+        issues = getattr(self.segment, "lint_issues", None) or []
+        level = self._lint_state()
         if issues:
-            err = any("jenerik" in x.lower() or "panel meta" in x.lower() or "etiket" in x.lower() for x in issues)
             self.lbl_lint.setText("⚠ " + " · ".join(issues[:3]))
-            self.lbl_lint.setStyleSheet("color: #ef4444;" if err else "color: #f59e0b;")
-            self.setStyleSheet(
-                "#segmentCard { border: 1px solid #7f1d1d; }" if err
-                else "#segmentCard { border: 1px solid #92400e; }"
+            self.lbl_lint.setStyleSheet(
+                "color: #ef4444;" if level == "error" else "color: #f59e0b;"
             )
         else:
             self.lbl_lint.setText("")
             self.lbl_lint.setStyleSheet("")
+        if apply_border or not self.text_edit.hasFocus():
+            self.apply_lint_border()
+
+    def apply_lint_border(self) -> None:
+        """Kart kenarlığını yalnızca seviye değişince günceller (imleç sıçramasın)."""
+        level = self._lint_state()
+        if level == self._lint_level:
+            return
+        self._lint_level = level
+        if level == "error":
+            self.setStyleSheet("#segmentCard { border: 1px solid #7f1d1d; }")
+        elif level == "warn":
+            self.setStyleSheet("#segmentCard { border: 1px solid #92400e; }")
+        else:
             self.setStyleSheet("")
 
     def _on_text_changed(self) -> None:
@@ -214,27 +265,63 @@ class SegmentCard(QFrame):
         new_text = self.text_edit.toPlainText()
         if new_text == self._last_text:
             return
-        cmd = EditSegmentCommand(self, self._last_text, new_text)
-        self._undo_stack.push(cmd)
+        old_text = self._last_text
         self._last_text = new_text
         self.segment.text = new_text
-        # Süre güncelle
+        self._lint_timer.start()
+        self._push_or_merge_undo(old_text, new_text)
+
+    def _run_lint(self) -> None:
+        text = self.text_edit.toPlainText()
         from core.script_generator import ScriptGenerator
-        self.segment.duration = ScriptGenerator.estimate_duration(new_text)
+        self.segment.duration = ScriptGenerator.estimate_duration(text)
         self.lbl_duration.setText(self._dur_label())
         from core.script_linter import lint_text
         self.segment.lint_issues = lint_text(
-            new_text,
+            text,
             role=getattr(self.segment, "role", "") or "",
             is_first=self.segment_index == 0,
             is_last=False,
         )
-        self._refresh_lint()
+        self._refresh_lint(apply_border=False)
+
+    def _push_or_merge_undo(self, old_text: str, new_text: str) -> None:
+        stack = self._undo_stack
+        last = stack.command(stack.count() - 1) if stack.count() else None
+        if (
+            isinstance(last, EditSegmentCommand)
+            and last._card is self
+            and not last._closed
+            and stack.index() == stack.count()
+        ):
+            last._new = new_text
+        else:
+            stack.push(EditSegmentCommand(self, old_text, new_text))
+        self._merge_timer.start()
+
+    def _close_undo_merge(self) -> None:
+        stack = self._undo_stack
+        last = stack.command(stack.count() - 1) if stack.count() else None
+        if isinstance(last, EditSegmentCommand) and last._card is self:
+            last._closed = True
 
     def set_text_silent(self, text: str) -> None:
-        """Undo/Redo sırasında signal döngüsünü kırar."""
+        """Undo/Redo sırasında signal döngüsünü kırar; imleci korur."""
         self._building = True
-        self.text_edit.setPlainText(text)
+        edit = self.text_edit
+        cursor = edit.textCursor()
+        pos = cursor.position()
+        edit.blockSignals(True)
+        current = edit.toPlainText()
+        if current != text:
+            cursor.beginEditBlock()
+            cursor.select(QTextCursor.SelectionType.Document)
+            cursor.insertText(text)
+            cursor.endEditBlock()
+            cursor = edit.textCursor()
+            cursor.setPosition(min(max(0, pos), len(text)))
+            edit.setTextCursor(cursor)
+        edit.blockSignals(False)
         self._last_text = text
         self.segment.text = text
         self._building = False
@@ -242,9 +329,7 @@ class SegmentCard(QFrame):
     def update_segment(self, segment: SegmentData) -> None:
         self.segment = segment
         self._last_text = segment.text
-        self._building = True
-        self.text_edit.setPlainText(segment.text)
-        self._building = False
+        self.set_text_silent(segment.text)
         self.lbl_duration.setText(self._dur_label())
         self.lbl_no.setText(self._title_label())
         self._refresh_lint()
@@ -348,6 +433,7 @@ class ScriptPage(QWidget):
         self._live_workers: list = []
         self._cards: List[SegmentCard] = []
         self._active_card_index: int = -1
+        self._loaded_chapter_id = None
         self._undo_stack = QUndoStack(self)
         self._undo_stack.setUndoLimit(100)
         self._autosave_timer = QTimer(self)
@@ -757,6 +843,7 @@ class ScriptPage(QWidget):
     def _load_segments(self, chapter) -> None:
         self._undo_stack.clear()
         self._clear_cards()
+        self._loaded_chapter_id = getattr(chapter, "id", None)
         if not chapter.segments:
             return
         for i, seg in enumerate(chapter.segments):
@@ -771,6 +858,7 @@ class ScriptPage(QWidget):
             card.deleteLater()
         self._cards.clear()
         self._active_card_index = -1
+        self._loaded_chapter_id = None
         # Stretch'i koru
         while self._cards_layout.count() > 1:
             item = self._cards_layout.takeAt(0)
@@ -1001,6 +1089,7 @@ class ScriptPage(QWidget):
             return
 
         idx = self._cards.index(card)
+        was_active = idx == self._active_card_index
         self._cards_layout.removeWidget(card)
         card.deleteLater()
         self._cards.pop(idx)
@@ -1012,10 +1101,26 @@ class ScriptPage(QWidget):
             if chapter and idx < len(chapter.segments):
                 chapter.segments.pop(idx)
 
-        # Numaraları güncelle
+        last_i = len(self._cards) - 1
         for i, c in enumerate(self._cards):
             c.segment_index = i
             c.lbl_no.setText(c._title_label())
+            from core.script_linter import lint_text
+            c.segment.lint_issues = lint_text(
+                c.text_edit.toPlainText(),
+                role=getattr(c.segment, "role", "") or "",
+                is_first=i == 0,
+                is_last=i == last_i,
+            )
+            c._refresh_lint(apply_border=True)
+
+        if not self._cards:
+            self._active_card_index = -1
+            self.preview_side.clear()
+        elif was_active or self._active_card_index >= len(self._cards):
+            self._activate_card(min(idx, len(self._cards) - 1))
+        elif self._active_card_index > idx:
+            self._active_card_index -= 1
 
         self._update_stats()
         self._save_project()
@@ -1150,28 +1255,26 @@ class ScriptPage(QWidget):
     # ── Page Lifecycle ─────────────────────────────────────────────
 
     def showEvent(self, event) -> None:
-        state = self.ctx.app_state
-        if state.current_project:
-            current_data = self.chapter_combo.currentData()
-            self.chapter_combo.blockSignals(True)
-            self.chapter_combo.clear()
-            for ch in state.current_project.chapters:
-                self.chapter_combo.addItem(Icons.get(Icons.BOOK), ch.name, ch.id)
-            restored = False
-            if current_data:
-                idx = self.chapter_combo.findData(current_data)
-                if idx >= 0:
-                    self.chapter_combo.setCurrentIndex(idx)
-                    restored = True
-            elif state.current_chapter:
-                idx = self.chapter_combo.findData(state.current_chapter.id)
-                if idx >= 0:
-                    self.chapter_combo.setCurrentIndex(idx)
-                    restored = True
-            self.chapter_combo.blockSignals(False)
-            if restored or self.chapter_combo.currentIndex() >= 0:
-                self._on_chapter_changed(self.chapter_combo.currentIndex())
         super().showEvent(event)
+        state = self.ctx.app_state
+        if not state.current_project:
+            return
+        current_data = self.chapter_combo.currentData()
+        self.chapter_combo.blockSignals(True)
+        self.chapter_combo.clear()
+        for ch in state.current_project.chapters:
+            self.chapter_combo.addItem(Icons.get(Icons.BOOK), ch.name, ch.id)
+        target = current_data or (state.current_chapter.id if state.current_chapter else None)
+        if target:
+            idx = self.chapter_combo.findData(target)
+            if idx >= 0:
+                self.chapter_combo.setCurrentIndex(idx)
+        self.chapter_combo.blockSignals(False)
+        selected = self.chapter_combo.currentData()
+        if selected and selected == self._loaded_chapter_id and self._cards:
+            return
+        if self.chapter_combo.currentIndex() >= 0:
+            self._on_chapter_changed(self.chapter_combo.currentIndex())
 
     def hideEvent(self, event) -> None:
         self._autosave_timer.stop()

@@ -47,6 +47,41 @@ def test_page_constructs(qapp, ctx, module_path, class_name):
     page.deleteLater()
 
 
+def test_script_card_keeps_cursor_while_typing(qapp):
+    """Yazarken/tıklayınca imleç satır başına kaçmamalı."""
+    from PyQt6.QtCore import Qt
+    from PyQt6.QtGui import QTextCursor, QUndoStack
+    from PyQt6.QtTest import QTest
+
+    from core.models import SegmentData
+    from ui.pages.script_page import SegmentCard
+
+    stack = QUndoStack()
+    card = SegmentCard(0, SegmentData(image_index=0, text="Hello world"), None, stack)
+    edit = card.text_edit
+    edit.show()
+    edit.setFocus()
+    cursor = edit.textCursor()
+    cursor.setPosition(5)
+    edit.setTextCursor(cursor)
+    QTest.keyClick(edit, Qt.Key.Key_X)
+    assert edit.textCursor().position() == 6
+    assert edit.toPlainText() == "Hellox world"
+    QTest.qWait(350)
+    qapp.processEvents()
+    assert edit.textCursor().position() == 6
+    QTest.keyClick(edit, Qt.Key.Key_Backspace)
+    assert edit.toPlainText() == "Hello world"
+    assert edit.textCursor().position() == 5
+    end = edit.textCursor()
+    end.movePosition(QTextCursor.MoveOperation.End)
+    edit.setTextCursor(end)
+    QTest.keyClicks(edit, "!")
+    assert edit.toPlainText().endswith("!")
+    assert edit.textCursor().position() == len(edit.toPlainText())
+    card.deleteLater()
+
+
 def test_render_page_constructs(qapp, ctx, monkeypatch):
     """QMediaPlayer bazı CI ortamlarında yok; yoksa stub."""
     try:

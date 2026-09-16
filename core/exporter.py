@@ -3,11 +3,24 @@ RecapAI - Dışa aktarma fonksiyonları (TXT, SRT).
 """
 
 import logging
+import re
 from pathlib import Path
 
 from core.models import Chapter
 
 logger = logging.getLogger(__name__)
+
+
+def audio_export_stem(chapter_name: str, index: int) -> str:
+    """Kısa dışa aktarma adı: 'Bölüm 35' + 1 -> '35_001'."""
+    name = (chapter_name or "").strip()
+    nums = re.findall(r"\d+", name)
+    if nums:
+        prefix = nums[-1]
+    else:
+        prefix = re.sub(r"[^\w\-]+", "_", name, flags=re.UNICODE).strip("_")[:16]
+        prefix = prefix or "s"
+    return f"{prefix}_{index:03d}"
 
 
 def _srt_timestamp(seconds: float) -> str:

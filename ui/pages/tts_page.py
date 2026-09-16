@@ -1249,8 +1249,10 @@ class TtsPage(QWidget):
             return  # Kullanici iptal etti
 
         import shutil
+        from core.exporter import audio_export_stem
+
         dest_dir = Path(export_dir)
-        chapter_name = getattr(chapter, "name", "bolum").replace(" ", "_").replace("/", "-")
+        chapter_name = getattr(chapter, "name", "bolum")
 
         copied = 0
         errors = []
@@ -1258,7 +1260,7 @@ class TtsPage(QWidget):
         for i, seg in ready_segments:
             src = Path(seg.audio_path)
             ext = src.suffix or ".wav"
-            dest_name = f"{chapter_name}_segment_{i + 1:03d}{ext}"
+            dest_name = f"{audio_export_stem(chapter_name, i + 1)}{ext}"
             dest_path = dest_dir / dest_name
             try:
                 shutil.copy2(str(src), str(dest_path))
