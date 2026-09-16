@@ -42,20 +42,22 @@ class SettingsManager(QObject):
     # ── Disk I/O ───────────────────────────────────────────────────
 
     def load(self) -> Dict:
-        """settings.json'dan belleğe yükle."""
+        """settings.json'dan belleğe yükle; yeni varsayılan anahtarları birleştir."""
+        defaults = self._default_settings()
         try:
             if SETTINGS_PATH.exists():
-                self._settings = json.loads(
-                    SETTINGS_PATH.read_text(encoding="utf-8")
-                )
+                disk = json.loads(SETTINGS_PATH.read_text(encoding="utf-8"))
+                if not isinstance(disk, dict):
+                    disk = {}
+                self._settings = self._deep_merge(defaults, disk)
                 logger.info("SettingsManager: ayarlar yüklendi (%s)", SETTINGS_PATH)
             else:
-                self._settings = self._default_settings()
+                self._settings = defaults
                 self.save()
                 logger.info("SettingsManager: varsayılan ayarlar oluşturuldu.")
         except Exception as exc:
             logger.error("SettingsManager yükleme hatası: %s", exc)
-            self._settings = self._default_settings()
+            self._settings = defaults
         return self._settings
 
     def reload(self) -> Dict:

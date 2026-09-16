@@ -75,3 +75,62 @@ class TestTTSCache:
         hit = cache.get(key)
         assert hit and Path(hit).exists()
         assert cache.entry_count() == 1
+
+
+class TestPipelineCheckpoint:
+    def test_stale_script_does_not_skip_when_analysis_missing(self):
+        from core.models import Chapter, ImageData, SegmentData
+        from core.pipeline import (
+            STAGE_ANALYSIS,
+            STAGE_RENDER,
+            STAGE_SCRIPT,
+            STAGE_TTS,
+            pending_stages,
+        )
+
+        chapter = Chapter(
+            id="c",
+            name="n",
+            images=[ImageData("a.jpg", "a.jpg", 0)],
+            analysis_data={},
+            segments=[
+                SegmentData(0, "eski script", audio_path="missing.mp3", duration=1.0),
+            ],
+        )
+        stages = pending_stages(chapter)
+        assert stages == [STAGE_ANALYSIS, STAGE_SCRIPT, STAGE_TTS, STAGE_RENDER]
+
+    def test_complete_prefix_skips_analysis_and_script(self):
+        from core.models import Chapter, ImageData, SegmentData
+        from core.pipeline import STAGE_ANALYSIS, STAGE_SCRIPT, STAGE_TTS, pending_stages
+
+        chapter = Chapter(
+            id="c",
+            name="n",
+            images=[ImageData("a.jpg", "a.jpg", 0)],
+            analysis_data={"0": {"scene": "Kapı", "action": "Açar"}},
+            segments=[SegmentData(0, "He opens the gate.")],
+        )
+        stages = pending_stages(chapter)
+        assert STAGE_ANALYSIS not in stages
+        assert STAGE_SCRIPT not in stages
+        assert STAGE_TTS in stages
+
+
+class TestSettingsMerge:
+    def test_load_fills_new_tts_keys(self, tmp_path, monkeypatch):
+        from core import settings_manager as sm_mod
+
+        path = tmp_path / "settings.json"
+        path.write_text('{"tts": {"default_speed": 1.2}}', encoding="utf-8")
+        monkeypatch.setattr(sm_mod, "SETTINGS_PATH", path)
+        previous = sm_mod.SettingsManager._instance
+        sm_mod.SettingsManager._instance = None
+        try:
+            mgr = sm_mod.SettingsManager()
+            assert mgr.get("tts.default_speed") == 1.2
+            assert mgr.get("tts.mix_engines") is False
+            assert mgr.get("tts.narrator_voice") == "am_adam"
+            assert mgr.get("defaults.vision_model")
+        finally:
+            sm_mod.SettingsManager._instance = previous

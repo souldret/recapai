@@ -58,14 +58,18 @@ def tts_complete(chapter) -> bool:
 
 
 def pending_stages(chapter, *, force: bool = False) -> List[str]:
+    """Eksik aşamaları döner; üst aşama eksikse alt aşamalar da yeniden çalışır."""
     if force:
         return [STAGE_ANALYSIS, STAGE_SCRIPT, STAGE_TTS, STAGE_RENDER]
+    need_analysis = not analysis_complete(chapter)
+    need_script = need_analysis or not script_complete(chapter)
+    need_tts = need_script or not tts_complete(chapter)
     stages: List[str] = []
-    if not analysis_complete(chapter):
+    if need_analysis:
         stages.append(STAGE_ANALYSIS)
-    if not script_complete(chapter):
+    if need_script:
         stages.append(STAGE_SCRIPT)
-    if not tts_complete(chapter):
+    if need_tts:
         stages.append(STAGE_TTS)
     stages.append(STAGE_RENDER)
     return stages

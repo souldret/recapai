@@ -869,13 +869,13 @@ class AnalysisPage(QWidget):
                 except Exception as exc:
                     self.failed.emit(str(exc))
 
+        from ui.workers.thread_utils import start_worker
         worker = _ReanalyzeWorker(
             state.current_chapter, image_index, model, api_key, project=state.current_project,
         )
         worker.done.connect(self._on_reanalyze_done)
         worker.failed.connect(self._on_reanalyze_failed)
-        self._worker = worker
-        worker.start()
+        self._worker = start_worker(self, worker)
 
     def _on_reanalyze_done(self, image_index: int, result: dict) -> None:
         item = self.image_list.item(image_index)
