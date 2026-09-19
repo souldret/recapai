@@ -14,6 +14,7 @@ Bu dosya RecapAI projesindeki önemli değişiklikleri listeler.
 - Encode: CRF 18, medium preset, YouTube bitrate 12M, `+faststart`.
 
 ### Düzeltildi
+- Manga görsellerinde silme/yeniden sıralama sonrası sayaç ve toplu panel listesi artık güncellenir.
 - Ken Burns zoom artık 2x tuvalden kırpmıyor; önce tam kadraj letterbox, sonra tek ölçekle merkeze yakınlaşıyor (sağa/sola kayma yok).
 - Tema yükleme artık çalışma dizinine değil `core.constants` yollarına bakıyor.
 - README Python sürümü, TTS, dizin yapısı ve test komutu güncellendi.

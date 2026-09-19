@@ -411,6 +411,7 @@ class ImagesPage(QWidget):
         if series_type == "webtoon":
             self._load_chapter_webtoon(chapter, state.current_project, force=True)
         else:
+            self.manga_panel_editor.set_all_image_paths(self._image_paths)
             self._start_thumbnail_worker(chapter)
         self.ctx.app_state.status_message.emit(f"{len(files)} görsel eklendi.")
 
@@ -561,7 +562,6 @@ class ImagesPage(QWidget):
         if reply == QMessageBox.StandardButton.Yes:
             self.grid.takeItem(row)
             self._sync_order()
-            self._update_count()
 
     def _sync_order(self) -> None:
         state = self.ctx.app_state
@@ -579,6 +579,11 @@ class ImagesPage(QWidget):
             if isinstance(it, ImageGridItem):
                 from core.models import ImageData
                 old = by_path.get(it.image_path)
+                it.image_index = i
+                it.setText(
+                    f"{i + 1}\n{it.filename[:18]}"
+                    f"{'…' if len(it.filename) > 18 else ''}"
+                )
                 new_images.append(ImageData(
                     path=it.image_path,
                     filename=it.filename,
@@ -586,12 +591,14 @@ class ImagesPage(QWidget):
                     thumbnail_path=old.thumbnail_path if old else None,
                 ))
         chapter.images = new_images
+        self._image_paths = [img.path for img in chapter.images]
+        self.manga_panel_editor.set_all_image_paths(self._image_paths)
 
         from core.project_manager import save_project
         try:
             save_project(state.current_project)
-        except Exception as exc:
-            QMessageBox.warning(self, "Kayıt hatası", f"Proje kaydedilemedi:\n{exc}")
+        except Exception as persist_exc:
+            QMessageBox.warning(self, "Kayıt hatası", f"Proje kaydedilemedi:\n{persist_exc}")
             return
         self._update_count()
 

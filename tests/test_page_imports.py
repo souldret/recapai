@@ -1,5 +1,7 @@
 """Tüm UI sayfalarını gerçekten yükle — eksik Qt import'ları NameError verir."""
 
+from pathlib import Path
+
 import pytest
 
 from core.app_state import AppState
@@ -129,4 +131,49 @@ def test_render_page_constructs(qapp, ctx, monkeypatch):
     import importlib
     page = importlib.import_module("ui.pages.render_page").RenderPage(ctx)
     assert page is not None
+    page.deleteLater()
+
+
+def test_images_page_sync_order_updates_count_and_batch_paths(qapp, ctx, tmp_path, monkeypatch):
+    """Silme/yeniden sıralama sayaç ve toplu panel listesini güncellemeli."""
+    from core.models import Chapter, ImageData, Project
+    from ui.pages.images_page import ImagesPage
+    from ui.pages.images_widgets import ImageGridItem
+
+    monkeypatch.setattr("core.project_manager.save_project", lambda project: True)
+
+    project = Project(
+        id="p1",
+        name="Test",
+        created_at="2026-01-01",
+        updated_at="2026-01-01",
+        series_type="manga",
+        chapters=[Chapter(id="c1", name="Ch 1")],
+    )
+    chapter = project.chapters[0]
+    paths = [str(tmp_path / name) for name in ("a.png", "b.png", "c.png")]
+    chapter.images = [
+        ImageData(path=path, filename=Path(path).name, order=i)
+        for i, path in enumerate(paths)
+    ]
+    ctx.app_state.current_project = project
+    ctx.app_state.current_chapter = chapter
+
+    page = ImagesPage(ctx)
+    page.chapter_combo.addItem(chapter.name, chapter.id)
+    page.chapter_combo.setCurrentIndex(0)
+    page._load_chapter_images(chapter, force=True)
+    assert page.lbl_count.text() == "3 görsel"
+    assert page.manga_panel_editor._all_image_paths == paths
+
+    page.grid.takeItem(1)
+    page._sync_order()
+
+    remaining = [paths[0], paths[2]]
+    assert [img.path for img in chapter.images] == remaining
+    assert page._image_paths == remaining
+    assert page.lbl_count.text() == "2 görsel"
+    assert page.manga_panel_editor._all_image_paths == remaining
+    assert isinstance(page.grid.item(1), ImageGridItem)
+    assert page.grid.item(1).image_index == 1
     page.deleteLater()
