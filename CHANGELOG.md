@@ -5,7 +5,7 @@ Bu dosya RecapAI projesindeki önemli değişiklikleri listeler.
 ## [Yayınlanmamış]
 
 ### Değiştirildi
-- Script artık **beat başına tek voiceover** üretir; diğer paneller kısa sessiz B-roll olarak videoda kalır. Analiz dump'ı ile doldurulmaz.
+- Script artık **YouTube retention iskeleti** ile üretir: kısa/orta/uzun fark etmez, paneller kümelenir (en fazla 8–12 beat), tek gerçek rehook, kanca spoiler vermez.
 - Script sayfasındaki **Stil** seçicisi kaldırıldı; anlatım otomatik Manhwa Fresh YouTube recap stiline kilitlendi.
 - Script Üret butonu birincil (indigo) stil aldı; kart editörü daha yüksek.
 - Script ayar çubuğu tek sıkışık satırdan 4 satıra ayrıldı (bölüm/model, niş/süre, kancalar, aksiyonlar).

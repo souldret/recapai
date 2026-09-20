@@ -15,6 +15,7 @@ logger = logging.getLogger(__name__)
 MAX_BEAT_PANELS = 4
 MIN_BEAT_PANELS = 1
 FILLER_MAX_PANELS = 3
+MAX_STORY_BEATS = {"short": 8, "medium": 10, "long": 12}
 
 _STOP = {
     "the", "a", "an", "and", "or", "of", "in", "on", "to", "for", "with",
@@ -136,24 +137,59 @@ def _should_merge(prev: Dict[str, Any], cur: Dict[str, Any], cur_len: int) -> bo
 
 def _role_for(beat_i: int, total: int, important: bool, score: float) -> str:
     # Cold open ayrı flash-forward klip; ilk hikâye beat'i setup.
+    # Rehook burada verilmez — tek gerçek dönüş _assign_single_rehook ile seçilir.
     if total <= 1:
         return "setup"
     if beat_i == 0:
         return "setup"
     if beat_i == total - 1:
         return "cliffhanger"
-    if important and score >= 0.7:
-        return "rehook"
     if score < 0.32:
         return "filler"
     return "beat"
 
 
-LENGTH_MINUTES = {"short": 4.0, "medium": 6.0, "long": 9.0}
+def _assign_single_rehook(beats: List[StoryBeat], start: int = 0) -> None:
+    """Gövdeye en fazla BİR rehook koy: en yüksek skorlu orta beat."""
+    body = [
+        (i, b) for i, b in enumerate(beats)
+        if i >= start and b.role in ("beat", "filler")
+    ]
+    if len(beats) - start < 4 or not body:
+        return
+    lo = start + max(1, (len(beats) - start) // 4)
+    hi = start + max(lo + 1, int((len(beats) - start) * 0.75))
+    mid = [(i, b) for i, b in body if lo <= i < hi] or body
+    best_i, best_b = max(mid, key=lambda x: (x[1].score, x[1].important))
+    if best_i <= start or best_i >= len(beats) - 1:
+        return
+    best_b.role = "rehook"
+    best_b.important = True
+
+
+def _collapse_to_cap(groups: List[List[int]], cap: int) -> List[List[int]]:
+    """Çok fazla beat varsa komşuları birleştirerek tavanın altına iner."""
+    if cap <= 0 or len(groups) <= cap:
+        return groups
+    out = [list(g) for g in groups]
+    while len(out) > cap:
+        best_i = 0
+        best_n = len(out[0]) + len(out[1])
+        for i in range(len(out) - 1):
+            n = len(out[i]) + len(out[i + 1])
+            if n < best_n:
+                best_n = n
+                best_i = i
+        out[best_i] = out[best_i] + out[best_i + 1]
+        del out[best_i + 1]
+    return out
+
+
+LENGTH_MINUTES = {"short": 2.5, "medium": 6.0, "long": 9.0}
 LENGTH_CAPS = {
-    "short": {"beat": 16, "filler": 10, "cold_open": 18, "last_time": 14, "setup": 16, "rehook": 16, "cliffhanger": 16},
-    "medium": {"beat": 280, "filler": 48, "cold_open": 48, "last_time": 40, "setup": 240, "rehook": 280, "cliffhanger": 80},
-    "long": {"beat": 400, "filler": 64, "cold_open": 56, "last_time": 48, "setup": 320, "rehook": 360, "cliffhanger": 100},
+    "short": {"beat": 28, "filler": 16, "cold_open": 22, "last_time": 18, "setup": 32, "rehook": 32, "cliffhanger": 24},
+    "medium": {"beat": 90, "filler": 36, "cold_open": 28, "last_time": 28, "setup": 70, "rehook": 80, "cliffhanger": 40},
+    "long": {"beat": 120, "filler": 48, "cold_open": 32, "last_time": 32, "setup": 90, "rehook": 100, "cliffhanger": 48},
 }
 
 
@@ -184,7 +220,7 @@ def _word_budget(
     total_words = max(90, int(float(minutes) * wpm))
     base = max(16, total_words // max(1, total_beats))
     words = int(base * boost * (0.85 + 0.08 * min(n_panels, 5)))
-    floor = 12 if length == "short" else 20
+    floor = 14 if length == "short" else 22
     return max(floor, min(cap, words))
 
 
@@ -200,20 +236,19 @@ def cluster_beats(
         return []
 
     groups: List[List[int]] = []
-    if length == "short":
-        groups = [[i] for i in range(n)]
-    else:
-        current: List[int] = [0]
-        prev = _analysis_at(chapter, 0)
-        for i in range(1, n):
-            cur = _analysis_at(chapter, i)
-            if _should_merge(prev, cur, len(current)):
-                current.append(i)
-            else:
-                groups.append(current)
-                current = [i]
-            prev = cur
-        groups.append(current)
+    current: List[int] = [0]
+    prev = _analysis_at(chapter, 0)
+    for i in range(1, n):
+        cur = _analysis_at(chapter, i)
+        if _should_merge(prev, cur, len(current)):
+            current.append(i)
+        else:
+            groups.append(current)
+            current = [i]
+        prev = cur
+    groups.append(current)
+    cap = MAX_STORY_BEATS.get((length or "medium").lower(), MAX_STORY_BEATS["medium"])
+    groups = _collapse_to_cap(groups, cap)
 
     raw: List[StoryBeat] = []
     for gi, idxs in enumerate(groups):
@@ -265,12 +300,7 @@ def cluster_beats(
         logical_total = max(1, total - start)
         beat.role = _role_for(logical, logical_total, beat.important, beat.score)
 
-    # Rehook enjeksiyonu: uzun gövdede önemli beat yoksa ortadakini yükselt
-    body = [b for b in raw if b.role in ("beat", "filler")]
-    if len(raw) >= 6 and not any(b.role == "rehook" for b in raw) and body:
-        mid = body[len(body) // 2]
-        mid.role = "rehook"
-        mid.important = True
+    _assign_single_rehook(raw, start)
 
     for beat in raw:
         beat.word_budget = _word_budget(
@@ -291,8 +321,8 @@ def pick_cold_open_image(chapter, beats: List[StoryBeat]) -> int:
         return 0
     best_i = 0
     best_s = -1.0
-    # Kısa bölümde tüm paneller; uzunda son ~%25'i spoiler diye açılışa koyma
-    limit = n if n <= 5 else max(4, int(n * 0.75))
+    # Son ~%35'i spoiler: kanca görseli final twist'i göstermesin.
+    limit = n if n <= 4 else max(3, int(n * 0.65))
     for i in range(limit):
         s = panel_score(_analysis_at(chapter, i))
         if i < 2:

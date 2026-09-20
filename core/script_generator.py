@@ -39,7 +39,7 @@ _TR_SUFFIX_RE = re.compile(
 # Geriye dönük: panel chunk (eski yol). Yeni yol beat chunk kullanır.
 CHUNK_SIZE = 40
 BEAT_CHUNK_SIZE = 10
-LENGTH_MINUTES = {"short": 4.0, "medium": 6.0, "long": 9.0}
+LENGTH_MINUTES = {"short": 2.5, "medium": 6.0, "long": 9.0}
 
 # Manhwa Fresh niş modülleri (PDF Prompt 2)
 DEFAULT_NICHE = "power_fantasy"
@@ -681,10 +681,10 @@ def _duration_note(length: str, target_minutes: float, language: str, chunk, tot
     en = (language or "").lower().startswith("en")
     if length == "short":
         return (
-            "SHORT MODE: exactly 1 sentence per beat, max 16 words. No extra paragraphs."
+            "SHORT MODE: 1–2 sentences per beat, max ~28 words. One VO per story beat, never per panel."
             if en else
-            "KISA MOD: her beat 1 cümle, en fazla 16 kelime. "
-            "Panel başına ayrı paragraf YASAK. Bütçeyi aşma."
+            "KISA MOD: her beat 1–2 cümle, en fazla ~28 kelime. "
+            "Panel başına ayrı cümle YASAK. Sadece plot + stakes."
         )
     minutes = target_minutes if target_minutes and target_minutes > 0 else float(
         LENGTH_MINUTES.get(length, LENGTH_MINUTES["medium"])
@@ -1652,7 +1652,8 @@ class ScriptGenerator:
             if body:
                 body = _scrub_generic_labels(body, language, project=project)
             if length == "short" and body:
-                body = _clip_to_budget(_first_sentence(body), min(16, b.word_budget or 16))
+                sents = _split_sentences(body)[:2]
+                body = _clip_to_budget(" ".join(sents), min(28, b.word_budget or 28))
             if _wrong_language(body, language) or _is_atmosphere_dump(body):
                 body = ""
             hero = b.lead_index if 0 <= b.lead_index < n else b.hero_index
@@ -1679,7 +1680,7 @@ class ScriptGenerator:
         prefix: List[SegmentData] = []
         if hook and n > 0:
             if length == "short":
-                hook = _clip_to_budget(_first_sentence(hook), 16)
+                hook = _clip_to_budget(" ".join(_split_sentences(hook)[:2]), 22)
             prefix.append(self._make_segment(
                 chapter, cold_idx, hook, language,
                 beat_id=beats[0].beat_id if beats else 0,

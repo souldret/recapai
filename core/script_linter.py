@@ -33,6 +33,12 @@ _PATTERNS: List[Tuple[str, re.Pattern, str]] = [
         re.I,
     ),
      "Görsel saç/görünüm etiketi"),
+    ("warn", re.compile(
+        r"\b(frantically|completely flustered|keeps staring|becomes completely|"
+        r"panik içinde|tamamen şaşkın)\b",
+        re.I,
+    ),
+     "Ekran caption'ı / duygu tarifi"),
 ]
 
 
@@ -99,6 +105,17 @@ def lint_segments(segments: List[SegmentData]) -> List[SegmentData]:
                     seg.lint_issues.append("Sonra zinciri")
         else:
             then_run = 0
+    caption_run = 0
+    for seg in segments:
+        t = (seg.text or "").strip()
+        wc = _word_count(t)
+        role = (seg.role or "").lower()
+        if t and wc <= 16 and role not in ("cold_open", "cliffhanger", "filler", "last_time"):
+            caption_run += 1
+            if caption_run >= 3 and "Panel caption zinciri" not in (seg.lint_issues or []):
+                seg.lint_issues.append("Panel caption zinciri")
+        else:
+            caption_run = 0
     return segments
 
 

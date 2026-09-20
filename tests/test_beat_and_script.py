@@ -95,12 +95,32 @@ class TestBeatCluster:
         })
         assert detect_niche(ch) == "power_fantasy"
 
-    def test_short_one_panel_one_beat(self):
+    def test_short_clusters_panels(self):
         analyses = {str(i): {"scene": "x", "action": "y", "important": False} for i in range(5)}
         ch = _chapter(5, analyses)
         beats = cluster_beats(ch, length="short")
-        assert len(beats) == 5
-        assert all(len(b.panel_indices) == 1 for b in beats)
+        assert len(beats) < 5
+        assert len(beats) <= 8
+        assert sum(len(b.panel_indices) for b in beats) == 5
+
+    def test_single_rehook_not_every_important_panel(self):
+        analyses = {
+            "0": {"scene": "School hallway morning", "action": "Students gossip about a feared senior", "important": False, "setting": "hall", "mood": "tense"},
+            "1": {"scene": "Nurse office skip", "action": "The senior hides from class again", "important": False, "setting": "nurse", "mood": "quiet"},
+            "2": {"scene": "Cleaning duty assignment", "action": "Kurose gets stuck wiping the floor", "important": False, "setting": "classroom", "mood": "tired"},
+            "3": {"scene": "Death threat from curtain", "action": "Someone yells leave or die", "important": True, "setting": "curtain", "mood": "fear", "dialogues": ["Get out"]},
+            "4": {"scene": "Identity reveal", "action": "It is Haimiya the feared senior", "important": True, "setting": "curtain", "mood": "shock"},
+            "5": {"scene": "Unexpected kindness", "action": "She teases him instead of hitting him", "important": True, "setting": "classroom", "mood": "soft"},
+            "6": {"scene": "Intense staring", "action": "He cannot look away from her", "important": False, "setting": "desk", "mood": "awkward"},
+            "7": {"scene": "Confession of pleasure", "action": "He says this feels really good and she recoils", "important": True, "setting": "desk", "mood": "twist", "dialogues": ["This feels good"]},
+        }
+        ch = _chapter(8, analyses)
+        beats = cluster_beats(ch, length="short")
+        rehooks = [b for b in beats if b.role == "rehook"]
+        assert len(beats) >= 4
+        assert len(rehooks) <= 1
+        assert beats[0].role == "setup"
+        assert beats[-1].role == "cliffhanger"
 
     def test_rejects_turkish_when_english(self):
         from core.script_generator import _wrong_language
@@ -120,7 +140,7 @@ class TestBeatCluster:
         from core.beat_engine import _word_budget
         short = _word_budget("beat", 4, None, 10, length="short")
         medium = _word_budget("beat", 4, None, 10, length="medium")
-        assert short <= 16
+        assert short <= 32
         assert medium >= 36
         timed = _word_budget("beat", 4, 2.0, 20, length="medium")
         assert 20 <= timed <= 90
@@ -200,8 +220,7 @@ class TestDurationAndLanguageLock:
         assert "~6 minutes" in note
         assert "ABOUT 80 words" in note
         short = _duration_note("short", 0.0, "en", chunk, 10)
-        assert "1 sentence" in short
-        assert "16 words" in short
+        assert "1–2 sentences" in short or "1-2 sentences" in short or "story beat" in short
 
     def test_format_beats_wraps_turkish_source(self):
         from core.beat_engine import StoryBeat, format_beats_for_prompt
@@ -238,9 +257,8 @@ class TestDistribute:
         story = [s for s in segs if s.role != "cold_open"]
         spoken = [s for s in story if (s.text or "").strip()]
         assert spoken
-        assert len(spoken[0].text.split()) <= 16
-        assert spoken[0].text.count(".") <= 2
-        assert all(len(s.text.split()) <= 16 for s in spoken)
+        assert len(spoken[0].text.split()) <= 28
+        assert all(len(s.text.split()) <= 28 for s in spoken)
 
     def test_materialize_one_vo_per_beat_not_per_panel(self):
         from core.beat_engine import StoryBeat
