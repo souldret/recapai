@@ -75,7 +75,25 @@ def pending_stages(chapter, *, force: bool = False) -> List[str]:
     return stages
 
 
-def next_incomplete_step(project) -> Tuple[str, str]:
+def active_chapter(project, preferred=None):
+    """Aktif bölüm: verilen tercih, yoksa ilk tamamlanmamış, yoksa ilk bölüm."""
+    chapters = list(getattr(project, "chapters", None) or [])
+    if not chapters:
+        return None
+    if preferred is not None:
+        pid = getattr(preferred, "id", None)
+        for ch in chapters:
+            if ch is preferred or getattr(ch, "id", None) == pid:
+                return ch
+    for ch in chapters:
+        if not getattr(ch, "images", None):
+            return ch
+        if not analysis_complete(ch) or not script_complete(ch) or not tts_complete(ch):
+            return ch
+    return chapters[0]
+
+
+def next_incomplete_step(project, chapter=None) -> Tuple[str, str]:
     """
     Returns (page_name, label) for Home 'devam et' kartı.
     page_name: images | analysis | script | tts | render | projects
@@ -85,7 +103,7 @@ def next_incomplete_step(project) -> Tuple[str, str]:
     chapters = getattr(project, "chapters", None) or []
     if not chapters:
         return "projects", "Bölüm ekle"
-    chapter = chapters[0]
+    chapter = active_chapter(project, chapter)
     if not getattr(chapter, "images", None):
         return "images", "Görsel ekle"
     if not analysis_complete(chapter):
@@ -97,7 +115,7 @@ def next_incomplete_step(project) -> Tuple[str, str]:
     return "render", "Videoyu render et"
 
 
-def step_badges(project) -> Dict[int, str]:
+def step_badges(project, chapter=None) -> Dict[int, str]:
     """
     Sidebar sayfa index → empty | partial | done
     2 görseller, 3 analiz, 4 script, 5 tts, 6 render
@@ -108,7 +126,7 @@ def step_badges(project) -> Dict[int, str]:
     chapters = getattr(project, "chapters", None) or []
     if not chapters:
         return badges
-    ch = chapters[0]
+    ch = active_chapter(project, chapter) or chapters[0]
     n_img = len(getattr(ch, "images", None) or [])
     if n_img:
         badges[2] = "done"
@@ -144,38 +162,34 @@ def estimate_pipeline_cost(
     skip_analysis: bool = False,
     skip_script: bool = False,
 ) -> Dict[str, Any]:
-    from core.panel_ai import VISION_RATES, estimate_vision_cost
+    from core.costing import estimate_chapter_cost
 
-    pages = max(1, len(getattr(chapter, "images", None) or []))
-    vision = {"usd_low": 0.0, "usd_high": 0.0, "label": vision_model, "pages": 0}
-    if not skip_analysis:
-        remaining = pages
-        data = getattr(chapter, "analysis_data", None) or {}
-        remaining = sum(
-            1 for i in range(pages) if not _usable_analysis(data.get(str(i)))
-        )
-        if remaining:
-            vision = estimate_vision_cost(vision_model, remaining)
-            vision["pages"] = remaining
-
-    rates = VISION_RATES.get(script_model) or {"in": 3.0, "out": 15.0, "label": script_model}
-    script = {"usd_low": 0.0, "usd_high": 0.0, "label": rates.get("label", script_model)}
-    if not skip_script:
-        # ~4k in + 2k out per chapter as rough recap script
-        usd = (4000 / 1_000_000.0) * rates["in"] + (2500 / 1_000_000.0) * rates["out"]
-        usd = max(usd, 0.002)
-        script = {
-            "label": rates.get("label", script_model),
-            "usd_low": round(usd * 0.5, 4),
-            "usd_high": round(usd * 2.2, 4),
-        }
-
-    return {
-        "vision": vision,
-        "script": script,
-        "usd_low": round(float(vision.get("usd_low") or 0) + script["usd_low"], 4),
-        "usd_high": round(float(vision.get("usd_high") or 0) + script["usd_high"], 4),
-    }
+    economy_model = ""
+    economy_pages = 0
+    try:
+        from core.settings_manager import SettingsManager
+        sm = SettingsManager.instance()
+        economy_model = sm.get("api.economy_vision_model", "") or ""
+        if sm.get("analysis.skip_low_score_fillers", True):
+            remaining = 0
+            data = getattr(chapter, "analysis_data", None) or {}
+            pages = len(getattr(chapter, "images", None) or [])
+            remaining = sum(
+                1 for i in range(pages) if not _usable_analysis(data.get(str(i)))
+            )
+            economy_pages = max(0, remaining // 4)
+    except Exception:
+        pass
+    return estimate_chapter_cost(
+        chapter,
+        vision_model,
+        script_model,
+        skip_analysis=skip_analysis,
+        skip_script=skip_script,
+        usable_fn=_usable_analysis,
+        economy_pages=economy_pages,
+        economy_vision_model=economy_model,
+    )
 
 
 def _safe_filename(text: str) -> str:
@@ -240,6 +254,31 @@ def export_youtube_thumbnail(chapter, video_path: str) -> Optional[str]:
             x = (1280 - im.width) // 2
             y = (720 - im.height) // 2
             canvas.paste(im, (x, y))
+            hook = ""
+            segs = getattr(chapter, "segments", None) or []
+            for seg in segs:
+                if (getattr(seg, "role", "") or "") == "cold_open" and (seg.text or "").strip():
+                    hook = (seg.text or "").strip()
+                    break
+            if not hook and segs:
+                hook = (getattr(segs[0], "text", "") or "").strip()
+            if hook:
+                from PIL import ImageDraw, ImageFont
+                draw = ImageDraw.Draw(canvas)
+                words = hook.split()
+                line = " ".join(words[:10])
+                if len(words) > 10:
+                    line += "…"
+                try:
+                    font = ImageFont.truetype("arial.ttf", 42)
+                except Exception:
+                    font = ImageFont.load_default()
+                pad = 24
+                bbox = draw.textbbox((0, 0), line, font=font)
+                tw, th = bbox[2] - bbox[0], bbox[3] - bbox[1]
+                box = [40, 720 - th - pad * 2 - 36, min(1240, 40 + tw + pad * 2), 684]
+                draw.rectangle(box, fill=(8, 8, 14))
+                draw.text((box[0] + pad, box[1] + pad // 2), line, fill=(255, 255, 255), font=font)
             canvas.save(dest, "JPEG", quality=88, optimize=True)
         return str(dest)
     except Exception as exc:
@@ -272,16 +311,19 @@ def resolve_render_settings(app_state=None) -> Dict[str, Any]:
         "watermark_path": None,
     }
     try:
-        from core.render_presets import get_preset, list_presets
+        from core.render_presets import builtin_preset, get_preset, list_presets
         from core.settings_manager import SettingsManager
         sm = SettingsManager.instance()
         name = sm.get("render.last_preset", "") or ""
+        builtin = builtin_preset(name)
+        if builtin:
+            settings.update(builtin)
         names = list_presets()
         if name and name in names:
             preset = get_preset(name)
             if preset:
                 settings.update(preset)
-        elif names:
+        elif not builtin and names:
             preset = get_preset(names[0])
             if preset:
                 settings.update(preset)

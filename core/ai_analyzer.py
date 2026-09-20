@@ -286,14 +286,16 @@ class AIAnalyzer:
                     progress_callback(i + 1, total, msg)
                 continue
 
-            msg = f"{i + 1}/{total} analiz ediliyor: {image_data.filename}"
+            use_model = self._model_for_index(i, total, model)
+            label = "" if use_model == model else f" (ekonomi: {use_model})"
+            msg = f"{i + 1}/{total} analiz ediliyor: {image_data.filename}{label}"
             logger.info(msg)
             if progress_callback:
                 progress_callback(i + 1, total, msg)
 
             known = _known_roster_lines(project=project)
             result = self.analyze_image(
-                image_data.path, model, known_names=known, project=project,
+                image_data.path, use_model, known_names=known, project=project,
             )
             results[cache_key] = result
 
@@ -319,6 +321,17 @@ class AIAnalyzer:
                 time.sleep(delay)
 
         return results
+
+    def _model_for_index(self, index: int, total: int, primary: str) -> str:
+        """İlk/son ve her 3. kare birincil; diğerleri ekonomi model."""
+        if not self._settings.get("analysis.skip_low_score_fillers", True):
+            return primary
+        economy = (self._settings.get("api.economy_vision_model", "") or "").strip()
+        if not economy or economy == primary:
+            return primary
+        if total <= 4 or index == 0 or index == total - 1 or index % 3 == 0:
+            return primary
+        return economy
 
     # ── Tekrar Analiz ──────────────────────────────────────────────
 

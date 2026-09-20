@@ -45,10 +45,15 @@ def export_txt(chapter: Chapter, path: str) -> None:
         raise ValueError(f"'{chapter.name}' bölümünde script segmenti yok.")
 
     lines = [f"# {chapter.name}", ""]
-    for i, seg in enumerate(chapter.segments):
-        if seg.text.strip():
-            lines.append(f"[{i + 1}] {seg.text.strip()}")
-            lines.append("")
+    for seg in chapter.segments:
+        idx = getattr(seg, "image_index", None)
+        try:
+            label = int(idx) + 1 if idx is not None else 0
+        except (TypeError, ValueError):
+            label = 0
+        text = (seg.text or "").strip()
+        lines.append(f"[{label}] {text}" if text else f"[{label}]")
+        lines.append("")
 
     content = "\n".join(lines)
     try:

@@ -15,6 +15,12 @@ from PyQt6.QtCore import QObject, pyqtSignal
 logger = logging.getLogger(__name__)
 
 from core.constants import SETTINGS_PATH
+from core.secrets import (
+    get_openrouter_api_key,
+    migrate_settings_secret,
+    set_openrouter_api_key,
+    strip_secrets_for_disk,
+)
 
 
 class SettingsManager(QObject):
@@ -49,7 +55,7 @@ class SettingsManager(QObject):
                 disk = json.loads(SETTINGS_PATH.read_text(encoding="utf-8"))
                 if not isinstance(disk, dict):
                     disk = {}
-                self._settings = self._deep_merge(defaults, disk)
+                self._settings = migrate_settings_secret(self._deep_merge(defaults, disk))
                 logger.info("SettingsManager: ayarlar yüklendi (%s)", SETTINGS_PATH)
             else:
                 self._settings = defaults
@@ -65,15 +71,19 @@ class SettingsManager(QObject):
         return self.load()
 
     def save(self) -> bool:
-        """Belleği settings.json'a yaz ve sinyalleri yayınla."""
+        """Belleği settings.json'a atomik yazar; gizli anahtarlar diske gitmez."""
         try:
             SETTINGS_PATH.parent.mkdir(parents=True, exist_ok=True)
-            SETTINGS_PATH.write_text(
-                json.dumps(self._settings, indent=2, ensure_ascii=False),
-                encoding="utf-8",
+            payload = json.dumps(
+                strip_secrets_for_disk(self._settings),
+                indent=2,
+                ensure_ascii=False,
             )
+            tmp_path = SETTINGS_PATH.with_suffix(".json.tmp")
+            tmp_path.write_text(payload, encoding="utf-8")
+            tmp_path.replace(SETTINGS_PATH)
             logger.info("SettingsManager: ayarlar kaydedildi.")
-            self.settings_changed.emit(self._settings.copy())
+            self.settings_changed.emit(copy.deepcopy(self._settings))
             return True
         except Exception as exc:
             logger.error("SettingsManager kaydetme hatası: %s", exc)
@@ -91,8 +101,13 @@ class SettingsManager(QObject):
         try:
             for k in keys:
                 node = node[k]
+            if key_path == "api.openrouter_api_key":
+                stored = node if isinstance(node, str) else ""
+                return get_openrouter_api_key(stored)
             return node
         except (KeyError, TypeError):
+            if key_path == "api.openrouter_api_key":
+                return get_openrouter_api_key("")
             return default
 
     def set(self, key_path: str, value: Any, save: bool = True) -> None:
@@ -109,15 +124,22 @@ class SettingsManager(QObject):
             node = node[k]
 
         old_value = node.get(keys[-1])
-        node[keys[-1]] = value
+        if key_path == "api.openrouter_api_key":
+            try:
+                set_openrouter_api_key(str(value or ""))
+            except Exception as exc:
+                logger.error("API anahtarı secrets'e yazılamadı: %s", exc)
+            node[keys[-1]] = ""
+            if save:
+                self.save()
+            if str(old_value or "") != str(value or ""):
+                self.api_key_changed.emit(str(value or ""))
+                logger.info("SettingsManager: API key değişti (sinyal yayınlandı).")
+            return
 
+        node[keys[-1]] = value
         if save:
             self.save()
-
-        # API key özel sinyali
-        if key_path == "api.openrouter_api_key" and old_value != value:
-            self.api_key_changed.emit(str(value))
-            logger.info("SettingsManager: API key değişti (sinyal yayınlandı).")
 
     def get_all(self) -> Dict:
         """Tüm ayarların derin kopyasını döner (shallow copy aliasing'i önler)."""
@@ -144,7 +166,20 @@ class SettingsManager(QObject):
         Kısmi dict geçirildiğinde mevcut iç içe anahtarlar korunur.
         """
         old_key = self.get_api_key()
+        incoming_key = ""
+        api = data.get("api") if isinstance(data, dict) else None
+        if isinstance(api, dict) and "openrouter_api_key" in api:
+            incoming_key = str(api.get("openrouter_api_key") or "").strip()
+            api = dict(api)
+            api["openrouter_api_key"] = ""
+            data = dict(data)
+            data["api"] = api
         self._settings = self._deep_merge(self._settings, data)
+        if incoming_key:
+            try:
+                set_openrouter_api_key(incoming_key)
+            except Exception as exc:
+                logger.error("API anahtarı secrets'e yazılamadı: %s", exc)
         if save:
             self.save()
         new_key = self.get_api_key()
@@ -154,8 +189,9 @@ class SettingsManager(QObject):
     # ── API Key kısayolları ────────────────────────────────────────
 
     def get_api_key(self) -> str:
-        key = self.get("api.openrouter_api_key", "")
-        return key.strip() if isinstance(key, str) else ""
+        fallback = self.get("api.openrouter_api_key", "")
+        fallback = fallback.strip() if isinstance(fallback, str) else ""
+        return get_openrouter_api_key(fallback)
 
     def set_api_key(self, api_key: str) -> None:
         self.set("api.openrouter_api_key", api_key.strip())
@@ -183,6 +219,13 @@ class SettingsManager(QObject):
                 # sırayla denenecek alternatif modeller.
                 "vision_fallback_models": ["google/gemini-2.5-flash"],
                 "script_fallback_models": ["google/gemini-2.5-flash"],
+                "economy_vision_model": "google/gemini-2.5-flash-lite",
+                "premium_script_model": "",
+            },
+            "analysis": {
+                "rate_limit_delay": 1.0,
+                "skip_low_score_fillers": True,
+                "filler_score_threshold": 0.28,
             },
             "paths": {
                 "projects_dir": "./projects",
@@ -208,9 +251,6 @@ class SettingsManager(QObject):
                 "narrator_voice": "am_adam",
                 "dialogue_engine": "edge-tts",
                 "dialogue_voice": "en-US-AndrewNeural",
-            },
-            "analysis": {
-                "rate_limit_delay": 1.0,   # API istekleri arası bekleme (saniye)
             },
             "cache": {
                 "global_tts_cache": True,  # Uygulama genelinde tek TTS cache

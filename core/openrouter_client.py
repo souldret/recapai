@@ -84,6 +84,7 @@ class OpenRouterClient:
         self._explicit_key: Optional[str] = api_key
         self._base_url = OPENROUTER_BASE_URL
         self._total_tokens = 0
+        self._usage_events: List[Dict[str, Any]] = []
         self._session = requests.Session()
         self._api_models_cache: Optional[List[Dict]] = None
         OpenRouterClient._instance = self
@@ -365,11 +366,18 @@ class OpenRouterClient:
         return "google/gemini-2.5-flash"
 
     def _track_tokens(self, data: Dict) -> None:
-        usage = data.get("usage", {})
+        usage = data.get("usage", {}) or {}
         total = usage.get("total_tokens", 0)
         if total:
             self._total_tokens += total
             logger.debug("Token kullanımı: +%d (toplam: %d)", total, self._total_tokens)
+        if usage:
+            self._usage_events.append({
+                "model": data.get("model") or "",
+                "usage": usage,
+            })
+            if len(self._usage_events) > 400:
+                self._usage_events = self._usage_events[-200:]
 
     # ── Chat Completion ────────────────────────────────────────────
 
@@ -671,3 +679,10 @@ class OpenRouterClient:
     def total_tokens_used(self) -> int:
         """Bu oturumda kullanılan toplam token sayısı."""
         return self._total_tokens
+
+    def usage_events(self) -> List[Dict[str, Any]]:
+        return list(self._usage_events)
+
+    def session_cost_usd(self) -> float:
+        from core.costing import session_cost
+        return float(session_cost(self._usage_events).get("usd") or 0.0)

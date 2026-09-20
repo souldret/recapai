@@ -17,6 +17,52 @@ logger = logging.getLogger(__name__)
 
 PRESETS_PATH = CONFIG_DIR / "render_presets.json"
 
+BUILTIN_PRESETS: Dict[str, Dict[str, Any]] = {
+    "youtube": {
+        "resolution": [1920, 1080],
+        "fps": 30,
+        "bitrate": "12000k",
+        "codec": "libx264",
+        "ken_burns": True,
+        "image_motion": "zoom_in",
+        "bg_effect": "vignette_blur",
+        "subtitles": True,
+        "transitions": "fade",
+    },
+    "shorts": {
+        "resolution": [1080, 1920],
+        "fps": 30,
+        "bitrate": "10000k",
+        "codec": "libx264",
+        "ken_burns": True,
+        "image_motion": "zoom_in",
+        "bg_effect": "cinematic",
+        "subtitles": True,
+        "transitions": "fade",
+        "max_duration": 60.0,
+    },
+    "cinema": {
+        "resolution": [3840, 2160],
+        "fps": 24,
+        "bitrate": "20000k",
+        "codec": "libx264",
+        "ken_burns": True,
+        "image_motion": "zoom_in",
+        "bg_effect": "cinematic",
+        "subtitles": True,
+        "transitions": "fade",
+    },
+}
+
+
+def builtin_preset(name: str) -> Dict[str, Any]:
+    """YouTube / Shorts / 4K yerleşik look. Yoksa boş dict."""
+    key = (name or "").strip().lower()
+    aliases = {"4k": "cinema", "uhd": "cinema", "tiktok": "shorts", "reels": "shorts"}
+    key = aliases.get(key, key)
+    data = BUILTIN_PRESETS.get(key)
+    return dict(data) if data else {}
+
 
 def _load_all() -> Dict[str, Dict[str, Any]]:
     if not PRESETS_PATH.exists():

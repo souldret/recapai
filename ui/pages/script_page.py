@@ -208,7 +208,12 @@ class SegmentCard(QFrame):
 
     def _title_label(self) -> str:
         role = ROLE_LABELS.get(getattr(self.segment, "role", "") or "", "")
-        base = f"Segment {self.segment_index + 1}"
+        img = getattr(self.segment, "image_index", None)
+        try:
+            img_n = int(img) + 1 if img is not None else self.segment_index + 1
+        except (TypeError, ValueError):
+            img_n = self.segment_index + 1
+        base = f"Görsel {img_n}"
         return f"{base} · {role}" if role else base
 
     def _dur_label(self) -> str:
@@ -565,9 +570,9 @@ class ScriptPage(QWidget):
         self.auto_duration_check = QCheckBox("Süre otomatik")
         self.auto_duration_check.setChecked(True)
         self.auto_duration_check.setToolTip(
-            "Açıkken uzunluk kaydırıcısı hedef süreyi belirler:\n"
-            "Kısa: sıkı 1 cümle/beat · Orta: ~6 dk · Uzun: ~9 dk.\n"
-            "Kapatınca dakikayı elle seçersin (tempo ipucu, hikayeyi kesmez)."
+            "Açıkken süre görsel sayısına göre hesaplanır (Orta ~6–8 sn/kare).\n"
+            "14 görsel ≈ 1.5–2 dk. 6 dakikaya şişirmez, cümleyi kelime kelime kesmez.\n"
+            "Kısa: sıkı 1–2 cümle/beat. Kapatınca dakikayı elle seçersin."
         )
         self.auto_duration_check.toggled.connect(self._on_auto_duration_toggled)
         row2a.addWidget(self.auto_duration_check)
@@ -579,8 +584,8 @@ class ScriptPage(QWidget):
         self.minutes_spin.setEnabled(False)
         self.minutes_spin.setFixedWidth(72)
         self.minutes_spin.setToolTip(
-            "Elle hedef süre (Orta varsayılan 6 dk, Uzun 9 dk).\n"
-            "Hikayeyi kesmez, yalnızca tempo / kelime bütçesi ipucu."
+            "Elle hedef süre. Süre otomatik kapalıyken kullanılır.\n"
+            "Hikayeyi kesmez; yalnızca üst tavan. 14 görseli 6 dk'ya şişirmez."
         )
         row2a.addWidget(self.minutes_spin)
         vbox.addLayout(row2a)
@@ -599,8 +604,17 @@ class ScriptPage(QWidget):
         row2b.addWidget(self.hook_check)
 
         self.ab_hook_check = QCheckBox("A/B kanca")
-        self.ab_hook_check.setToolTip("İkinci kısa kancayı ilk segmente not olarak ekler.")
+        self.ab_hook_check.setToolTip(
+            "İkinci kancayı üretir; VO'ya gömmez. A/B seçiciden hangisinin açılışta duracağını seç."
+        )
         row2b.addWidget(self.ab_hook_check)
+
+        row2b.addWidget(QLabel("Kanca:"))
+        self.hook_variant_combo = QComboBox()
+        self.hook_variant_combo.setMinimumWidth(72)
+        self.hook_variant_combo.setToolTip("Üretilen A/B kancalardan birini cold open'a uygula.")
+        self.hook_variant_combo.currentIndexChanged.connect(self._on_hook_variant_chosen)
+        row2b.addWidget(self.hook_variant_combo)
 
         self.last_time_check = QCheckBox("Last time")
         self.last_time_check.setToolTip(
@@ -726,11 +740,33 @@ class ScriptPage(QWidget):
 
     def _on_length_changed(self, value: int) -> None:
         self.lbl_length.setText(LENGTH_LABELS[LENGTHS[value]])
-        defaults = {"short": 4, "medium": 6, "long": 9}
+        defaults = {"short": 3, "medium": 6, "long": 9}
         self.minutes_spin.setValue(defaults.get(LENGTHS[value], 6))
+        self._refresh_auto_duration_hint()
 
     def _on_auto_duration_toggled(self, checked: bool) -> None:
         self.minutes_spin.setEnabled(not checked)
+        self._refresh_auto_duration_hint()
+
+    def _refresh_auto_duration_hint(self) -> None:
+        if not getattr(self, "auto_duration_check", None):
+            return
+        if not self.auto_duration_check.isChecked():
+            return
+        chapter_id = self.chapter_combo.currentData() if getattr(self, "chapter_combo", None) else None
+        chapter = None
+        state = self.ctx.app_state
+        if chapter_id and state.current_project:
+            chapter = state.current_project.get_chapter(chapter_id)
+        n = len(getattr(chapter, "images", None) or []) if chapter else 0
+        if n <= 0:
+            return
+        from core.script_generator import resolve_target_minutes
+        length = LENGTHS[self.length_slider.value()]
+        language = self.lang_combo.currentData() or "en"
+        resolved = resolve_target_minutes(length, None, n_images=n, language=language)
+        if resolved:
+            self.minutes_spin.setValue(max(2, min(180, int(round(resolved)))))
 
     # ── Helpers ────────────────────────────────────────────────────
 
@@ -768,7 +804,10 @@ class ScriptPage(QWidget):
             )
 
     def _get_api_key(self) -> str:
-        return self.ctx.app_state.get_setting("api", "openrouter_api_key", default="")
+        try:
+            return self.ctx.settings_manager.get_api_key()
+        except Exception:
+            return self.ctx.app_state.get_setting("api", "openrouter_api_key", default="")
 
     def _get_thumbnail(self, image_index: int, image_path: Optional[str] = None) -> Optional[str]:
         if image_path:
@@ -800,7 +839,52 @@ class ScriptPage(QWidget):
                 self.chapter_combo.addItem(Icons.get(Icons.BOOK), ch.name, ch.id)
 
     def _on_chapter_changed_state(self, chapter) -> None:
-        pass
+        if chapter is None:
+            return
+        idx = self.chapter_combo.findData(getattr(chapter, "id", None))
+        if idx >= 0 and self.chapter_combo.currentIndex() != idx:
+            self.chapter_combo.blockSignals(True)
+            self.chapter_combo.setCurrentIndex(idx)
+            self.chapter_combo.blockSignals(False)
+            self._load_segments(chapter)
+            self._refresh_hook_variants(chapter)
+
+    def _refresh_hook_variants(self, chapter=None) -> None:
+        if not getattr(self, "hook_variant_combo", None):
+            return
+        chapter = chapter or self.ctx.app_state.current_chapter
+        meta = dict(getattr(chapter, "script_meta", None) or {}) if chapter else {}
+        variants = meta.get("hook_variants") or []
+        selected = str(meta.get("selected_hook") or "A")
+        self.hook_variant_combo.blockSignals(True)
+        self.hook_variant_combo.clear()
+        if not variants:
+            self.hook_variant_combo.addItem("A", "A")
+        else:
+            for item in variants:
+                hid = str(item.get("id") or "A")
+                preview = (item.get("text") or "")[:40]
+                self.hook_variant_combo.addItem(f"{hid}: {preview}", hid)
+        idx = self.hook_variant_combo.findData(selected)
+        if idx >= 0:
+            self.hook_variant_combo.setCurrentIndex(idx)
+        self.hook_variant_combo.blockSignals(False)
+
+    def _on_hook_variant_chosen(self, _index: int) -> None:
+        chapter = self.ctx.app_state.current_chapter
+        if not chapter or not getattr(self, "hook_variant_combo", None):
+            return
+        hid = self.hook_variant_combo.currentData()
+        meta = dict(getattr(chapter, "script_meta", None) or {})
+        variants = meta.get("hook_variants") or []
+        chosen = next((v for v in variants if str(v.get("id")) == str(hid)), None)
+        if not chosen:
+            return
+        from core.script_quality import apply_selected_hook, store_hook_variants
+        apply_selected_hook(chapter.segments or [], chosen.get("text") or "")
+        store_hook_variants(chapter, variants, selected=str(hid))
+        self._load_segments(chapter)
+        self._save_project()
 
     def _on_chapter_changed(self, index: int) -> None:
         if index < 0:
@@ -820,6 +904,8 @@ class ScriptPage(QWidget):
                 self.last_time_check.setChecked(not first)
             except Exception:
                 self.hook_check.setChecked(True)
+            self._refresh_auto_duration_hint()
+            self._refresh_hook_variants(chapter)
 
     # ── Segment Loading ────────────────────────────────────────────
 
@@ -830,8 +916,6 @@ class ScriptPage(QWidget):
         if not chapter.segments:
             return
         for i, seg in enumerate(chapter.segments):
-            if not (seg.text or "").strip():
-                continue
             thumb = self._get_thumbnail(seg.image_index, getattr(seg, "image_path", None))
             self._add_card(i, seg, thumb)
         self._update_stats()
@@ -958,7 +1042,12 @@ class ScriptPage(QWidget):
         target_minutes = None
         if not self.auto_duration_check.isChecked():
             target_minutes = float(self.minutes_spin.value())
-        resolved_minutes = resolve_target_minutes(length, target_minutes)
+        n_images = len(getattr(chapter, "images", None) or [])
+        if self.compile_check.isChecked() and compile_chapters:
+            n_images = sum(len(getattr(ch, "images", None) or []) for ch in compile_chapters)
+        resolved_minutes = resolve_target_minutes(
+            length, target_minutes, n_images=n_images, language=language,
+        )
 
         from ui.workers.script_worker import ScriptWorker
         from ui.workers.thread_utils import start_worker
@@ -990,7 +1079,7 @@ class ScriptPage(QWidget):
         if self.compile_check.isChecked():
             extra.append("derleme")
         if resolved_minutes:
-            extra.append(f"~{int(resolved_minutes)} dk")
+            extra.append(f"~{resolved_minutes:.1f} dk")
         else:
             extra.append("kısa / sıkı")
         note = (" · " + " + ".join(extra)) if extra else ""
@@ -1040,6 +1129,7 @@ class ScriptPage(QWidget):
 
         chapter.segments = segments
         self._load_segments(chapter)
+        self._refresh_hook_variants(chapter)
         self._save_project()
         self.ctx.app_state.status_message.emit(f"Script hazır: {len(segments)} segment")
 

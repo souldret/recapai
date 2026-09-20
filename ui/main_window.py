@@ -155,7 +155,10 @@ class MainWindow(QMainWindow):
     def refresh_sidebar_badges(self) -> None:
         try:
             from core.pipeline import step_badges
-            badges = step_badges(self.ctx.app_state.current_project)
+            badges = step_badges(
+                self.ctx.app_state.current_project,
+                self.ctx.app_state.current_chapter,
+            )
             self.sidebar.set_step_badges(badges)
         except Exception as exc:
             logger.debug("Sidebar rozetleri güncellenemedi: %s", exc)

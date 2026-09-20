@@ -4,14 +4,31 @@ Bu dosya RecapAI projesindeki önemli değişiklikleri listeler.
 
 ## [Yayınlanmamış]
 
+### Eklendi
+- Script kalite döngüsü: lint hatalı beat'ler otomatik yeniden yazılır; A/B kanca VO'ya gömülmez, seçicide durur.
+- Analiz ekonomisi: ara kareler ucuz vision modele düşer; maliyet tahmini gerçek token kullanımına yaklaşır.
+- Render yerleşik look: YouTube 1080p, Shorts 9:16 (60 sn tavan), 4K/Cinema; kuyruk listesi gece işleri için görünür.
+- Kapak karesine cold-open metin overlay.
+- Windows paketi: `tools/build_windows.bat` + PyInstaller spec.
+- API anahtarı `config/secrets.json` / `.env`'de; `settings.json` atomik yazılır ve secret içermez.
+- Seri akışı: Home/sidebar aktif (eksik) bölüme bakar; Analiz sayfası bölüm değişimini senkronlar.
+
 ### Değiştirildi
+- Video filter graph `core/video_filters.py`'ye ayrıldı; `VideoComposer` mux/encode'da kaldı.
+- Last time önceki bölümün cliffhanger'ını tercih eder.
+- CI FFmpeg kurar ve compositor testlerini de çalıştırır.
 - Script artık **YouTube retention iskeleti** ile üretir: kısa/orta/uzun fark etmez, paneller kümelenir (en fazla 8–12 beat), tek gerçek rehook, kanca spoiler vermez.
 - Script sayfasındaki **Stil** seçicisi kaldırıldı; anlatım otomatik Manhwa Fresh YouTube recap stiline kilitlendi.
 - Script Üret butonu birincil (indigo) stil aldı; kart editörü daha yüksek.
 - Script ayar çubuğu tek sıkışık satırdan 4 satıra ayrıldı (bölüm/model, niş/süre, kancalar, aksiyonlar).
 
 ### Düzeltildi
-- Orta/uzun script artık beat bütçesini doldurmak için kısa VO'yu modele yeniden yazdırır (~6 dk hedef).
+- Orta/uzun script tek görsele 30+ saniyelik paragraf basmaz: her kare ~10 sn (~26 kelime), fazla VO panellere yayılır.
+- 14 görsel / 10 beat durumunda fazla kareler boş kalmıyor: VO panellere bölünür, boş kalan analiz satırı alır; script listesi boş kartları gizlemez.
+- Orta uzunluk cümleyi kelime kelime kesmez (`Ms.` / `as.` tek satır yok); her görsel 1–2 tam cümle alır.
+- **Süre otomatik** artık 6/9 dk'ya şişirmez: görsel sayısına göre tempo (~6.5 sn/kare, Orta tavan 6 dk). 14 görsel ≈ 1.5–2 dk.
+- Beat görselleri boş kalmıyor: 8 panellik beat 56 kelimede kesilmez; VO yetmezse o kare analiz satırı alır (yalnız rehook dolu kalmaz).
+- İngilizce script Türkçe analiz satırını kopyalamaz: boş kare glue yanlış dildeyse basılmaz, üretim sonunda dil kilidi siler.
 - Silence remover cümle kuyruğunu kesmiyor (daha düşük eşik, daha uzun keep).
 - Kokoro `am_fable` HuggingFace'de yok; `am_fenrir`'e yönlendirildi. Geçersiz sesler listeden çıktı.
 - Sayfa başlığı (`PageHeader`) sabit 70px tavanı kaldırıldı; butonlar kesilmiyor.

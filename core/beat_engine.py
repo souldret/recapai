@@ -186,11 +186,27 @@ def _collapse_to_cap(groups: List[List[int]], cap: int) -> List[List[int]]:
 
 
 LENGTH_MINUTES = {"short": 2.5, "medium": 6.0, "long": 9.0}
+# Tek görsel tavanı MAX_WORDS_PER_PANEL. Çok panelli beat toplamı n * per.
 LENGTH_CAPS = {
     "short": {"beat": 28, "filler": 16, "cold_open": 22, "last_time": 18, "setup": 32, "rehook": 32, "cliffhanger": 24},
-    "medium": {"beat": 90, "filler": 36, "cold_open": 28, "last_time": 28, "setup": 70, "rehook": 80, "cliffhanger": 40},
-    "long": {"beat": 120, "filler": 48, "cold_open": 32, "last_time": 32, "setup": 90, "rehook": 100, "cliffhanger": 48},
+    "medium": {"beat": 26, "filler": 20, "cold_open": 22, "last_time": 22, "setup": 26, "rehook": 26, "cliffhanger": 24},
+    "long": {"beat": 32, "filler": 24, "cold_open": 24, "last_time": 24, "setup": 32, "rehook": 32, "cliffhanger": 28},
 }
+# Recap temposu: bir still ~10 sn'den uzun tutulmasın (EN ~160 wpm → 26 kelime ≈ 9.8 sn).
+MAX_WORDS_PER_PANEL = {"short": 18, "medium": 26, "long": 32}
+
+
+def panel_word_cap(length: str = "medium", role: str = "beat") -> int:
+    key = (length or "medium").lower()
+    per = MAX_WORDS_PER_PANEL.get(key, MAX_WORDS_PER_PANEL["medium"])
+    role = (role or "beat").lower()
+    if role == "filler":
+        return min(per, 16 if key != "long" else 20)
+    if role in ("cold_open", "last_time"):
+        return min(per, 22)
+    if role == "cliffhanger":
+        return min(per, 24)
+    return per
 
 
 def _word_budget(
@@ -200,28 +216,34 @@ def _word_budget(
     total_beats: int,
     length: str = "medium",
 ) -> int:
+    """Kelime bütçesi görsel temposuna kilitli. Dakika hedefi tek kareyi şişirmez."""
+    n_panels = max(1, int(n_panels or 1))
     caps = LENGTH_CAPS.get(length, LENGTH_CAPS["medium"])
-    cap = caps.get(role, caps["beat"])
+    per = panel_word_cap(length, role)
+    role_cap = caps.get(role, caps["beat"])
+    panel_cap = n_panels * per
     if length == "short":
-        return cap
+        return max(8, min(role_cap, panel_cap))
     boost = {
-        "cold_open": 1.15,
-        "last_time": 0.85,
-        "setup": 1.05,
-        "rehook": 1.2,
-        "cliffhanger": 1.1,
+        "cold_open": 1.0,
+        "last_time": 0.9,
+        "setup": 1.0,
+        "rehook": 1.05,
+        "cliffhanger": 1.0,
         "filler": 0.7,
         "beat": 1.0,
     }.get(role, 1.0)
-    minutes = target_minutes
-    if not minutes or minutes <= 0:
-        minutes = LENGTH_MINUTES.get(length, LENGTH_MINUTES["medium"])
-    wpm = 150.0
-    total_words = max(90, int(float(minutes) * wpm))
-    base = max(16, total_words // max(1, total_beats))
-    words = int(base * boost * (0.85 + 0.08 * min(n_panels, 5)))
-    floor = 14 if length == "short" else 22
-    return max(floor, min(cap, words))
+    words = int(per * n_panels * boost)
+    try:
+        minutes = float(target_minutes) if target_minutes else 0.0
+    except (TypeError, ValueError):
+        minutes = 0.0
+    if minutes > 0 and total_beats > 0:
+        share = int(minutes * 150.0 / max(1, total_beats))
+        if share > 0:
+            words = min(words, max(per * n_panels, share))
+    floor = 8 if role == "filler" else max(12, min(per, 16) if n_panels == 1 else per)
+    return max(floor, min(panel_cap, words))
 
 
 def cluster_beats(

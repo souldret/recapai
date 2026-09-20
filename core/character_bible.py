@@ -547,25 +547,36 @@ def previous_chapter(project, chapter):
 
 
 def last_time_source(project, chapter, max_chars: int = 700) -> str:
-    """Önceki bölümün son anlatısından kısa 'last time on' kaynağı."""
+    """Önceki bölümün cliffhanger / son VO / önemli analizinden 'last time' kaynağı."""
     prev = previous_chapter(project, chapter)
     if prev is None:
         return ""
     parts: List[str] = []
     segs = [s for s in (getattr(prev, "segments", None) or []) if getattr(s, "text", "").strip()]
     if segs:
-        for seg in segs[-4:]:
+        cliff = [s for s in segs if (getattr(s, "role", "") or "") == "cliffhanger"]
+        pick = cliff[-2:] or segs[-3:]
+        for seg in pick:
             parts.append(seg.text.strip())
-    else:
+    if not parts:
         analysis = getattr(prev, "analysis_data", None) or {}
-        keys = sorted(analysis.keys(), key=lambda k: int(k) if str(k).isdigit() else 0)
-        for key in keys[-8:]:
+        keys = sorted(
+            (k for k in analysis.keys() if str(k).isdigit()),
+            key=lambda k: int(k),
+        )
+        important: List[str] = []
+        tail: List[str] = []
+        for key in keys:
             data = analysis.get(key) or {}
             if not isinstance(data, dict) or data.get("error"):
                 continue
             bit = (data.get("action") or data.get("scene") or "").strip()
-            if bit:
-                parts.append(bit)
+            if not bit:
+                continue
+            if data.get("important") is True:
+                important.append(bit)
+            tail.append(bit)
+        parts = (important[-3:] or tail[-4:])
     text = " ".join(parts).strip()
     if len(text) > max_chars:
         text = text[:max_chars].rsplit(" ", 1)[0] + "…"

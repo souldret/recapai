@@ -53,19 +53,21 @@ def lint_text(text: str, *, role: str = "", is_first: bool = False, is_last: boo
         return issues
     wc = _word_count(raw)
     if role == "filler":
-        if wc > 40:
+        if wc > 20:
             issues.append(f"Dolgu beat çok uzun ({wc} kelime)")
     elif role == "cold_open":
-        if wc > 42:
+        if wc > 24:
             issues.append(f"Açılış kancası uzun ({wc} kelime)")
         if wc < 8:
             issues.append("Açılış kancası çok kısa")
     elif role == "last_time":
-        if wc > 55:
+        if wc > 24:
             issues.append(f"Last time uzun ({wc} kelime)")
     else:
-        if wc > 80:
+        if wc > 28:
             issues.append(f"Segment uzun ({wc} kelime)")
+        if 0 < wc <= 3:
+            issues.append(f"Segment kırıntı ({wc} kelime)")
 
     for _sev, pat, msg in _PATTERNS:
         if pat.search(raw):

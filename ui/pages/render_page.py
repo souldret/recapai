@@ -875,6 +875,21 @@ class RenderPage(QWidget):
         self.lbl_eta.setObjectName("pageSubtitle")
         vbox.addWidget(self.lbl_eta)
 
+        queue_frame = QFrame()
+        queue_frame.setObjectName("card")
+        qv = QVBoxLayout(queue_frame)
+        qv.setContentsMargins(10, 8, 10, 8)
+        qv.setSpacing(4)
+        q_title = QLabel("Gece kuyruğu")
+        q_title.setObjectName("pageSubtitle")
+        qv.addWidget(q_title)
+        self.queue_list = QListWidget()
+        self.queue_list.setMaximumHeight(90)
+        self.queue_list.setObjectName("chapterList")
+        qv.addWidget(self.queue_list)
+        vbox.addWidget(queue_frame)
+        self._refresh_queue_list()
+
         # ── Log alanı ────────────────────────────────────────────
         self.log_area = QTextEdit()
         self.log_area.setReadOnly(True)
@@ -1005,6 +1020,31 @@ class RenderPage(QWidget):
                 break
 
         self.bitrate_edit.setText(preset["bitrate"])
+        try:
+            from core.render_presets import builtin_preset
+            look = builtin_preset(key)
+            if look.get("bg_effect") and hasattr(self, "bg_effect_combo"):
+                for i in range(self.bg_effect_combo.count()):
+                    if self.bg_effect_combo.itemData(i) == look["bg_effect"]:
+                        self.bg_effect_combo.setCurrentIndex(i)
+                        break
+            if look.get("transitions") and hasattr(self, "transition_list"):
+                wanted = look["transitions"]
+                for i in range(self.transition_list.count()):
+                    it = self.transition_list.item(i)
+                    if it and it.data(Qt.ItemDataRole.UserRole) == wanted:
+                        it.setCheckState(Qt.CheckState.Checked)
+                    elif it and it.data(Qt.ItemDataRole.UserRole) not in (wanted, "none"):
+                        it.setCheckState(Qt.CheckState.Unchecked)
+            if look.get("ken_burns") is not None and hasattr(self, "chk_ken_burns"):
+                self.chk_ken_burns.setChecked(bool(look["ken_burns"]))
+        except Exception:
+            pass
+        try:
+            from core.settings_manager import SettingsManager
+            SettingsManager.instance().set("render.last_preset", key, save=True)
+        except Exception:
+            pass
         self._log(f"Preset uygulandı: {preset['label']}")
 
     # ─────────────────────────────────────────────────────────────────────────
@@ -1410,6 +1450,7 @@ class RenderPage(QWidget):
         from core.render_queue import get_render_queue
         job = get_render_queue().add(chapter, self._collect_settings(), output_path)
         self._log(f"Kuyruğa eklendi: {chapter.name} [{job.job_id}]")
+        self._refresh_queue_list()
         self._drain_render_queue()
 
     def _enqueue_all_chapters(self) -> None:
@@ -1434,6 +1475,7 @@ class RenderPage(QWidget):
             q.add(ch, settings, dest)
             n += 1
         self._log(f"{n} bölüm kuyruğa eklendi.")
+        self._refresh_queue_list()
         self._drain_render_queue()
 
     def _drain_render_queue(self) -> None:
@@ -1467,6 +1509,17 @@ class RenderPage(QWidget):
         self._render_worker.error.connect(self._on_render_error)
         start_worker(self, self._render_worker)
         self._log(f"Kuyruk işi başladı: {chapter.name}")
+        self._refresh_queue_list()
+
+    def _refresh_queue_list(self) -> None:
+        if not getattr(self, "queue_list", None):
+            return
+        from core.render_queue import get_render_queue
+        self.queue_list.clear()
+        for job in get_render_queue().get_jobs()[-12:]:
+            self.queue_list.addItem(
+                f"{job.chapter_name}  ·  {job.status.value}  ·  %{job.progress}"
+            )
 
     def _mark_running_job(self, *, done: bool, output_path: str = "", error: str = "") -> None:
         from core.render_queue import RenderStatus, get_render_queue
@@ -1481,6 +1534,7 @@ class RenderPage(QWidget):
                 job.status = RenderStatus.ERROR
                 job.error_message = error
             break
+        self._refresh_queue_list()
 
     def _on_queue_job_finished(self, output_path: str) -> None:
         self._mark_running_job(done=True, output_path=output_path)

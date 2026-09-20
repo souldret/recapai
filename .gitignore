@@ -15,6 +15,7 @@ cache/
 .DS_Store
 Thumbs.db
 config/settings.json
+config/secrets.json
 config/render_presets.json
 models/*.pt
 models/*.onnx

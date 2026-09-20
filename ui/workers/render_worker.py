@@ -304,6 +304,8 @@ class PipelineWorker(QThread):
                     target_minutes=self._target_minutes,
                 )
                 if self._hook_variants > 1:
+                    from core.script_quality import cold_open_text, store_hook_variants
+                    primary = cold_open_text(segments)
                     alt = generator.generate_script(
                         chapter,
                         self._script_model,
@@ -316,17 +318,17 @@ class PipelineWorker(QThread):
                         auto_niche=True,
                         include_last_time=False,
                         target_minutes=self._target_minutes,
+                        assign=False,
                     )
-                    alt_hook = next(
-                        (s.text for s in (alt or []) if getattr(s, "role", "") == "cold_open"),
-                        "",
-                    )
-                    if alt_hook:
-                        for s in segments:
-                            if getattr(s, "role", "") == "cold_open":
-                                s.text = f"{s.text}\n\n[B kanca] {alt_hook}"
-                                break
-                        self.log.emit("  [Script] A/B kanca eklendi.")
+                    alt_hook = cold_open_text(alt or [])
+                    variants = []
+                    if primary:
+                        variants.append({"id": "A", "text": primary})
+                    if alt_hook and alt_hook != primary:
+                        variants.append({"id": "B", "text": alt_hook})
+                    if variants:
+                        store_hook_variants(chapter, variants, selected="A")
+                        self.log.emit("  [Script] A/B kanca meta olarak kaydedildi.")
                 chapter.segments = segments
                 self.log.emit(f"  [Script] {len(segments)} segment oluşturuldu.")
             except Exception as exc:

@@ -627,6 +627,7 @@ class AnalysisPage(QWidget):
 
     def _connect_app_state(self) -> None:
         self.ctx.app_state.project_changed.connect(self._on_project_changed)
+        self.ctx.app_state.chapter_changed.connect(self._on_chapter_changed_state)
 
     def _on_project_changed(self, project) -> None:
         self.chapter_combo.clear()
@@ -636,6 +637,17 @@ class AnalysisPage(QWidget):
             for ch in project.chapters:
                 self.chapter_combo.addItem(Icons.get(Icons.BOOK), ch.name, ch.id)
         self._refresh_roster()
+
+    def _on_chapter_changed_state(self, chapter) -> None:
+        if chapter is None:
+            return
+        idx = self.chapter_combo.findData(getattr(chapter, "id", None))
+        if idx >= 0 and self.chapter_combo.currentIndex() != idx:
+            self.chapter_combo.blockSignals(True)
+            self.chapter_combo.setCurrentIndex(idx)
+            self.chapter_combo.blockSignals(False)
+            self._load_image_list(chapter)
+            self._refresh_roster()
 
     def _on_chapter_changed(self, index: int) -> None:
         if index < 0:

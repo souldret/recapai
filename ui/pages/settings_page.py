@@ -1626,7 +1626,10 @@ class SettingsPage(QWidget):
             return
 
         api = data.get("api", {})
-        self.api_key_input.setText(api.get("openrouter_api_key", ""))
+        try:
+            self.api_key_input.setText(self.ctx.settings_manager.get_api_key())
+        except Exception:
+            self.api_key_input.setText(api.get("openrouter_api_key", ""))
         self.base_url_input.setText(api.get("openrouter_base_url", "https://openrouter.ai/api/v1"))
 
         defaults = data.get("defaults", {})

@@ -23,14 +23,16 @@ python main.py
 
 ## Gereksinimler
 
-- Python 3.10–3.12 (3.13 önerilmez)
+- Python 3.10–3.12 (3.13 önerilmez; Torch/Kokoro henüz tam uyumlu değil)
 - PyQt6 6.7.0
-- OpenRouter API anahtarı (https://openrouter.ai)
+- OpenRouter API anahtarı (https://openrouter.ai) — `.env` veya Ayarlar ekranı; `settings.json`'a yazılmaz
 - FFmpeg (video render)
 
 Opsiyonel yerel TTS (Kokoro): `python tools/install_dependencies.py`
 
-Test: `pytest tests/ -q` (GitHub Actions: Python 3.10–3.12)
+Test: `pytest tests/ -q` (GitHub Actions: Python 3.10–3.12 + FFmpeg)
+
+Windows paketi (PyInstaller): `tools\build_windows.bat` → `dist\RecapAI\RecapAI.exe`
 
 ## Özellikler
 
@@ -39,6 +41,8 @@ Test: `pytest tests/ -q` (GitHub Actions: Python 3.10–3.12)
 - Niş modüllü script üretimi (power fantasy, romance, dark action, comedy)
 - Edge TTS + opsiyonel Kokoro
 - FFmpeg render (Ken Burns, xfade, altyazı, BGM, watermark)
+- YouTube 1080p / Shorts 9:16 / 4K look preset'leri, gece render kuyruğu
+- Karakter kadrosu (seri bible), last-time köprüsü, A/B kanca, lint düzeltme döngüsü
 
 ## Dizin Yapısı
 

@@ -479,6 +479,7 @@ class HomePage(QWidget):
 
     def _connect_signals(self) -> None:
         self._app_state.project_changed.connect(self._on_project_changed)
+        self._app_state.chapter_changed.connect(self._on_chapter_changed)
 
     def showEvent(self, event) -> None:
         super().showEvent(event)
@@ -500,6 +501,12 @@ class HomePage(QWidget):
     def _on_project_changed(self, project) -> None:
         self._refresh_all()
         self._stats_loaded = True
+
+    def _on_chapter_changed(self, _chapter) -> None:
+        self._refresh_continue_card()
+        mw = self._get_main_window()
+        if mw and hasattr(mw, "refresh_sidebar_badges"):
+            mw.refresh_sidebar_badges()
 
     def _update_stats(self) -> None:
         try:
@@ -566,12 +573,18 @@ class HomePage(QWidget):
 
     def _continue_next_step(self) -> None:
         from core.pipeline import next_incomplete_step
-        page, _label = next_incomplete_step(self._app_state.current_project)
+        page, _label = next_incomplete_step(
+            self._app_state.current_project,
+            self._app_state.current_chapter,
+        )
         self._navigate_named(page)
 
     def _refresh_continue_card(self) -> None:
         from core.pipeline import next_incomplete_step
-        page, label = next_incomplete_step(self._app_state.current_project)
+        page, label = next_incomplete_step(
+            self._app_state.current_project,
+            self._app_state.current_chapter,
+        )
         proj = self._app_state.current_project
         name = getattr(proj, "name", "") if proj else ""
         title = f"Devam et{f' — {name}' if name else ''}"
@@ -658,7 +671,10 @@ class HomePage(QWidget):
             return
 
         app = self._app_state
-        api_key      = app.get_setting("api", "openrouter_api_key", default="")
+        try:
+            api_key = self.ctx.settings_manager.get_api_key()
+        except Exception:
+            api_key = app.get_setting("api", "openrouter_api_key", default="")
         if not api_key:
             QMessageBox.warning(
                 self, "API Anahtarı Eksik",

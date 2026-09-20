@@ -9,6 +9,7 @@ from core.script_generator import (
     _sanitize_outline_beats,
     _source_note,
     _split_sentences,
+    estimate_auto_minutes,
     fit_segments_to_target,
     resolve_target_minutes,
     ScriptGenerator,
@@ -132,6 +133,7 @@ class TestBeatCluster:
         )
         assert not _wrong_language("The hunter screams as the force hits.", "en")
         assert _wrong_language("The hunter yükseltir the rank.", "en")
+        assert _wrong_language("Sunho konuşuyor ve kalbi atıyor.", "en")
         assert not _wrong_language("Jin-Woo opens the gate.", "en", ["Jin-Woo"])
         assert not _wrong_language("The surveyor checks the gate and they attack.", "en")
         assert not _wrong_language("He makes a remark and they attack.", "en")
@@ -143,19 +145,22 @@ class TestBeatCluster:
         assert short <= 32
         assert medium >= 36
         timed = _word_budget("beat", 4, 2.0, 20, length="medium")
-        assert 20 <= timed <= 90
+        assert timed == 4 * 26
 
-    def test_medium_auto_budget_is_minutes_not_seconds(self):
-        """Otomatik Orta ~6 dk; 40–50 saniyelik 2–5 cümle bütçesi değil."""
-        from core.beat_engine import _word_budget, LENGTH_MINUTES
+    def test_one_panel_medium_stays_under_ten_seconds(self):
+        """Orta: tek görsel ~26 kelime; 6 dk hedefi 90 kelimelik paragraf üretmez."""
+        from core.beat_engine import _word_budget, panel_word_cap, LENGTH_MINUTES
         assert LENGTH_MINUTES["medium"] == 6.0
-        assert LENGTH_MINUTES["long"] == 9.0
-        auto = _word_budget("beat", 4, None, 10, length="medium")
-        explicit = _word_budget("beat", 4, 6.0, 10, length="medium")
-        assert auto == explicit
-        assert auto >= 80
-        long_auto = _word_budget("beat", 4, None, 10, length="long")
-        assert long_auto >= auto
+        one = _word_budget("beat", 1, 6.0, 10, length="medium")
+        auto = _word_budget("beat", 1, None, 10, length="medium")
+        assert one == auto
+        assert one <= panel_word_cap("medium", "beat")
+        assert one <= 26
+        four = _word_budget("beat", 4, 6.0, 10, length="medium")
+        assert four > one
+        assert four == 4 * panel_word_cap("medium", "beat")
+        eight = _word_budget("beat", 8, 6.0, 10, length="medium")
+        assert eight == 8 * panel_word_cap("medium", "beat")
 
 
 class TestDurationAndLanguageLock:
@@ -167,6 +172,18 @@ class TestDurationAndLanguageLock:
         assert resolve_target_minutes("medium", 3.5) == 3.5
         assert resolve_target_minutes("short", 2.0) == 2.0
         assert resolve_target_minutes("unknown", None) == 6.0
+
+    def test_auto_minutes_follows_image_count_not_six(self):
+        auto14 = resolve_target_minutes("medium", None, n_images=14, language="en")
+        auto54 = resolve_target_minutes("medium", None, n_images=54, language="en")
+        assert auto14 is not None
+        assert 1.0 <= auto14 <= 2.5
+        assert auto54 is not None
+        assert auto14 < auto54
+        assert auto54 <= 6.0
+        assert estimate_auto_minutes(14, "medium", "en") == auto14
+        assert resolve_target_minutes("short", None, n_images=14) is None
+        assert resolve_target_minutes("medium", 4.0, n_images=14) == 4.0
 
     def test_fit_segments_shortens_filler(self):
         filler = " ".join(["kelime"] * 80)
@@ -213,12 +230,16 @@ class TestDurationAndLanguageLock:
         assert "hikaye" not in blob.lower()
         assert "aksiyon" not in blob.lower()
 
-    def test_duration_note_medium_asks_for_minutes(self):
+    def test_duration_note_medium_caps_per_image(self):
         from core.beat_engine import StoryBeat
-        chunk = [StoryBeat(0, [0], "setup", word_budget=90), StoryBeat(1, [1], "beat", word_budget=90)]
+        chunk = [
+            StoryBeat(0, [0], "setup", word_budget=26),
+            StoryBeat(1, [1, 2], "beat", word_budget=52),
+        ]
         note = _duration_note("medium", 0.0, "en", chunk, 10)
-        assert "~6 minutes" in note
-        assert "ABOUT 80 words" in note
+        assert "each IMAGE" in note
+        assert "COMPLETE" in note
+        assert "30-second" in note
         short = _duration_note("short", 0.0, "en", chunk, 10)
         assert "1–2 sentences" in short or "1-2 sentences" in short or "story beat" in short
 
@@ -272,7 +293,7 @@ class TestDistribute:
         segs = gen._materialize_segments(
             ch, [StoryBeat(0, [0, 1, 2], "setup")],
             {0: "He opens the gate."},
-            {}, "en", 0, use_hook=False,
+            {}, "en", 0, use_hook=False, length="short",
         )
         story = [s for s in segs if s.role != "cold_open"]
         spoken = [s for s in story if (s.text or "").strip()]
@@ -281,6 +302,141 @@ class TestDistribute:
         assert spoken[0].text.startswith("He opens")
         assert not any("rank board" in (s.text or "").lower() for s in spoken)
         assert not any("hikaye" in (s.text or "").lower() for s in story)
+
+    def test_medium_spreads_long_vo_across_panels(self):
+        from core.beat_engine import StoryBeat
+        from core.script_generator import ScriptGenerator as SG
+        ch = _chapter(3, {str(i): {"scene": "x", "action": "y"} for i in range(3)})
+        gen = SG.__new__(SG)
+        long_vo = (
+            "Kurose gets stuck with cleaning duty again while classmates dump the work on him. "
+            "Everyone is whispering about a senior who terrifies the whole school. "
+            "For him that name is a different kind of danger in the hallway hierarchy."
+        )
+        segs = gen._materialize_segments(
+            ch, [StoryBeat(0, [0, 1, 2], "setup", word_budget=56)],
+            {0: long_vo}, {}, "en", 0, use_hook=False, length="medium",
+        )
+        story = [s for s in segs if s.role != "cold_open"]
+        spoken = [s for s in story if (s.text or "").strip()]
+        assert len(spoken) >= 2
+        assert all(len(s.text.split()) <= 26 for s in spoken)
+        assert all(SG.estimate_duration(s.text, "en") <= 12.0 for s in spoken)
+
+    def test_medium_one_image_clips_thirty_second_paragraph(self):
+        from core.beat_engine import StoryBeat
+        from core.script_generator import ScriptGenerator as SG
+        ch = _chapter(1, {"0": {"scene": "x", "action": "y"}})
+        gen = SG.__new__(SG)
+        paragraph = " ".join(
+            "Kurose is tired of cleaning duty and the feared senior and the hallway rumors".split()
+            * 12
+        )
+        segs = gen._materialize_segments(
+            ch, [StoryBeat(0, [0], "setup", word_budget=26)],
+            {0: paragraph}, {}, "en", 0, use_hook=False, length="medium",
+        )
+        spoken = [s for s in segs if (s.text or "").strip()]
+        assert spoken
+        assert len(spoken[0].text.split()) <= 26
+        assert spoken[0].duration <= 12.0
+
+    def test_fourteen_images_all_story_panels_get_text(self):
+        """14 görsel 10 beat'e sıkışsa bile hikaye kareleri boş kalmaz."""
+        from core.beat_engine import StoryBeat
+        analyses = {
+            str(i): {"scene": "Hall", "action": f"Beat move {i} changes the stakes now."}
+            for i in range(14)
+        }
+        ch = _chapter(14, analyses)
+        gen = ScriptGenerator.__new__(ScriptGenerator)
+        beats = []
+        vo = {}
+        idx = 0
+        for bid in range(10):
+            take = 2 if bid < 4 else 1
+            panels = list(range(idx, idx + take))
+            idx += take
+            beats.append(StoryBeat(bid, panels, "setup" if bid == 0 else "beat", word_budget=40))
+            vo[bid] = (
+                "Kurose gets stuck with cleaning duty again while classmates dump the work. "
+                "The feared senior is the only name that still makes the hallway go quiet."
+            )
+        segs = gen._materialize_segments(
+            ch, beats, vo, {}, "en", 0, use_hook=False, length="medium",
+        )
+        story = [s for s in segs if s.role not in ("cold_open", "last_time")]
+        assert {s.image_index for s in story} == set(range(14))
+        spoken = [s for s in story if (s.text or "").strip()]
+        assert len(spoken) == 14
+        assert all(len(s.text.split()) <= 26 for s in spoken)
+
+    def test_beat_role_panels_get_text_not_only_rehook(self):
+        """54 panel / 10 beat: rehook dolu, beat boş kalmamalı."""
+        from core.beat_engine import StoryBeat
+        n = 16
+        analyses = {
+            str(i): {"scene": "Office", "action": f"Sunho answers Ms. Haeseon in panel {i} now."}
+            for i in range(n)
+        }
+        ch = _chapter(n, analyses)
+        gen = ScriptGenerator.__new__(ScriptGenerator)
+        beats = [
+            StoryBeat(0, list(range(0, 4)), "setup", word_budget=104),
+            StoryBeat(1, list(range(4, 8)), "beat", word_budget=104),
+            StoryBeat(2, list(range(8, 12)), "rehook", word_budget=104),
+            StoryBeat(3, list(range(12, 16)), "beat", word_budget=104),
+        ]
+        vo = {
+            0: "Sunho's heart pounds after Ms. Haeseon calls him mean. The friendship is shifting.",
+            2: "Then she demands his complete attention and forget Baek Yuyeon.",
+        }
+        segs = gen._materialize_segments(
+            ch, beats, vo, {}, "en", 0, use_hook=False, length="medium",
+        )
+        story = [s for s in segs if s.role not in ("cold_open", "last_time")]
+        by_role = {}
+        for s in story:
+            by_role.setdefault(s.role, []).append(s)
+        assert by_role["rehook"]
+        assert by_role["beat"]
+        assert all((s.text or "").strip() for s in by_role["beat"])
+        assert all((s.text or "").strip() for s in by_role["rehook"])
+        assert all((s.text or "").strip() for s in story)
+
+    def test_split_sentences_keeps_ms_title(self):
+        parts = _split_sentences("Ms. Haeseon cuts him off sharply. He stares.")
+        assert parts == [
+            "Ms. Haeseon cuts him off sharply.",
+            "He stares.",
+        ]
+
+    def test_medium_does_not_split_into_one_word_crumbs(self):
+        from core.beat_engine import StoryBeat
+        from core.script_generator import _pace_distribute
+        vo = (
+            "Sunho's heart pounds as his face turns bright red after Ms. Haeseon playfully calls him mean. "
+            "This isn't just embarrassment. It's the moment their casual friendship starts becoming something more intense. "
+            "But his hiccups are getting worse instead of better."
+        )
+        parts = _pace_distribute(vo, 8, 26)
+        spoken = [p.strip() for p in parts if p.strip()]
+        assert spoken
+        assert all(len(p.split()) >= 4 for p in spoken)
+        assert not any(p.rstrip(".") in ("Ms", "as", "to", "his", "red") for p in spoken)
+        assert "Ms. Haeseon" in " ".join(spoken)
+        ch = _chapter(8, {str(i): {"scene": "x", "action": "She presses a pressure point now."} for i in range(8)})
+        gen = ScriptGenerator.__new__(ScriptGenerator)
+        segs = gen._materialize_segments(
+            ch, [StoryBeat(0, list(range(8)), "setup", word_budget=80)],
+            {0: vo}, {}, "en", 0, use_hook=False, length="medium",
+        )
+        story = [s for s in segs if s.role != "cold_open"]
+        spoken_segs = [s for s in story if (s.text or "").strip()]
+        assert spoken_segs
+        assert all(len(s.text.split()) >= 4 for s in spoken_segs)
+        assert all(len(s.text.split()) <= 26 for s in spoken_segs)
+        assert not any((s.text or "").strip() in ("Ms.", "as.", "to.") for s in spoken_segs)
 
     def test_user_bug_mixed_and_analysis_dump(self):
         from core.beat_engine import StoryBeat
@@ -317,6 +473,39 @@ class TestDistribute:
         assert "okuyucuya" not in blob.lower()
         assert any("blocks" in (s.text or "").lower() for s in segs)
 
+    def test_english_medium_does_not_copy_turkish_analysis(self):
+        from core.beat_engine import StoryBeat
+        dump = "Bu sahne hikayenin aksiyon seviyesini yükseltir ve karakter konuşuyor."
+        analyses = {
+            str(i): {"scene": dump, "action": dump}
+            for i in range(8)
+        }
+        ch = _chapter(8, analyses)
+        gen = ScriptGenerator.__new__(ScriptGenerator)
+        segs = gen._materialize_segments(
+            ch,
+            [
+                StoryBeat(0, [0, 1, 2, 3], "setup", word_budget=80),
+                StoryBeat(1, [4, 5, 6, 7], "beat", word_budget=80),
+            ],
+            {0: "Sunho's heart pounds after Ms. Haeseon calls him mean."},
+            {},
+            "en",
+            0,
+            use_hook=False,
+            length="medium",
+        )
+        from core.script_generator import _drop_wrong_language_segments
+        _drop_wrong_language_segments(segs, "en")
+        blob = " ".join(s.text or "" for s in segs)
+        assert "hikaye" not in blob.lower()
+        assert "aksiyon" not in blob.lower()
+        assert "konuşuyor" not in blob.lower()
+        assert "yükseltir" not in blob.lower()
+        spoken = [s for s in segs if (s.text or "").strip()]
+        assert spoken
+        assert any("Sunho" in (s.text or "") for s in spoken)
+
     def test_does_not_repeat_last_line_or_mood_dump(self):
         from core.beat_engine import StoryBeat
         analyses = {
@@ -334,6 +523,7 @@ class TestDistribute:
             "en",
             0,
             use_hook=False,
+            length="short",
         )
         story = [s for s in segs if s.role != "cold_open"]
         spoken = [(s.text or "").strip() for s in story if (s.text or "").strip()]
@@ -376,7 +566,7 @@ class TestDistribute:
         segs = gen._materialize_segments(
             ch, [StoryBeat(0, [0, 1, 2], "setup")],
             {0: "He opens the gate."},
-            {}, "en", 0, use_hook=False,
+            {}, "en", 0, use_hook=False, length="short",
         )
         story = [s for s in segs if s.role != "cold_open"]
         spoken = [s for s in story if (s.text or "").strip()]
@@ -440,6 +630,10 @@ class TestLinter:
     def test_filler_too_long(self):
         issues = lint_text("kelime " * 50, role="filler")
         assert any("uzun" in i.lower() for i in issues)
+
+    def test_flags_one_word_crumb(self):
+        issues = lint_text("Ms.", role="beat")
+        assert any("kırıntı" in i.lower() for i in issues)
 
     def test_lint_segments_then_chain(self):
         segs = [
@@ -678,7 +872,7 @@ class TestMaterialize:
         assert any(s.image_index == 0 for s in segs)
         story = [s for s in segs if s.role not in ("cold_open", "last_time")]
         spoken = [s for s in story if (s.text or "").strip()]
-        assert len(spoken) == 2
+        assert len(spoken) >= 2
         assert story[0].image_index == 0
         assert {s.image_index for s in story} == {0, 1, 2}
 
@@ -725,6 +919,6 @@ class TestMaterialize:
         )
         story = [s for s in segs if s.role != "cold_open"]
         spoken = [s for s in story if (s.text or "").strip()]
-        assert len(spoken) == 1
+        assert spoken
         assert {s.image_index for s in story} == {0, 1}
         assert all(s.image_path for s in segs)

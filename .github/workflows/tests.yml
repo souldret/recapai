@@ -17,6 +17,8 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: ${{ matrix.python-version }}
+      - name: Install FFmpeg
+        run: sudo apt-get update && sudo apt-get install -y ffmpeg
       - name: Install deps
         run: |
           python -m pip install --upgrade pip
@@ -24,4 +26,4 @@ jobs:
       - name: Run unit tests
         env:
           QT_QPA_PLATFORM: offscreen
-        run: pytest tests/ -q --ignore=tests/test_video_composer.py
+        run: pytest tests/ -q

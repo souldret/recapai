@@ -120,6 +120,8 @@ class ScriptWorker(QThread):
                 stop_flag=lambda: self._stop,
             )
             if self._hook_variants > 1 and not self._stop:
+                from core.script_quality import cold_open_text, store_hook_variants
+                primary = cold_open_text(segments)
                 alt = generator.generate_script(
                     chapter=self._chapter,
                     model=self._model,
@@ -135,16 +137,15 @@ class ScriptWorker(QThread):
                     stop_flag=lambda: self._stop,
                     assign=False,
                 )
-                alt_hook = next(
-                    (s.text for s in (alt or []) if getattr(s, "role", "") == "cold_open"),
-                    "",
-                )
-                if alt_hook:
-                    for s in segments:
-                        if getattr(s, "role", "") == "cold_open":
-                            s.text = f"{s.text}\n\n[B kanca] {alt_hook}"
-                            break
-                    self.progress.emit("A/B kanca eklendi.")
+                alt_hook = cold_open_text(alt or [])
+                variants = []
+                if primary:
+                    variants.append({"id": "A", "text": primary})
+                if alt_hook and alt_hook != primary:
+                    variants.append({"id": "B", "text": alt_hook})
+                if variants:
+                    store_hook_variants(self._chapter, variants, selected="A")
+                    self.progress.emit("A/B kanca meta olarak kaydedildi (VO'ya gömülmedi).")
 
             if self._stop:
                 logger.info("ScriptWorker durduruldu.")
