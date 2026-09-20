@@ -828,6 +828,8 @@ class ScriptPage(QWidget):
         if not chapter.segments:
             return
         for i, seg in enumerate(chapter.segments):
+            if not (seg.text or "").strip():
+                continue
             thumb = self._get_thumbnail(seg.image_index, getattr(seg, "image_path", None))
             self._add_card(i, seg, thumb)
         self._update_stats()
@@ -1071,6 +1073,7 @@ class ScriptPage(QWidget):
 
         idx = self._cards.index(card)
         was_active = idx == self._active_card_index
+        seg_idx = getattr(card, "segment_index", idx)
         self._cards_layout.removeWidget(card)
         card.deleteLater()
         self._cards.pop(idx)
@@ -1079,12 +1082,13 @@ class ScriptPage(QWidget):
         chapter_id = self.chapter_combo.currentData()
         if state.current_project and chapter_id:
             chapter = state.current_project.get_chapter(chapter_id)
-            if chapter and idx < len(chapter.segments):
-                chapter.segments.pop(idx)
+            if chapter and 0 <= seg_idx < len(chapter.segments):
+                chapter.segments.pop(seg_idx)
 
         last_i = len(self._cards) - 1
         for i, c in enumerate(self._cards):
-            c.segment_index = i
+            if getattr(c, "segment_index", 0) > seg_idx:
+                c.segment_index -= 1
             c.lbl_no.setText(c._title_label())
             from core.script_linter import lint_text
             c.segment.lint_issues = lint_text(
@@ -1124,7 +1128,7 @@ class ScriptPage(QWidget):
         niche = self.niche_combo.currentData() or "auto"
         if niche == "auto":
             niche = "power_fantasy"
-        idx = self._cards.index(card)
+        idx = getattr(card, "segment_index", self._cards.index(card))
 
         from ui.workers.script_worker import RegenerateSegmentWorker
         from ui.workers.thread_utils import start_worker
@@ -1140,11 +1144,12 @@ class ScriptPage(QWidget):
         start_worker(self, self._regen_worker)
 
     def _on_regen_done(self, index: int, segment: SegmentData) -> None:
-        if index < len(self._cards):
-            card = self._cards[index]
-            card.update_segment(segment)
-            card.btn_regen.setEnabled(True)
-            card.btn_regen.setIcon(Icons.get(Icons.REFRESH))
+        for card in self._cards:
+            if getattr(card, "segment_index", -1) == index:
+                card.update_segment(segment)
+                card.btn_regen.setEnabled(True)
+                card.btn_regen.setIcon(Icons.get(Icons.REFRESH))
+                break
         self._update_stats()
         self._save_project()
 

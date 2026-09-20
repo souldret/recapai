@@ -46,6 +46,7 @@ DEFAULT_NICHE = "power_fantasy"
 VALID_NICHES = ("power_fantasy", "romance", "dark_action", "comedy")
 DEFAULT_STYLE = "fresh"
 VALID_STYLES = ("fresh", "epic", "casual", "funny", "mysterious", "narrator", "quick")
+SILENT_HOLD_SEC = 0.75
 
 
 def _load_prompts() -> dict:
@@ -1586,7 +1587,7 @@ class ScriptGenerator:
                 body = _clip_to_budget(_first_sentence(body), min(16, b.word_budget or 16))
             if _wrong_language(body, language) or _is_atmosphere_dump(body):
                 body = ""
-            hero = b.hero_index if 0 <= b.hero_index < n else b.lead_index
+            hero = b.lead_index if 0 <= b.lead_index < n else b.hero_index
             hero = max(0, min(hero, n - 1))
             texts[hero] = body
             roles[hero] = b.role or "beat"
@@ -1627,15 +1628,32 @@ class ScriptGenerator:
 
         story: List[SegmentData] = []
         for b in beats:
-            hero = b.hero_index if 0 <= b.hero_index < n else b.lead_index
-            hero = max(0, min(hero, n - 1))
-            body = (texts[hero] or "").strip()
-            if not body:
+            lead = b.lead_index if 0 <= b.lead_index < n else b.hero_index
+            lead = max(0, min(lead, n - 1))
+            body = (texts[lead] or "").strip()
+            if body:
+                story.append(self._make_segment(
+                    chapter, lead, body, language,
+                    beat_id=beat_ids[lead], role=roles[lead] or b.role or "beat",
+                ))
+            for panel_i in b.panel_indices:
+                if panel_i == lead or not (0 <= panel_i < n):
+                    continue
+                # Aynı beat'in diğer panelleri: görsel kalsın, ikinci VO basma.
+                story.append(self._make_segment(
+                    chapter, panel_i, "", language,
+                    beat_id=b.beat_id, role=b.role or "beat",
+                ))
+
+        covered = {s.image_index for s in prefix + story}
+        for i in range(n):
+            if i in covered:
                 continue
             story.append(self._make_segment(
-                chapter, hero, body, language,
-                beat_id=beat_ids[hero], role=roles[hero] or b.role or "beat",
+                chapter, i, "", language,
+                beat_id=beat_ids[i], role=roles[i] or "beat",
             ))
+        story.sort(key=lambda s: (s.image_index, 0 if (s.text or "").strip() else 1))
         return prefix + story
 
     def _make_segment(
@@ -1657,7 +1675,7 @@ class ScriptGenerator:
         img_path = None
         if 0 <= image_index < n:
             img_path = getattr(chapter.images[image_index], "path", None)
-        duration = self.estimate_duration(text, language) if text else 0.0
+        duration = self.estimate_duration(text, language) if text else SILENT_HOLD_SEC
         return SegmentData(
             image_index=image_index,
             text=text,

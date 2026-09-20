@@ -257,9 +257,11 @@ class TestDistribute:
             {}, "en", 0, use_hook=False,
         )
         story = [s for s in segs if s.role != "cold_open"]
-        assert len(story) == 1
-        assert story[0].text.startswith("He opens")
-        assert not any("rank board" in (s.text or "").lower() for s in story)
+        spoken = [s for s in story if (s.text or "").strip()]
+        assert len(spoken) == 1
+        assert {s.image_index for s in story} == {0, 1, 2}
+        assert spoken[0].text.startswith("He opens")
+        assert not any("rank board" in (s.text or "").lower() for s in spoken)
         assert not any("hikaye" in (s.text or "").lower() for s in story)
 
     def test_user_bug_mixed_and_analysis_dump(self):
@@ -316,11 +318,12 @@ class TestDistribute:
             use_hook=False,
         )
         story = [s for s in segs if s.role != "cold_open"]
-        spoken = [(s.text or "").strip() for s in story]
+        spoken = [(s.text or "").strip() for s in story if (s.text or "").strip()]
         assert len(spoken) == 1
         assert spoken[0].startswith("He opens")
         assert spoken.count("He opens the gate.") == 1
         assert not any("Gergin" in t or "heybetli" in t for t in spoken)
+        assert {s.image_index for s in story} == set(range(8))
 
     def test_english_last_time_drops_turkish_source(self):
         from core.beat_engine import StoryBeat
@@ -358,8 +361,10 @@ class TestDistribute:
             {}, "en", 0, use_hook=False,
         )
         story = [s for s in segs if s.role != "cold_open"]
-        blob = " ".join(s.text or "" for s in story)
-        assert len(story) == 1
+        spoken = [s for s in story if (s.text or "").strip()]
+        blob = " ".join(s.text or "" for s in spoken)
+        assert len(spoken) == 1
+        assert {s.image_index for s in story} == {0, 1, 2}
         assert "hikaye" not in blob.lower()
         assert "aksiyon" not in blob.lower()
 
@@ -654,8 +659,10 @@ class TestMaterialize:
         assert "Kralı" in segs[0].text
         assert any(s.image_index == 0 for s in segs)
         story = [s for s in segs if s.role not in ("cold_open", "last_time")]
-        assert len(story) == 2
+        spoken = [s for s in story if (s.text or "").strip()]
+        assert len(spoken) == 2
         assert story[0].image_index == 0
+        assert {s.image_index for s in story} == {0, 1, 2}
 
     def test_segment_roundtrip(self):
         s = SegmentData(3, "Merhaba", beat_id=1, role="rehook", lint_issues=["x"])
@@ -699,5 +706,7 @@ class TestMaterialize:
             {}, "tr", 0, use_hook=False,
         )
         story = [s for s in segs if s.role != "cold_open"]
-        assert len(story) == 1
+        spoken = [s for s in story if (s.text or "").strip()]
+        assert len(spoken) == 1
+        assert {s.image_index for s in story} == {0, 1}
         assert all(s.image_path for s in segs)
