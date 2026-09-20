@@ -183,6 +183,18 @@ QPushButton#secondaryBtn:hover {
     color: #18181b;
 }
 
+QPushButton#ghostButton {
+    background-color: transparent;
+    border: none;
+    color: #52525b;
+    border-radius: 6px;
+}
+
+QPushButton#ghostButton:hover {
+    background-color: #f4f4f5;
+    color: #18181b;
+}
+
 /* Görsel animasyon modu butonları */
 QPushButton#motionBtn {
     background-color: #f4f4f5;

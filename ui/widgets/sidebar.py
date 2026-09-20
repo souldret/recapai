@@ -162,7 +162,7 @@ class Sidebar(QWidget):
         return btn
 
     def _make_version(self) -> QLabel:
-        lbl = QLabel("RecapAI v1.0.0")
+        lbl = QLabel("RecapAI v1.1.0")
         lbl.setObjectName("sidebarVersion")
         lbl.setAlignment(Qt.AlignmentFlag.AlignLeft)
         return lbl
@@ -191,7 +191,6 @@ class Sidebar(QWidget):
         suffix = {"done": " ✓", "partial": " ·", "empty": ""}
         for btn in self._buttons:
             mark = suffix.get(badges.get(btn.page_index, "empty"), "")
-            base = getattr(btn, "_base_label", btn.text().split(" ")[0] if btn.text() else "")
             if hasattr(btn, "_base_label"):
                 btn.setText(btn._base_label + mark)
 

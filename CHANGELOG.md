@@ -4,6 +4,17 @@ Bu dosya RecapAI projesindeki önemli değişiklikleri listeler.
 
 ## [Yayınlanmamış]
 
+### Değiştirildi
+- Script artık **beat başına tek voiceover** üretir; her görsele bağımsız cümle basılmaz. Boş paneller analiz dump'ı ile doldurulmaz.
+- Script sayfasındaki **Stil** seçicisi kaldırıldı; anlatım otomatik Manhwa Fresh YouTube recap stiline kilitlendi.
+- Script Üret butonu birincil (indigo) stil aldı; kart editörü daha yüksek.
+
+### Düzeltildi
+- ASS altyazı satır sonu kaçışı `\N` (çok satırlı altyazı bozulmuyordu).
+- Ana sayfa Türkçe karakterler: "Aç", "bölüm", "görsel".
+- Sidebar sürüm etiketi v1.1.0 ile ayarlarla hizalandı.
+- Light temada `ghostButton` stili eksikti.
+
 ### Eklendi
 - Panel tespiti: YOLO-World (yerel) + OpenCV + isteğe bağlı Vision API (çalıştırmadan önce USD tahmini).
 - Büyük stitch görsellerinde Pillow DecompressionBomb uyarısı kapatıldı.

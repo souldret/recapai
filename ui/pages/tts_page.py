@@ -1046,7 +1046,6 @@ class TtsPage(QWidget):
         if not voice_id:
             return
 
-        seg = chapter.segments[idx]
         params = self._settings_panel.get_params(engine_name)
 
         project = self._state.current_project

@@ -44,6 +44,8 @@ LENGTH_MINUTES = {"short": 4.0, "medium": 6.0, "long": 9.0}
 # Manhwa Fresh niş modülleri (PDF Prompt 2)
 DEFAULT_NICHE = "power_fantasy"
 VALID_NICHES = ("power_fantasy", "romance", "dark_action", "comedy")
+DEFAULT_STYLE = "fresh"
+VALID_STYLES = ("fresh", "epic", "casual", "funny", "mysterious", "narrator", "quick")
 
 
 def _load_prompts() -> dict:
@@ -607,6 +609,12 @@ def _language_lock(language: str) -> str:
         "sarı saç / black hair / kızıl saçlı ile gizleme. "
         "İsimsiz karakter için zamir kullan. blonde woman / kızıl saçlı yazma."
     )
+
+
+def resolve_style(style: Optional[str] = None) -> str:
+    """UI stil seçicisi yok; YouTube recap varsayılanı Manhwa Fresh."""
+    key = (style or DEFAULT_STYLE).strip().lower()
+    return key if key in VALID_STYLES else DEFAULT_STYLE
 
 
 def resolve_target_minutes(length: str, target_minutes: Optional[float] = None) -> Optional[float]:
@@ -1184,6 +1192,8 @@ class ScriptGenerator:
                 "Önce AI Analiz sayfasından analiz yapın."
             )
 
+        style = resolve_style(style)
+
         if auto_niche or niche == "auto":
             from core.beat_engine import detect_niche
             niche = detect_niche(chapter)
@@ -1327,6 +1337,7 @@ class ScriptGenerator:
     def _shared_layers(self, language: str, niche: str, style: str, use_hook: bool) -> Dict[str, Any]:
         prompts = _load_prompts()
         styles = prompts.get("script_styles", {})
+        style = resolve_style(style)
         if style not in styles:
             style = "fresh" if "fresh" in styles else style
         return {
@@ -1571,31 +1582,15 @@ class ScriptGenerator:
                 body = ""
             if body:
                 body = _scrub_generic_labels(body, language, project=project)
-            if length == "short":
-                if body:
-                    body = _clip_to_budget(_first_sentence(body), min(16, b.word_budget or 16))
-                parts = [body] + [""] * (len(b.panel_indices) - 1)
-            else:
-                parts = _distribute_text(body, len(b.panel_indices)) if body else [""] * len(b.panel_indices)
-            for panel_i, part in zip(b.panel_indices, parts):
-                if 0 <= panel_i < n:
-                    texts[panel_i] = part
-                    roles[panel_i] = b.role
-                    beat_ids[panel_i] = b.beat_id
-
-        last_spoken = ""
-        for i in range(n):
-            if _wrong_language(texts[i], language) or _is_atmosphere_dump(texts[i]):
-                texts[i] = ""
-            if (texts[i] or "").strip():
-                last_spoken = texts[i].strip()
-                continue
-            glue = _panel_glue(chapter, i, language, avoid=last_spoken)
-            if glue and glue.strip().rstrip(".").lower() != last_spoken.rstrip(".").lower():
-                texts[i] = glue
-                last_spoken = glue
-            if not roles[i]:
-                roles[i] = "beat"
+            if length == "short" and body:
+                body = _clip_to_budget(_first_sentence(body), min(16, b.word_budget or 16))
+            if _wrong_language(body, language) or _is_atmosphere_dump(body):
+                body = ""
+            hero = b.hero_index if 0 <= b.hero_index < n else b.lead_index
+            hero = max(0, min(hero, n - 1))
+            texts[hero] = body
+            roles[hero] = b.role or "beat"
+            beat_ids[hero] = b.beat_id
 
         hook = ""
         last_time = ""
@@ -1630,13 +1625,17 @@ class ScriptGenerator:
                 beat_id=None, role="last_time",
             ))
 
-        story = [
-            self._make_segment(
-                chapter, i, (texts[i] or "").strip(), language,
-                beat_id=beat_ids[i], role=roles[i],
-            )
-            for i in range(n)
-        ]
+        story: List[SegmentData] = []
+        for b in beats:
+            hero = b.hero_index if 0 <= b.hero_index < n else b.lead_index
+            hero = max(0, min(hero, n - 1))
+            body = (texts[hero] or "").strip()
+            if not body:
+                continue
+            story.append(self._make_segment(
+                chapter, hero, body, language,
+                beat_id=beat_ids[hero], role=roles[hero] or b.role or "beat",
+            ))
         return prefix + story
 
     def _make_segment(
@@ -1844,6 +1843,7 @@ class ScriptGenerator:
         styles = prompts.get("script_styles", {})
         lengths = prompts.get("script_lengths", {})
 
+        style = resolve_style(style)
         if style not in styles:
             style = "fresh" if "fresh" in styles else style
         style_desc = styles.get(style, style)
@@ -1999,6 +1999,7 @@ class ScriptGenerator:
 
         prompts = _load_prompts()
         styles = prompts.get("script_styles", {})
+        style = resolve_style(style)
         if style not in styles:
             style = "fresh" if "fresh" in styles else style
         style_desc = styles.get(style, style)

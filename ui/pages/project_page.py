@@ -517,7 +517,7 @@ class ProjectDetailPanel(QWidget):
             for i, p in enumerate(paths)
         ]
         try:
-            chapter = add_chapter(self._project, chapter_name, images)
+            add_chapter(self._project, chapter_name, images)
             self.ctx.app_state.status_message.emit(
                 f"Bölüm eklendi: {chapter_name} ({len(images)} görsel)"
             )

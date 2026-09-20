@@ -23,15 +23,6 @@ from ui.utils.icons import Icons
 
 logger = logging.getLogger(__name__)
 
-STYLES = [
-    ("fresh",      "Manhwa Fresh"),
-    ("epic",       "Epik"),
-    ("casual",     "Samimi"),
-    ("funny",      "Mizahi"),
-    ("mysterious", "Gizemli"),
-    ("narrator",   "Anlatıcı"),
-    ("quick",      "Hızlı"),
-]
 LENGTHS = ["short", "medium", "long"]
 LENGTH_LABELS = {"short": "Kısa", "medium": "Orta", "long": "Uzun"}
 LANGUAGES = [("en", "İngilizce"), ("tr", "Türkçe")]
@@ -185,7 +176,7 @@ class SegmentCard(QFrame):
         self.text_edit = FocusAwareTextEdit(self)
         self.text_edit.setUndoRedoEnabled(False)
         self.text_edit.setPlainText(self.segment.text)
-        self.text_edit.setFixedHeight(72)
+        self.text_edit.setFixedHeight(110)
         self.text_edit.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
         self.text_edit.textChanged.connect(self._on_text_changed)
         mid.addWidget(self.text_edit)
@@ -495,7 +486,7 @@ class ScriptPage(QWidget):
         title = QLabel("Script")
         title.setObjectName("pageTitle")
         v.addWidget(title)
-        sub = QLabel("AI ile script üretin, düzenleyin ve dışa aktarın.")
+        sub = QLabel("Tek bir hikâye anlatısı üretir — her beat bir VO, paneller bağımsız cümle değil.")
         sub.setObjectName("pageSubtitle")
         v.addWidget(sub)
         return w
@@ -526,18 +517,6 @@ class ScriptPage(QWidget):
         self.model_combo.setMinimumWidth(200)
         self._populate_model_combo()
         row1.addWidget(self.model_combo, 1)
-
-        # Stil
-        row1.addWidget(QLabel("Stil:"))
-        self.style_combo = QComboBox()
-        for key, label in STYLES:
-            self.style_combo.addItem(label, key)
-        self.style_combo.setMinimumWidth(140)
-        # Varsayılan: Manhwa Fresh
-        idx_fresh = self.style_combo.findData("fresh")
-        if idx_fresh >= 0:
-            self.style_combo.setCurrentIndex(idx_fresh)
-        row1.addWidget(self.style_combo)
 
         row1.addStretch()
         vbox.addLayout(row1)
@@ -675,6 +654,7 @@ class ScriptPage(QWidget):
 
         # Script Üret
         self.btn_generate = QPushButton("  Script Üret")
+        self.btn_generate.setObjectName("primaryButton")
         self.btn_generate.setFixedWidth(150)
         self.btn_generate.setIcon(Icons.get(Icons.AI, color="#ffffff"))
         self.btn_generate.setIconSize(QSize(16, 16))
@@ -953,7 +933,7 @@ class ScriptPage(QWidget):
             return
 
         model = self.model_combo.currentData() or "anthropic/claude-3.5-sonnet"
-        style = self.style_combo.currentData() or "fresh"
+        style = "fresh"
         length = LENGTHS[self.length_slider.value()]
         language = self.lang_combo.currentData() or "en"
         niche = self.niche_combo.currentData() or "auto"
@@ -1012,7 +992,7 @@ class ScriptPage(QWidget):
         note = (" · " + " + ".join(extra)) if extra else ""
         self.lbl_stream.setText(
             f"<span style='color:#6366f1;'><b>ÜRETİLİYOR:</b> "
-            f"{self.style_combo.currentText()} · {self.niche_combo.currentText()}{note}...</span>"
+            f"Manhwa Fresh · {self.niche_combo.currentText()}{note}...</span>"
         )
         self.ctx.app_state.status_message.emit("Script üretimi başladı…")
         self._autosave_timer.start()
@@ -1138,7 +1118,7 @@ class ScriptPage(QWidget):
             return
 
         model = self.model_combo.currentData() or "anthropic/claude-3.5-sonnet"
-        style = self.style_combo.currentData() or "fresh"
+        style = "fresh"
         language = self.lang_combo.currentData() or "en"
         length = LENGTHS[self.length_slider.value()]
         niche = self.niche_combo.currentData() or "auto"

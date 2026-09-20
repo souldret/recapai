@@ -61,7 +61,7 @@ def lint_text(text: str, *, role: str = "", is_first: bool = False, is_last: boo
         if wc > 80:
             issues.append(f"Segment uzun ({wc} kelime)")
 
-    for sev, pat, msg in _PATTERNS:
+    for _sev, pat, msg in _PATTERNS:
         if pat.search(raw):
             issues.append(f"{msg}")
 

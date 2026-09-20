@@ -74,7 +74,6 @@ class ColorPickerButton(QWidget):
 
     def _update_display(self) -> None:
         """Renk örneği ve hex etiketi günceller."""
-        hex_color = self._color.name(QColor.NameFormat.HexRgb)
         # Kontrast ön plan rengi
         lum = 0.299 * self._color.red() + 0.587 * self._color.green() + 0.114 * self._color.blue()
         fg = "#000000" if lum > 128 else "#ffffff"

@@ -222,12 +222,12 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
     for start, end, text in _segment_timeline(segments, transition_duration):
         start_ts = _seconds_to_ass_ts(start)
         end_ts = _seconds_to_ass_ts(end)
-        # ASS'de satır sonları {\N} ile yapılır; süslü parantez kaçışı
+        # ASS'de satır sonları \N ile yapılır; süslü parantez kaçışı
         ass_text = (
             text.replace("\\", r"\\")
             .replace("{", r"\{")
             .replace("}", r"\}")
-            .replace("\n", r"{\N}")
+            .replace("\n", r"\N")
         )
         event_lines.append(
             f"Dialogue: 0,{start_ts},{end_ts},Default,,0,0,0,,{ass_text}"

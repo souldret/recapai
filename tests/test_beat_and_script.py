@@ -242,7 +242,7 @@ class TestDistribute:
         assert spoken[0].text.count(".") <= 2
         assert all(len(s.text.split()) <= 16 for s in spoken)
 
-    def test_materialize_fills_empty_from_analysis(self):
+    def test_materialize_one_vo_per_beat_not_per_panel(self):
         from core.beat_engine import StoryBeat
         analyses = {
             "0": {"scene": "x", "action": "He opens the gate"},
@@ -257,8 +257,9 @@ class TestDistribute:
             {}, "en", 0, use_hook=False,
         )
         story = [s for s in segs if s.role != "cold_open"]
+        assert len(story) == 1
         assert story[0].text.startswith("He opens")
-        assert any("rank" in (s.text or "").lower() or "lights" in (s.text or "").lower() for s in story)
+        assert not any("rank board" in (s.text or "").lower() for s in story)
         assert not any("hikaye" in (s.text or "").lower() for s in story)
 
     def test_user_bug_mixed_and_analysis_dump(self):
@@ -316,10 +317,10 @@ class TestDistribute:
         )
         story = [s for s in segs if s.role != "cold_open"]
         spoken = [(s.text or "").strip() for s in story]
+        assert len(spoken) == 1
         assert spoken[0].startswith("He opens")
         assert spoken.count("He opens the gate.") == 1
         assert not any("Gergin" in t or "heybetli" in t for t in spoken)
-        assert spoken[1:] == [""] * 7
 
     def test_english_last_time_drops_turkish_source(self):
         from core.beat_engine import StoryBeat
@@ -358,6 +359,7 @@ class TestDistribute:
         )
         story = [s for s in segs if s.role != "cold_open"]
         blob = " ".join(s.text or "" for s in story)
+        assert len(story) == 1
         assert "hikaye" not in blob.lower()
         assert "aksiyon" not in blob.lower()
 
@@ -652,6 +654,7 @@ class TestMaterialize:
         assert "Kralı" in segs[0].text
         assert any(s.image_index == 0 for s in segs)
         story = [s for s in segs if s.role not in ("cold_open", "last_time")]
+        assert len(story) == 2
         assert story[0].image_index == 0
 
     def test_segment_roundtrip(self):
@@ -695,4 +698,6 @@ class TestMaterialize:
             ch, [StoryBeat(0, [0, 1], "setup")], {0: "Bir. İki."},
             {}, "tr", 0, use_hook=False,
         )
+        story = [s for s in segs if s.role != "cold_open"]
+        assert len(story) == 1
         assert all(s.image_path for s in segs)

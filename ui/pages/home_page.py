@@ -59,8 +59,8 @@ class RecentProjectItem(QFrame):
 
         updated = str(summary.get("updated_at") or "")[:10] or "—"
         meta = QLabel(
-            f"{summary.get('chapter_count', 0)} bolum  ·  "
-            f"{summary.get('image_count', 0)} gorsel  ·  "
+            f"{summary.get('chapter_count', 0)} bölüm  ·  "
+            f"{summary.get('image_count', 0)} görsel  ·  "
             f"{updated}"
         )
         meta.setObjectName("mutedLabel")
@@ -68,7 +68,7 @@ class RecentProjectItem(QFrame):
         hbox.addLayout(vbox, 1)
 
         # Ac butonu
-        btn_open = QPushButton("Ac")
+        btn_open = QPushButton("Aç")
         btn_open.setFixedWidth(60)
         btn_open.setObjectName("ghostButton")
         btn_open.clicked.connect(lambda: on_open(summary))
@@ -350,21 +350,21 @@ class HomePage(QWidget):
         # Aksiyon kartlari
         new_proj_card = ActionCard(
             Icons.ADD, "Yeni Proje",
-            "Yeni bir recap projesi olustur.",
+            "Yeni bir recap projesi oluştur.",
         )
         new_proj_card.clicked.connect(self._create_new_project)
         vbox.addWidget(new_proj_card)
 
         img_card = ActionCard(
-            Icons.IMAGES, "Gorsel Ekle",
-            "Mevcut projeye gorsel ekle.",
+            Icons.IMAGES, "Görsel Ekle",
+            "Mevcut projeye görsel ekle.",
         )
         img_card.clicked.connect(self._navigate_to_images)
         vbox.addWidget(img_card)
 
         render_card = ActionCard(
             Icons.RENDER, "Render",
-            "Video olusturma ekranina git.",
+            "Video oluşturma ekranına git.",
         )
         render_card.clicked.connect(self._navigate_to_render)
         vbox.addWidget(render_card)
@@ -458,7 +458,7 @@ class HomePage(QWidget):
         self._pipeline_result_lbl = QLabel()
         result_hbox.addWidget(self._pipeline_result_lbl)
 
-        self._btn_open_result = QPushButton("Klasoru Ac")
+        self._btn_open_result = QPushButton("Klasörü Aç")
         self._btn_open_result.setObjectName("secondaryBtn")
         self._btn_open_result.setIcon(Icons.get(Icons.FOLDER))
         self._btn_open_result.clicked.connect(self._open_pipeline_result_folder)
@@ -634,13 +634,13 @@ class HomePage(QWidget):
     def _launch_pipeline(self) -> None:
         project = self._app_state.current_project
         if not project:
-            QMessageBox.warning(self, "Proje Yok", "Once bir proje secin veya olusturun.")
+            QMessageBox.warning(self, "Proje Yok", "Önce bir proje seçin veya oluşturun.")
             return
         if not project.chapters:
-            QMessageBox.warning(self, "Bolum Yok", "Projede hic bolum bulunamadi.")
+            QMessageBox.warning(self, "Bölüm Yok", "Projede hiç bölüm bulunamadı.")
             return
         if self._pipeline_worker and self._pipeline_worker.isRunning():
-            QMessageBox.information(self, "Pipeline", "Zaten bir pipeline calisiyor.")
+            QMessageBox.information(self, "Pipeline", "Zaten bir pipeline çalışıyor.")
             return
 
         dlg = PipelineConfigDialog(project, self)
@@ -652,8 +652,8 @@ class HomePage(QWidget):
             return
         if not chapter.images:
             QMessageBox.warning(
-                self, "Gorsel Yok",
-                "Secilen bolumde gorsel yok. Once Gorseller sayfasindan ekleyin.",
+                self, "Görsel Yok",
+                "Seçilen bölümde görsel yok. Önce Görseller sayfasından ekleyin.",
             )
             return
 
@@ -661,8 +661,8 @@ class HomePage(QWidget):
         api_key      = app.get_setting("api", "openrouter_api_key", default="")
         if not api_key:
             QMessageBox.warning(
-                self, "API Anahtari Eksik",
-                "Once Ayarlar sayfasindan OpenRouter API anahtarini girin.",
+                self, "API Anahtarı Eksik",
+                "Önce Ayarlar sayfasından OpenRouter API anahtarını girin.",
             )
             return
         vision_model = app.get_setting("defaults", "vision_model",  default="google/gemini-2.5-flash")
@@ -672,7 +672,7 @@ class HomePage(QWidget):
 
         try:
             import core.project_manager as pm_mod
-            from core.pipeline import output_filename, resolve_render_settings
+            from core.pipeline import output_filename
             proj_dir = pm_mod.get_project_dir(project)
             if not proj_dir:
                 raise ValueError("Proje dizini bulunamadı")

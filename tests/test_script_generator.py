@@ -288,3 +288,15 @@ class TestNichesAndHook:
         assert "{beats_block}" in data["script_voiceover"]
         ret = data["script_prompt_retention"].lower()
         assert "kanca" in ret or "hook" in ret or "cold" in ret
+        assert "tek anlatı" in ret or "tek voiceover" in ret
+        vo = data["script_voiceover"].lower()
+        assert "panel panel" in vo
+
+
+class TestResolveStyle:
+    def test_default_fresh(self):
+        from core.script_generator import resolve_style
+        assert resolve_style(None) == "fresh"
+        assert resolve_style("") == "fresh"
+        assert resolve_style("unknown") == "fresh"
+        assert resolve_style("epic") == "epic"

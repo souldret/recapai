@@ -185,12 +185,6 @@ class VoicePreviewDialog(QDialog):
         """Voice'a göre test metni seç."""
         # Dil tespiti: voice id veya engine'den
         first = voice_id[0] if voice_id else "a"
-        lang_map = {
-            "a": "en", "b": "en",
-            "j": "ja", "e": "es", "f": "fr",
-            "h": "en", "i": "en",
-            "p": "es", "z": "en",
-        }
         # Edge-TTS: "tr-TR-Ahmet..." → tr
         if voice_id.startswith("tr-"):
             return PREVIEW_TEXT["tr"]
