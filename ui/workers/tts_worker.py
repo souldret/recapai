@@ -150,9 +150,9 @@ class TTSWorker(QThread):
             if not tts_cfg.get("remove_silence", False):
                 return None
             return {
-                "silence_thresh": float(tts_cfg.get("silence_thresh_db", -40.0)),
-                "min_silence_len": int(tts_cfg.get("min_silence_len_ms", 400)),
-                "keep_silence": int(tts_cfg.get("keep_silence_ms", 120)),
+                "silence_thresh": float(tts_cfg.get("silence_thresh_db", -42.0)),
+                "min_silence_len": int(tts_cfg.get("min_silence_len_ms", 700)),
+                "keep_silence": int(tts_cfg.get("keep_silence_ms", 220)),
             }
         except Exception:
             return None

@@ -119,8 +119,14 @@ def remove_silence(
         if len(seg) == 0:
             return 0.0
 
+        # Eşik yüksekse (ör. -32) cümle kuyruğu "sessiz" sayılır ve kelime kesilir.
+        thresh = min(float(silence_thresh), -38.0)
+        min_len = max(int(min_silence_len), 550)
+        keep = max(int(keep_silence), 180)
+        pad_end = max(keep, 280)
+
         nonsilent_ranges = detect_nonsilent(
-            seg, min_silence_len=min_silence_len, silence_thresh=silence_thresh
+            seg, min_silence_len=min_len, silence_thresh=thresh
         )
         if not nonsilent_ranges:
             # Tamamı sessiz — dokunma, orijinal süreyi döndür.
@@ -128,8 +134,8 @@ def remove_silence(
 
         merged: List[tuple] = []
         for start, end in nonsilent_ranges:
-            piece_start = max(0, start - keep_silence)
-            piece_end = min(len(seg), end + keep_silence)
+            piece_start = max(0, start - keep)
+            piece_end = min(len(seg), end + pad_end)
             if merged and piece_start <= merged[-1][1]:
                 merged[-1] = (merged[-1][0], max(merged[-1][1], piece_end))
             else:
@@ -139,8 +145,7 @@ def remove_silence(
         for piece_start, piece_end in merged[1:]:
             result += seg[piece_start:piece_end]
 
-        if len(result) >= len(seg):
-            # Kısaltma sağlamadıysa orijinali koru.
+        if len(result) >= len(seg) * 0.97:
             return len(seg) / 1000.0
 
         suffix = Path(audio_path).suffix.lower().lstrip(".")

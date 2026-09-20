@@ -1346,7 +1346,7 @@ class SettingsPage(QWidget):
             ("af_sarah",   "Sarah (Female, Narrator)"),
             ("am_adam",    "Adam (Male, Dramatic)"),
             ("am_michael", "Michael (Male, Deep)"),
-            ("am_onyx",    "Onyx (Male, Strong)"),
+            ("am_fenrir",  "Fenrir (Male, Epic)"),
             ("bf_emma",    "Emma (Female, British)"),
             ("bm_george",  "George (Male, British)"),
         ]

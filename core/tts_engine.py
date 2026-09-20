@@ -313,13 +313,8 @@ class KokoroTTSEngine(TTSEngine):
             {"id": "af_nicole",   "name": "Nicole (Female, Casual)",         "gender": "F"},
             {"id": "af_sarah",    "name": "Sarah (Female, Narrator)",        "gender": "F"},
             {"id": "af_sky",      "name": "Sky (Female, Bright)",            "gender": "F"},
-            {"id": "af_nova",     "name": "Nova (Female, Energetic)",        "gender": "F"},
-            {"id": "af_alloy",    "name": "Alloy (Female, Neutral)",         "gender": "F"},
             {"id": "am_adam",     "name": "Adam (Male, Dramatic)",           "gender": "M"},
             {"id": "am_michael",  "name": "Michael (Male, Deep)",            "gender": "M"},
-            {"id": "am_onyx",     "name": "Onyx (Male, Strong)",             "gender": "M"},
-            {"id": "am_echo",     "name": "Echo (Male, Clear)",              "gender": "M"},
-            {"id": "am_fable",    "name": "Fable (Male, Storyteller)",       "gender": "M"},
             {"id": "am_fenrir",   "name": "Fenrir (Male, Epic)",             "gender": "M"},
             {"id": "am_liam",     "name": "Liam (Male, Confident)",          "gender": "M"},
             {"id": "am_puck",     "name": "Puck (Male, Playful)",            "gender": "M"},
@@ -334,7 +329,6 @@ class KokoroTTSEngine(TTSEngine):
             {"id": "bm_george",   "name": "George (Male, British)",          "gender": "M"},
             {"id": "bm_lewis",    "name": "Lewis (Male, British)",           "gender": "M"},
             {"id": "bm_daniel",   "name": "Daniel (Male, British, Deep)",    "gender": "M"},
-            {"id": "bm_fable",    "name": "Fable (Male, British, Story)",    "gender": "M"},
         ],
         "e": [
             # Spanish
@@ -474,6 +468,26 @@ class KokoroTTSEngine(TTSEngine):
                                 "lang_code": lang_code, "gender": v["gender"], "engine": "kokoro"})
         return result
 
+    @classmethod
+    def _resolve_voice(cls, voice: str) -> str:
+        """Eski/geçersiz ses id'lerini HuggingFace'de olanlara çevirir."""
+        aliases = {
+            "am_fable": "am_fenrir",
+            "am_onyx": "am_fenrir",
+            "am_echo": "am_liam",
+            "af_alloy": "af_heart",
+            "af_nova": "af_sky",
+            "bm_fable": "bm_george",
+        }
+        resolved = aliases.get((voice or "").strip(), voice)
+        known = {v["id"] for voices in cls.VOICE_CATALOG.values() for v in voices}
+        if resolved not in known:
+            logger.warning("Kokoro ses '%s' yok, am_fenrir kullanılıyor.", voice)
+            return "am_fenrir"
+        if resolved != voice:
+            logger.info("Kokoro ses '%s' → '%s' (HuggingFace'de yok).", voice, resolved)
+        return resolved
+
     @staticmethod
     def _coerce_speed(speed=None, **kwargs) -> float:
         """
@@ -528,6 +542,7 @@ class KokoroTTSEngine(TTSEngine):
 
         text = normalize_caps(text)
         speed = self._coerce_speed(speed, **kwargs)
+        voice = self._resolve_voice(voice)
         lang_code = voice[0] if voice else "a"
         if lang_code not in self.SUPPORTED_LANGS:
             logger.warning("Bilinmeyen lang_code '%s', 'a' kullaniliyor.", lang_code)

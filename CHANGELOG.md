@@ -11,6 +11,9 @@ Bu dosya RecapAI projesindeki önemli değişiklikleri listeler.
 - Script ayar çubuğu tek sıkışık satırdan 4 satıra ayrıldı (bölüm/model, niş/süre, kancalar, aksiyonlar).
 
 ### Düzeltildi
+- Orta/uzun script artık beat bütçesini doldurmak için kısa VO'yu modele yeniden yazdırır (~6 dk hedef).
+- Silence remover cümle kuyruğunu kesmiyor (daha düşük eşik, daha uzun keep).
+- Kokoro `am_fable` HuggingFace'de yok; `am_fenrir`'e yönlendirildi. Geçersiz sesler listeden çıktı.
 - Sayfa başlığı (`PageHeader`) sabit 70px tavanı kaldırıldı; butonlar kesilmiyor.
 - Analiz Başlat birincil indigo buton oldu.
 - ASS altyazı satır sonu kaçışı `\N` (çok satırlı altyazı bozulmuyordu).

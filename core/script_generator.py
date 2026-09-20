@@ -697,14 +697,17 @@ def _duration_note(length: str, target_minutes: float, language: str, chunk, tot
             f"TARGET DURATION: ~{minutes:.0f} minutes for the FULL chapter "
             f"(~{total_words} spoken words across {total_beats} beats). "
             f"This chunk beat word budgets: {budgets}. "
-            f"Write enough spoken sentences to FILL each beat budget. "
-            "Two sentences is a minimum, not the target. Empty JSON text is forbidden."
+            "HARD RULE: a budget of 80 means write ABOUT 80 words, not 2 short sentences. "
+            "Two sentences is a minimum, not the target. Empty JSON text is forbidden. "
+            "Expand with cause-effect, names, and stakes from the source — invent nothing."
         )
     return (
         f"HEDEF SÜRE: tüm bölüm ~{minutes:.0f} dakika "
         f"(~{total_words} konuşma kelimesi, {total_beats} beat). "
         f"Bu chunk bütçeleri: {budgets}. "
-        "Her beat bütçesini DOLDUR. 2 cümle minimum, hedef değil. Boş text YASAK."
+        "ZORUNLU: bütçe 80 ise yaklaşık 80 kelime yaz, 2 kısa cümle YETERSİZ. "
+        "2 cümle minimum, hedef değil. Boş text YASAK. "
+        "Kaynaktaki sebep-sonuç, isim ve stakes ile doldur; uydurma yok."
     )
 
 
@@ -1442,6 +1445,7 @@ class ScriptGenerator:
                 outline_beats[bid] = item
         vo: Dict[int, str] = {}
         prev_tail = ""
+        known: List[str] = []
         total_chunks = max(1, (len(beats) + BEAT_CHUNK_SIZE - 1) // BEAT_CHUNK_SIZE)
 
         for chunk_i, start in enumerate(range(0, len(beats), BEAT_CHUNK_SIZE)):
@@ -1552,6 +1556,70 @@ class ScriptGenerator:
             else:
                 prev_tail = f"[ÖNCEKİ BEAT — devam et, yeniden açma]:\n\"{last_written}\"" if last_written else ""
 
+        if length != "short":
+            vo = self._refill_short_voiceover(
+                vo, beats, outline_beats, model, language, known, project, length,
+            )
+        return vo
+
+    def _refill_short_voiceover(
+        self,
+        vo: Dict[int, str],
+        beats,
+        outline_beats: Dict[int, dict],
+        model: str,
+        language: str,
+        known: List[str],
+        project,
+        length: str,
+    ) -> Dict[int, str]:
+        """Orta/uzun modda bütçenin çok altında kalan beat'leri modele yeniden yazdırır."""
+        short_beats = []
+        for b in beats:
+            text = (vo.get(b.beat_id) or "").strip()
+            budget = int(b.word_budget or 0)
+            if not text or budget < 40:
+                continue
+            if len(text.split()) >= max(36, int(budget * 0.55)):
+                continue
+            short_beats.append(b)
+        if not short_beats:
+            return vo
+
+        en = (language or "").lower().startswith("en")
+        lines = []
+        for b in short_beats[:8]:
+            item = outline_beats.get(b.beat_id, {})
+            payload = (item.get("payload") or b.summary or b.action or "").strip()
+            lines.append(
+                f"id={b.beat_id} role={b.role} min_words={max(36, int((b.word_budget or 80) * 0.7))}: {payload}"
+            )
+        if en:
+            prompt = (
+                "Rewrite these recap beats so each text MEETS min_words. "
+                "Same plot, more spoken detail: names, cause-effect, stakes. Invent nothing. "
+                "JSON only: {\"beats\":[{\"id\":0,\"text\":\"...\"}]}\n"
+                + "\n".join(lines)
+            )
+        else:
+            prompt = (
+                "Bu beat'leri min_words'e ulaşacak şekilde yeniden yaz. "
+                "Aynı plot, daha fazla konuşma: isim, sebep-sonuç, stakes. Uydurma yok. "
+                "Sadece JSON: {\"beats\":[{\"id\":0,\"text\":\"...\"}]}\n"
+                + "\n".join(lines)
+            )
+        raw = self._chat(
+            model, prompt, temperature=0.55, max_tokens=3500,
+            language=language, known_names=known, retries=1,
+        )
+        parsed = _parse_beats_voiceover(raw)
+        for b in short_beats[:8]:
+            text = (parsed.get(b.beat_id) or "").strip()
+            if not text or _wrong_language(text, language, known) or _is_atmosphere_dump(text):
+                continue
+            text = _scrub_generic_labels(text, language, project=project)
+            if len(text.split()) > len((vo.get(b.beat_id) or "").split()):
+                vo[b.beat_id] = text
         return vo
 
     def _materialize_segments(

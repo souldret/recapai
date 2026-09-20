@@ -198,7 +198,7 @@ class TestDurationAndLanguageLock:
         chunk = [StoryBeat(0, [0], "setup", word_budget=90), StoryBeat(1, [1], "beat", word_budget=90)]
         note = _duration_note("medium", 0.0, "en", chunk, 10)
         assert "~6 minutes" in note
-        assert "Two sentences is a minimum, not the target" in note
+        assert "ABOUT 80 words" in note
         short = _duration_note("short", 0.0, "en", chunk, 10)
         assert "1 sentence" in short
         assert "16 words" in short
