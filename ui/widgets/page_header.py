@@ -24,7 +24,7 @@ class PageHeader(QWidget):
                  parent: Optional[QWidget] = None) -> None:
         super().__init__(parent)
         self.setObjectName("pageHeader")
-        self.setFixedHeight(70)
+        self.setMinimumHeight(72)
         self._build_ui(title, subtitle, actions or [])
 
     def _build_ui(self, title: str, subtitle: str,

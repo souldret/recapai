@@ -369,6 +369,7 @@ class AnalysisPage(QWidget):
         row2.addStretch()
 
         self.btn_start = QPushButton("  Analizi Başlat")
+        self.btn_start.setObjectName("primaryButton")
         self.btn_start.setMinimumWidth(160)
         self.btn_start.setIcon(Icons.get(Icons.PLAY, color="#ffffff"))
         self.btn_start.setIconSize(QSize(16, 16))

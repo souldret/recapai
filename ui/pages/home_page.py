@@ -84,7 +84,7 @@ class PipelineConfigDialog(QDialog):
 
     def __init__(self, project, parent=None) -> None:
         super().__init__(parent)
-        self.setWindowTitle("Tek Tikla Pipeline")
+        self.setWindowTitle("Tek Tıkla Pipeline")
         self.setMinimumWidth(420)
         self._project = project
         self._build_ui()
@@ -94,18 +94,18 @@ class PipelineConfigDialog(QDialog):
         vbox.setSpacing(14)
         vbox.setContentsMargins(24, 24, 24, 24)
 
-        title = QLabel("Pipeline Ayarlari")
+        title = QLabel("Pipeline Ayarları")
         title.setObjectName("headingLabel")
         vbox.addWidget(title)
 
-        sub = QLabel("Tum adimlar otomatik calisacak: Analiz > Script > TTS > Render")
+        sub = QLabel("Tüm adımlar otomatik çalışacak: Analiz > Script > TTS > Render")
         sub.setObjectName("cardSubtitle")
         sub.setWordWrap(True)
         vbox.addWidget(sub)
 
         # Bolum secici
         hbox = QHBoxLayout()
-        hbox.addWidget(QLabel("Bolum:"))
+        hbox.addWidget(QLabel("Bölüm:"))
         self.chapter_combo = QComboBox()
         for ch in self._project.chapters:
             self.chapter_combo.addItem(ch.name, ch.id)
@@ -113,7 +113,7 @@ class PipelineConfigDialog(QDialog):
         hbox.addWidget(self.chapter_combo, 1)
         vbox.addLayout(hbox)
 
-        self.force_check = QCheckBox("Tum asamalari bastan calistir")
+        self.force_check = QCheckBox("Tüm aşamaları baştan çalıştır")
         self.force_check.setToolTip("Kapalıysa tamamlanan analiz/script/TTS atlanır.")
         self.force_check.toggled.connect(self._refresh_cost)
         vbox.addWidget(self.force_check)
@@ -128,8 +128,8 @@ class PipelineConfigDialog(QDialog):
         vbox.addWidget(self.cost_lbl)
 
         note = QLabel(
-            "Pipeline kayitli render preset + GPU codec kullanir.\n"
-            "Detayli ayarlar icin ilgili sayfalari kullanin."
+            "Pipeline kayıtlı render preset + GPU codec kullanır.\n"
+            "Detaylı ayarlar için ilgili sayfaları kullanın."
         )
         note.setObjectName("mutedLabel")
         note.setWordWrap(True)
@@ -143,7 +143,7 @@ class PipelineConfigDialog(QDialog):
         btn_box.rejected.connect(self.reject)
         ok_btn = btn_box.button(QDialogButtonBox.StandardButton.Ok)
         if ok_btn:
-            ok_btn.setText("Baslat")
+            ok_btn.setText("Başlat")
             ok_btn.setObjectName("primaryButton")
             ok_btn.setIcon(Icons.get(Icons.PIPELINE, color="#ffffff"))
         vbox.addWidget(btn_box)
@@ -230,7 +230,7 @@ class HomePage(QWidget):
 
         self._header = PageHeader(
             "Ana Sayfa",
-            "RecapAI ile manhwa recap videolari uretmeye basla.",
+            "RecapAI ile manhwa recap videoları üretmeye başla.",
             actions=[btn_refresh],
         )
         root.addWidget(self._header)
@@ -250,8 +250,8 @@ class HomePage(QWidget):
         stats_layout.setSpacing(16)
 
         self._card_projects = StatCard(Icons.PROJECTS, "Toplam Proje",  "0")
-        self._card_chapters = StatCard(Icons.SCRIPT,   "Toplam Bolum",  "0")
-        self._card_renders  = StatCard(Icons.RENDER,   "Uretilen Video","0")
+        self._card_chapters = StatCard(Icons.SCRIPT,   "Toplam Bölüm",  "0")
+        self._card_renders  = StatCard(Icons.RENDER,   "Üretilen Video","0")
         self._card_duration = StatCard(Icons.TTS,      "Toplam Ses",    "0 dk")
 
         for card in [self._card_projects, self._card_chapters,
@@ -265,7 +265,7 @@ class HomePage(QWidget):
         banner_row = QHBoxLayout(self._api_banner)
         banner_row.setContentsMargins(16, 10, 16, 10)
         self._api_banner_lbl = QLabel(
-            "OpenRouter API anahtari yok. Ayarlar'dan ekle — pipeline ve analiz icin gerekli."
+            "OpenRouter API anahtarı yok. Ayarlar'dan ekle — pipeline ve analiz için gerekli."
         )
         self._api_banner_lbl.setWordWrap(True)
         banner_row.addWidget(self._api_banner_lbl, 1)
@@ -278,7 +278,7 @@ class HomePage(QWidget):
 
         self._continue_card = ActionCard(
             Icons.PIPELINE, "Devam et",
-            "Son projedeki sonraki eksik adim.",
+            "Son projedeki sonraki eksik adım.",
         )
         self._continue_card.clicked.connect(self._continue_next_step)
         main_vbox.addWidget(self._continue_card)
@@ -317,7 +317,7 @@ class HomePage(QWidget):
         title_row.addWidget(title)
         title_row.addStretch()
 
-        btn_all = QPushButton("Tumunu Gor")
+        btn_all = QPushButton("Tümünü Gör")
         btn_all.setObjectName("ghostButton")
         btn_all.clicked.connect(self._navigate_to_projects)
         title_row.addWidget(btn_all)
@@ -329,7 +329,7 @@ class HomePage(QWidget):
         self._recent_list_layout.setSpacing(6)
         vbox.addWidget(self._recent_list_widget)
 
-        self._no_projects_lbl = QLabel("Henuz proje yok. Yeni bir proje olusturun.")
+        self._no_projects_lbl = QLabel("Henüz proje yok. Yeni bir proje oluşturun.")
         self._no_projects_lbl.setObjectName("mutedLabel")
         self._no_projects_lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
         vbox.addWidget(self._no_projects_lbl)
@@ -343,7 +343,7 @@ class HomePage(QWidget):
         vbox.setContentsMargins(20, 16, 20, 16)
         vbox.setSpacing(14)
 
-        title = QLabel("Hizli Baslat")
+        title = QLabel("Hızlı Başlat")
         title.setObjectName("headingLabel")
         vbox.addWidget(title)
 
@@ -378,7 +378,7 @@ class HomePage(QWidget):
         vbox.addWidget(sep)
 
         # Pipeline butonu
-        btn_pipeline = QPushButton("Tek Tikla Pipeline")
+        btn_pipeline = QPushButton("Tek Tıkla Pipeline")
         btn_pipeline.setObjectName("successButton")
         btn_pipeline.setMinimumHeight(42)
         btn_pipeline.setIcon(Icons.get(Icons.PIPELINE, color="#ffffff"))
@@ -401,12 +401,12 @@ class HomePage(QWidget):
 
         # Baslik
         title_row = QHBoxLayout()
-        self._pipeline_title = QLabel("Pipeline Calisiyor...")
+        self._pipeline_title = QLabel("Pipeline Çalışıyor...")
         self._pipeline_title.setObjectName("headingLabel")
         title_row.addWidget(self._pipeline_title)
         title_row.addStretch()
 
-        self._btn_cancel_pipeline = QPushButton("Iptal")
+        self._btn_cancel_pipeline = QPushButton("İptal")
         self._btn_cancel_pipeline.setObjectName("dangerButton")
         self._btn_cancel_pipeline.setIcon(Icons.get(Icons.STOP, color="#ef4444"))
         self._btn_cancel_pipeline.setFixedWidth(80)

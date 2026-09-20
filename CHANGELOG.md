@@ -8,8 +8,11 @@ Bu dosya RecapAI projesindeki önemli değişiklikleri listeler.
 - Script artık **beat başına tek voiceover** üretir; diğer paneller kısa sessiz B-roll olarak videoda kalır. Analiz dump'ı ile doldurulmaz.
 - Script sayfasındaki **Stil** seçicisi kaldırıldı; anlatım otomatik Manhwa Fresh YouTube recap stiline kilitlendi.
 - Script Üret butonu birincil (indigo) stil aldı; kart editörü daha yüksek.
+- Script ayar çubuğu tek sıkışık satırdan 4 satıra ayrıldı (bölüm/model, niş/süre, kancalar, aksiyonlar).
 
 ### Düzeltildi
+- Sayfa başlığı (`PageHeader`) sabit 70px tavanı kaldırıldı; butonlar kesilmiyor.
+- Analiz Başlat birincil indigo buton oldu.
 - ASS altyazı satır sonu kaçışı `\N` (çok satırlı altyazı bozulmuyordu).
 - Ana sayfa Türkçe karakterler: "Aç", "bölüm", "görsel".
 - Sidebar sürüm etiketi v1.1.0 ile ayarlarla hizalandı.

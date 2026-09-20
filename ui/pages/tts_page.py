@@ -464,14 +464,14 @@ class TtsPage(QWidget):
         root.setSpacing(0)
 
 # Toolbar butonlari (header action olarak degil; ayri toolbar)
-        self._btn_synthesize = QPushButton("Tumunu Seslendir")
+        self._btn_synthesize = QPushButton("Tümünü Seslendir")
         self._btn_synthesize.setObjectName("primaryButton")
         self._btn_synthesize.setIcon(Icons.get(Icons.TTS, color="#1a1b26"))
         self._btn_synthesize.setIconSize(QSize(16, 16))
         self._btn_synthesize.setMinimumWidth(180)
         self._btn_synthesize.clicked.connect(self._start_synthesis)
 
-        self._btn_export = QPushButton("Disa Aktar")
+        self._btn_export = QPushButton("Dışa Aktar")
         self._btn_export.setObjectName("secondaryBtn")
         self._btn_export.setIcon(Icons.get(Icons.EXPORT))
         self._btn_export.setIconSize(QSize(16, 16))
@@ -481,7 +481,7 @@ class TtsPage(QWidget):
 
         header = PageHeader(
             "Seslendirme",
-            "Script metnini sesli anlatima donusturun.",
+            "Script metnini sesli anlatıma dönüştürün.",
             actions=[self._btn_export, self._btn_synthesize],
         )
         root.addWidget(header)
@@ -514,7 +514,7 @@ class TtsPage(QWidget):
         row1.setContentsMargins(0, 0, 0, 0)
         row1.setSpacing(12)
 
-        row1.addWidget(QLabel("Bolum:"))
+        row1.addWidget(QLabel("Bölüm:"))
         self._chapter_combo = QComboBox()
         self._chapter_combo.setMinimumWidth(170)
         self._chapter_combo.currentIndexChanged.connect(self._on_chapter_changed)
@@ -557,7 +557,7 @@ class TtsPage(QWidget):
         self._voice_selector.voice_changed.connect(self._on_voice_changed)
         row2.addWidget(self._voice_selector)
 
-        self._btn_preview_voice = QPushButton("Onizle")
+        self._btn_preview_voice = QPushButton("Önizle")
         self._btn_preview_voice.setObjectName("secondaryBtn")
         self._btn_preview_voice.setIcon(Icons.get(Icons.PLAY))
         self._btn_preview_voice.setFixedWidth(90)
@@ -566,7 +566,7 @@ class TtsPage(QWidget):
 
         row2.addStretch()
 
-        self._btn_cancel = QPushButton("Iptal")
+        self._btn_cancel = QPushButton("İptal")
         self._btn_cancel.setObjectName("dangerButton")
         self._btn_cancel.setIcon(Icons.get(Icons.STOP, color="#f7768e"))
         self._btn_cancel.setFixedWidth(80)
@@ -597,7 +597,7 @@ class TtsPage(QWidget):
         hdr.addWidget(self._lbl_seg_count)
         hdr.addStretch()
 
-        self._btn_regen_selected = QPushButton("Secilileri Yeniden Uret")
+        self._btn_regen_selected = QPushButton("Seçilileri Yeniden Üret")
         self._btn_regen_selected.setObjectName("secondaryBtn")
         self._btn_regen_selected.setIcon(Icons.get(Icons.REFRESH))
         self._btn_regen_selected.setFixedHeight(28)
@@ -625,7 +625,7 @@ class TtsPage(QWidget):
         v.setContentsMargins(24, 14, 24, 14)
         v.setSpacing(10)
 
-        self._lbl_segment_title = QLabel("Segment secin")
+        self._lbl_segment_title = QLabel("Segment seçin")
         self._lbl_segment_title.setObjectName("headingLabel")
         v.addWidget(self._lbl_segment_title)
 
@@ -791,7 +791,7 @@ class TtsPage(QWidget):
 
         if not chapter or not chapter.segments:
             self._lbl_seg_count.setText("(script uretilmemis)")
-            self._set_status("Once script uretin.", warn=True)
+            self._set_status("Önce script üretin.", warn=True)
             return
 
         self._lbl_seg_count.setText(f"({len(chapter.segments)} segment)")
@@ -861,7 +861,7 @@ class TtsPage(QWidget):
             item.deleteLater()
         self._segment_items.clear()
         self._selected_idx = None
-        self._lbl_segment_title.setText("Segment secin")
+        self._lbl_segment_title.setText("Segment seçin")
         self._txt_segment_text.clear()
 
     def _play_segment(self, idx: int) -> None:
@@ -934,17 +934,17 @@ class TtsPage(QWidget):
     def _start_synthesis(self) -> None:
         chapter = self._state.current_chapter
         if not chapter:
-            QMessageBox.warning(self, "Uyari", "Aktif bolum secin.")
+            QMessageBox.warning(self, "Uyarı", "Aktif bölüm seçin.")
             return
         if not chapter.segments:
-            QMessageBox.warning(self, "Uyari", "Once script uretin.")
+            QMessageBox.warning(self, "Uyarı", "Önce script üretin.")
             return
 
         engine_name = self._engine_combo.currentData()
         voice_id    = self._voice_selector.current_voice_id()
 
         if not voice_id:
-            QMessageBox.warning(self, "Uyari", "Ses secin.")
+            QMessageBox.warning(self, "Uyarı", "Ses seçin.")
             return
 
         try:
@@ -1223,7 +1223,7 @@ class TtsPage(QWidget):
         """Uretilen tum ses dosyalarini kullanicinin sectigi klasore kopyalar."""
         chapter = self._state.current_chapter
         if not chapter or not chapter.segments:
-            QMessageBox.warning(self, "Uyari", "Aktif bolum yok veya segment bulunamadi.")
+            QMessageBox.warning(self, "Uyarı", "Aktif bölüm yok veya segment bulunamadı.")
             return
 
         ready_segments = [
@@ -1233,8 +1233,8 @@ class TtsPage(QWidget):
 
         if not ready_segments:
             QMessageBox.information(
-                self, "Disa Aktarma",
-                "Henuz seslendirilmis segment yok.\nOnce 'Tumunu Seslendir' ile sesleri olusturun."
+                self, "Dışa Aktarma",
+                "Henüz seslendirilmiş segment yok.\nÖnce 'Tümünü Seslendir' ile sesleri oluşturun."
             )
             return
 
@@ -1274,13 +1274,13 @@ class TtsPage(QWidget):
             if len(errors) > 5:
                 err_detail += f"\n... ve {len(errors) - 5} hata daha"
             QMessageBox.warning(
-                self, "Disa Aktarma Tamamlandi (Hatalarla)",
-                f"{copied} dosya kopyalandi, {len(errors)} hata olustu:\n\n{err_detail}\n\nHedef: {export_dir}"
+                self, "Dışa Aktarma Tamamlandı (Hatalarla)",
+                f"{copied} dosya kopyalandı, {len(errors)} hata oluştu:\n\n{err_detail}\n\nHedef: {export_dir}"
             )
         else:
             QMessageBox.information(
-                self, "Disa Aktarma Basarili",
-                f"{copied} ses dosyasi basariyla kopyalandi.\n\nHedef klasor:\n{export_dir}"
+                self, "Dışa Aktarma Başarılı",
+                f"{copied} ses dosyası başarıyla kopyalandı.\n\nHedef klasör:\n{export_dir}"
             )
 
         self._set_status(f"{copied} ses dosyasi disa aktarildi → {export_dir}")

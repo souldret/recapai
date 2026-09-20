@@ -495,47 +495,44 @@ class ScriptPage(QWidget):
         frame = QFrame()
         frame.setObjectName("sectionFrame")
         vbox = QVBoxLayout(frame)
-        vbox.setContentsMargins(14, 10, 14, 10)
+        vbox.setContentsMargins(14, 12, 14, 12)
         vbox.setSpacing(10)
 
-        # Row 1: Parameters
+        # Satır 1: Bölüm + model
         row1 = QHBoxLayout()
         row1.setContentsMargins(0, 0, 0, 0)
-        row1.setSpacing(10)
+        row1.setSpacing(12)
 
-        # Bölüm
         row1.addWidget(QLabel("Bölüm:"))
         self.chapter_combo = QComboBox()
-        self.chapter_combo.setMinimumWidth(170)
+        self.chapter_combo.setMinimumWidth(180)
+        self.chapter_combo.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
         self.chapter_combo.setPlaceholderText("Seçin…")
         self.chapter_combo.currentIndexChanged.connect(self._on_chapter_changed)
         row1.addWidget(self.chapter_combo, 1)
 
-        # Model
         row1.addWidget(QLabel("Model:"))
         self.model_combo = QComboBox()
-        self.model_combo.setMinimumWidth(200)
+        self.model_combo.setMinimumWidth(220)
+        self.model_combo.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
         self._populate_model_combo()
-        row1.addWidget(self.model_combo, 1)
-
-        row1.addStretch()
+        row1.addWidget(self.model_combo, 2)
         vbox.addLayout(row1)
 
-        # Row 1b: Tuning controls
-        row1b = QHBoxLayout()
-        row1b.setContentsMargins(0, 0, 0, 0)
-        row1b.setSpacing(10)
+        # Satır 2: Niş, uzunluk, dil, süre
+        row2a = QHBoxLayout()
+        row2a.setContentsMargins(0, 0, 0, 0)
+        row2a.setSpacing(12)
 
-        # Niş (Manhwa Fresh Prompt 2)
-        row1b.addWidget(QLabel("Niş:"))
+        row2a.addWidget(QLabel("Niş:"))
         self.niche_combo = QComboBox()
-        self.niche_combo.setMinimumWidth(190)
+        self.niche_combo.setMinimumWidth(200)
+        self.niche_combo.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
         self.niche_combo.setToolTip(
             "Manhwa türüne göre ton: power fantasy, romance, dark action, comedy."
         )
         for key, label in NICHES:
             self.niche_combo.addItem(label, key)
-        # list_niches ile zenginleştir (varsa)
         try:
             from core.script_generator import list_niches
             for n in list_niches():
@@ -544,47 +541,26 @@ class ScriptPage(QWidget):
                     self.niche_combo.setItemData(idx, n["description"], Qt.ItemDataRole.ToolTipRole)
         except Exception:
             pass
-        row1b.addWidget(self.niche_combo)
+        row2a.addWidget(self.niche_combo, 2)
 
-        # Uzunluk
-        row1b.addWidget(QLabel("Uzunluk:"))
+        row2a.addWidget(QLabel("Uzunluk:"))
         self.length_slider = QSlider(Qt.Orientation.Horizontal)
         self.length_slider.setRange(0, 2)
         self.length_slider.setValue(1)
-        self.length_slider.setMinimumWidth(120)
+        self.length_slider.setMinimumWidth(140)
         self.length_slider.setTickPosition(QSlider.TickPosition.TicksBelow)
-        row1b.addWidget(self.length_slider)
+        row2a.addWidget(self.length_slider, 1)
         self.lbl_length = QLabel("Orta")
         self.lbl_length.setMinimumWidth(48)
         self.lbl_length.setObjectName("pageSubtitle")
-        row1b.addWidget(self.lbl_length)
+        row2a.addWidget(self.lbl_length)
 
-        # Dil
-        row1b.addWidget(QLabel("Dil:"))
+        row2a.addWidget(QLabel("Dil:"))
         self.lang_combo = QComboBox()
         for key, label in LANGUAGES:
             self.lang_combo.addItem(label, key)
-        self.lang_combo.setMinimumWidth(110)
-        row1b.addWidget(self.lang_combo)
-
-        self.hook_check = QCheckBox("Cold open")
-        self.hook_check.setChecked(True)
-        self.hook_check.setToolTip(
-            "Her videonun ilk 3 saniyesine flash-forward kanca ekler.\n"
-            "Kapalıysa düz kronolojik açılış."
-        )
-        row1b.addWidget(self.hook_check)
-
-        self.ab_hook_check = QCheckBox("A/B kanca")
-        self.ab_hook_check.setToolTip("İkinci kısa kancayı ilk segmente not olarak ekler.")
-        row1b.addWidget(self.ab_hook_check)
-
-        self.last_time_check = QCheckBox("Last time")
-        self.last_time_check.setToolTip(
-            "Bölüm 2+ için önceki bölümden 1-2 cümle köprü.\n"
-            "İlk bölümde otomatik kapalı önerilir."
-        )
-        row1b.addWidget(self.last_time_check)
+        self.lang_combo.setMinimumWidth(120)
+        row2a.addWidget(self.lang_combo)
 
         self.auto_duration_check = QCheckBox("Süre otomatik")
         self.auto_duration_check.setChecked(True)
@@ -594,30 +570,56 @@ class ScriptPage(QWidget):
             "Kapatınca dakikayı elle seçersin (tempo ipucu, hikayeyi kesmez)."
         )
         self.auto_duration_check.toggled.connect(self._on_auto_duration_toggled)
-        row1b.addWidget(self.auto_duration_check)
+        row2a.addWidget(self.auto_duration_check)
 
-        row1b.addWidget(QLabel("Hedef dk:"))
+        row2a.addWidget(QLabel("Hedef dk:"))
         self.minutes_spin = QSpinBox()
         self.minutes_spin.setRange(2, 180)
         self.minutes_spin.setValue(6)
         self.minutes_spin.setEnabled(False)
+        self.minutes_spin.setFixedWidth(72)
         self.minutes_spin.setToolTip(
             "Elle hedef süre (Orta varsayılan 6 dk, Uzun 9 dk).\n"
             "Hikayeyi kesmez, yalnızca tempo / kelime bütçesi ipucu."
         )
-        row1b.addWidget(self.minutes_spin)
+        row2a.addWidget(self.minutes_spin)
+        vbox.addLayout(row2a)
+
+        # Satır 3: Anlatı seçenekleri
+        row2b = QHBoxLayout()
+        row2b.setContentsMargins(0, 0, 0, 0)
+        row2b.setSpacing(16)
+
+        self.hook_check = QCheckBox("Cold open")
+        self.hook_check.setChecked(True)
+        self.hook_check.setToolTip(
+            "Her videonun ilk 3 saniyesine flash-forward kanca ekler.\n"
+            "Kapalıysa düz kronolojik açılış."
+        )
+        row2b.addWidget(self.hook_check)
+
+        self.ab_hook_check = QCheckBox("A/B kanca")
+        self.ab_hook_check.setToolTip("İkinci kısa kancayı ilk segmente not olarak ekler.")
+        row2b.addWidget(self.ab_hook_check)
+
+        self.last_time_check = QCheckBox("Last time")
+        self.last_time_check.setToolTip(
+            "Bölüm 2+ için önceki bölümden 1-2 cümle köprü.\n"
+            "İlk bölümde otomatik kapalı önerilir."
+        )
+        row2b.addWidget(self.last_time_check)
 
         self.compile_check = QCheckBox("Derleme (tüm bölümler)")
         self.compile_check.setToolTip(
             "Projedeki analizli bölümleri tek recap'te birleştirir."
         )
-        row1b.addWidget(self.compile_check)
+        row2b.addWidget(self.compile_check)
+        row2b.addStretch()
+        vbox.addLayout(row2b)
 
         self.length_slider.valueChanged.connect(self._on_length_changed)
-        row1b.addStretch()
-        vbox.addLayout(row1b)
 
-        # Row 2: Actions
+        # Satır 4: Aksiyonlar
         row2 = QHBoxLayout()
         row2.setContentsMargins(0, 0, 0, 0)
         row2.setSpacing(10)

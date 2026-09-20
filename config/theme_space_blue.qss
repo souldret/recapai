@@ -101,8 +101,7 @@ QMainWindow > QWidget {
 #pageHeader {
     background-color: #0a0e1a;
     border-bottom: 1px solid #1a2540;
-    min-height: 70px;
-    max-height: 70px;
+    min-height: 72px;
 }
 
 #pageTitle {
