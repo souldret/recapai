@@ -63,10 +63,7 @@ class AnalysisWorker(QThread):
             sm.reload()
 
             # API key kontrolü
-            api_key = sm.get_api_key()
-            # Geriye dönük: explicit key verilmişse onu kullan
-            if not api_key and self._api_key:
-                api_key = self._api_key
+            api_key = sm.get_api_key() or (self._api_key or "").strip()
 
             logger.info(
                 "AnalysisWorker.run başladı. API key uzunluğu: %d, model: %s",
@@ -78,15 +75,13 @@ class AnalysisWorker(QThread):
                 failed = True
                 self.error.emit(
                     "API anahtarı tanımlı değil.\n"
-                    "Ayarlar sayfasından API key girin ve kaydedin."
+                    "Ayarlar > API sekmesine gerçek OpenRouter anahtarını yazıp Kaydet'e basın.\n"
+                    ".env içindeki YOUR_..._HERE örneği geçerli değildir."
                 )
                 return
 
-            # Singleton client kullan; key SettingsManager'dan okunur
             client = OpenRouterClient.instance()
-            # Geriye dönük uyumluluk: explicit key verilmişse client'a bildir
-            if self._api_key and not sm.has_api_key():
-                client.update_api_key(self._api_key)
+            client.update_api_key(api_key)
 
             analyzer = AIAnalyzer(client)
 

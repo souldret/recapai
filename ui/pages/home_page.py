@@ -170,7 +170,7 @@ class PipelineConfigDialog(QDialog):
             from core.settings_manager import SettingsManager
             sm = SettingsManager.instance()
             vision = sm.get("defaults.vision_model", "google/gemini-2.5-flash")
-            script = sm.get("defaults.script_model", "anthropic/claude-sonnet-4")
+            script = sm.get("defaults.script_model", "google/gemini-2.5-flash")
             force = self.force_rerun()
             stages = pending_stages(chapter, force=force)
             skip_a = "analysis" not in stages
@@ -682,7 +682,7 @@ class HomePage(QWidget):
             )
             return
         vision_model = app.get_setting("defaults", "vision_model",  default="google/gemini-2.5-flash")
-        script_model = app.get_setting("defaults", "script_model",  default="anthropic/claude-sonnet-4")
+        script_model = app.get_setting("defaults", "script_model",  default="google/gemini-2.5-flash")
         tts_engine   = app.get_setting("defaults", "tts_engine",    default="edge-tts")
         tts_voice    = app.get_setting("defaults", "tts_voice",     default="tr-TR-AhmetNeural")
 

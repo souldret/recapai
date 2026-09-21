@@ -39,6 +39,12 @@ _PATTERNS: List[Tuple[str, re.Pattern, str]] = [
         re.I,
     ),
      "Ekran caption'ı / duygu tarifi"),
+    ("error", re.compile(
+        r"\b(pressure shifts on this beat|next cut tightens|story drives the next move|"
+        r"on this beat|bu beat)\b",
+        re.I,
+    ),
+     "Sahte beat filler"),
 ]
 
 

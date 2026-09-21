@@ -76,20 +76,18 @@ class ScriptWorker(QThread):
             sm = SettingsManager.instance()
             sm.reload()
 
-            api_key = sm.get_api_key()
-            if not api_key and self._api_key:
-                api_key = self._api_key
+            api_key = sm.get_api_key() or (self._api_key or "").strip()
 
             if not api_key:
                 self.error.emit(
                     "API anahtarı tanımlı değil.\n"
-                    "Ayarlar sayfasından API key girin ve kaydedin."
+                    "Ayarlar > API sekmesine gerçek OpenRouter anahtarını yazıp Kaydet'e basın.\n"
+                    ".env içindeki YOUR_..._HERE örneği geçerli değildir."
                 )
                 return
 
             client = OpenRouterClient.instance()
-            if self._api_key and not sm.has_api_key():
-                client.update_api_key(self._api_key)
+            client.update_api_key(api_key)
 
             generator = ScriptGenerator(client)
 
@@ -122,22 +120,20 @@ class ScriptWorker(QThread):
             if self._hook_variants > 1 and not self._stop:
                 from core.script_quality import cold_open_text, store_hook_variants
                 primary = cold_open_text(segments)
-                alt = generator.generate_script(
-                    chapter=self._chapter,
-                    model=self._model,
-                    style=self._style,
-                    length="short",
-                    language=self._language,
-                    niche=self._niche,
-                    use_hook=True,
-                    project=self._project,
-                    target_minutes=self._target_minutes,
-                    auto_niche=self._auto_niche,
-                    include_last_time=False,
-                    stop_flag=lambda: self._stop,
-                    assign=False,
-                )
-                alt_hook = cold_open_text(alt or [])
+                try:
+                    alt_hook = generator.generate_alt_hook(
+                        chapter=self._chapter,
+                        model=self._model,
+                        style=self._style,
+                        language=self._language,
+                        niche=self._niche,
+                        project=self._project,
+                        primary=primary,
+                        stop_flag=lambda: self._stop,
+                    )
+                except Exception as exc:
+                    logger.warning("A/B kanca üretilemedi, ana script korunuyor: %s", exc)
+                    alt_hook = ""
                 variants = []
                 if primary:
                     variants.append({"id": "A", "text": primary})
@@ -211,20 +207,17 @@ class RegenerateSegmentWorker(QThread):
             sm = SettingsManager.instance()
             sm.reload()
 
-            api_key = sm.get_api_key()
-            if not api_key and self._api_key:
-                api_key = self._api_key
+            api_key = sm.get_api_key() or (self._api_key or "").strip()
 
             if not api_key:
                 self.error.emit(
                     "API anahtarı tanımlı değil.\n"
-                    "Ayarlar sayfasından API key girin ve kaydedin."
+                    "Ayarlar > API sekmesine gerçek OpenRouter anahtarını yazıp Kaydet'e basın."
                 )
                 return
 
             client = OpenRouterClient.instance()
-            if self._api_key and not sm.has_api_key():
-                client.update_api_key(self._api_key)
+            client.update_api_key(api_key)
 
             generator = ScriptGenerator(client)
             if self._stop:

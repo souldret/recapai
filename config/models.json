@@ -164,13 +164,21 @@
   ],
   "script_models": [
     {
-      "id": "anthropic/claude-sonnet-4",
-      "name": "Claude Sonnet 4",
-      "cost": "$$$",
+      "id": "google/gemini-2.5-flash",
+      "name": "Gemini 2.5 Flash",
+      "cost": "$",
       "recommended": true,
       "recommendation": "best_value",
       "max_tokens": 8192,
-      "description": "Manhwa Fresh recap için en iyi denge — doğal ses, az AI kokusu"
+      "description": "Varsayılan recap modeli — analizle aynı anahtar, Anthropic gizlilik onayı gerektirmez"
+    },
+    {
+      "id": "anthropic/claude-sonnet-4",
+      "name": "Claude Sonnet 4",
+      "cost": "$$$",
+      "recommendation": "performance",
+      "max_tokens": 8192,
+      "description": "Manhwa Fresh recap için en iyi denge — doğal ses, az AI kokusu. OpenRouter Privacy onayı gerekir."
     },
     {
       "id": "anthropic/claude-3.5-sonnet",
@@ -194,14 +202,6 @@
       "recommendation": "performance",
       "max_tokens": 8192,
       "description": "En yüksek anlatı kalitesi — premium recap"
-    },
-    {
-      "id": "google/gemini-2.5-flash",
-      "name": "Gemini 2.5 Flash",
-      "cost": "$",
-      "recommendation": "best_value",
-      "max_tokens": 8192,
-      "description": "Ucuz + hızlı script; uzun bölümlerde token dostu"
     },
     {
       "id": "google/gemini-2.5-pro",
@@ -346,7 +346,7 @@
       "performance": "google/gemini-2.5-pro"
     },
     "script": {
-      "best_value": "anthropic/claude-sonnet-4",
+      "best_value": "google/gemini-2.5-flash",
       "budget": "deepseek/deepseek-chat-v3-0324",
       "performance": "anthropic/claude-opus-4"
     }

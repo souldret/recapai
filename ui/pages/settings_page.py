@@ -42,16 +42,16 @@ class APITestWorker(QThread):
             from core.settings_manager import SettingsManager
             sm = SettingsManager.instance()
             original_key = sm.get_api_key()
-            use_temp = self._test_key and self._test_key != original_key
-            if use_temp:
-                sm.set("api.openrouter_api_key", self._test_key, save=False)
+            test_key = self._test_key or original_key
+            if test_key:
+                self.client.update_api_key(test_key)
             try:
                 ok, msg = self.client.test_connection()
                 info = self.client.get_account_info() if ok else {}
                 self.result_ready.emit(ok, msg, info or {})
             finally:
-                if use_temp:
-                    sm.set("api.openrouter_api_key", original_key, save=False)
+                if original_key:
+                    self.client.update_api_key(original_key)
         except Exception as e:
             self.result_ready.emit(False, str(e), {})
 
@@ -1630,6 +1630,9 @@ class SettingsPage(QWidget):
             self.api_key_input.setText(self.ctx.settings_manager.get_api_key())
         except Exception:
             self.api_key_input.setText(api.get("openrouter_api_key", ""))
+        from core.secrets import is_usable_api_key
+        if not is_usable_api_key(self.api_key_input.text()):
+            self.api_key_input.clear()
         self.base_url_input.setText(api.get("openrouter_base_url", "https://openrouter.ai/api/v1"))
 
         defaults = data.get("defaults", {})
@@ -1713,6 +1716,15 @@ class SettingsPage(QWidget):
 
             data.setdefault("api", {})
             new_api_key = self.api_key_input.text().strip()
+            from core.secrets import is_usable_api_key
+            if not is_usable_api_key(new_api_key):
+                QMessageBox.warning(
+                    self,
+                    "API anahtarı",
+                    "YOUR_OPENROUTER_API_KEY_HERE gibi örnek metin geçerli değildir.\n"
+                    "https://openrouter.ai/keys adresinden sk-or-v1-... anahtarını yapıştırın.",
+                )
+                return
             data["api"]["openrouter_api_key"] = new_api_key
             data["api"]["openrouter_base_url"] = (
                 self.base_url_input.text().strip() or "https://openrouter.ai/api/v1"
@@ -1790,9 +1802,10 @@ class SettingsPage(QWidget):
             # update_from_dict: _settings'i günceller, save() çağırır,
             # api_key_changed sinyalini yayınlar. Hata varsa except bloğu yakalar.
             sm.update_from_dict(data, save=True)
-            # api_key_changed sinyali update_from_dict içinde doğru şekilde yayınlanır.
-            # get_all() artık deep copy döndürdüğü için aliasing sorunu yok;
-            # buraya ekstra emit eklemeye gerek yok (double-signal riski).
+            try:
+                self.ctx.open_router_client.update_api_key(new_api_key)
+            except Exception:
+                pass
 
             self.ctx.app_state.status_message.emit("Ayarlar kaydedildi.")
             logger.info("Ayarlar kaydedildi. API key uzunluğu: %d", len(new_api_key))

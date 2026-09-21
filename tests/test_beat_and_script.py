@@ -321,7 +321,10 @@ class TestDistribute:
         spoken = [s for s in story if (s.text or "").strip()]
         assert len(spoken) >= 2
         assert all(len(s.text.split()) <= 26 for s in spoken)
-        assert all(SG.estimate_duration(s.text, "en") <= 12.0 for s in spoken)
+        assert all(s.duration <= 12.0 for s in spoken)
+        for s in spoken:
+            expected = SG.estimate_duration(s.text, "en")
+            assert abs((s.duration or 0) - expected) < 0.05
 
     def test_medium_one_image_clips_thirty_second_paragraph(self):
         from core.beat_engine import StoryBeat
@@ -340,6 +343,8 @@ class TestDistribute:
         assert spoken
         assert len(spoken[0].text.split()) <= 26
         assert spoken[0].duration <= 12.0
+        expected = SG.estimate_duration(spoken[0].text, "en")
+        assert abs(spoken[0].duration - expected) < 0.05
 
     def test_fourteen_images_all_story_panels_get_text(self):
         """14 görsel 10 beat'e sıkışsa bile hikaye kareleri boş kalmaz."""
@@ -496,7 +501,7 @@ class TestDistribute:
             length="medium",
         )
         from core.script_generator import _drop_wrong_language_segments
-        _drop_wrong_language_segments(segs, "en")
+        _drop_wrong_language_segments(segs, "en", chapter=ch, length="medium")
         blob = " ".join(s.text or "" for s in segs)
         assert "hikaye" not in blob.lower()
         assert "aksiyon" not in blob.lower()
@@ -505,6 +510,105 @@ class TestDistribute:
         spoken = [s for s in segs if (s.text or "").strip()]
         assert spoken
         assert any("Sunho" in (s.text or "") for s in spoken)
+        blob = " ".join(s.text or "" for s in segs)
+        assert "pressure shifts" not in blob.lower()
+        assert "this beat" not in blob.lower()
+
+    def test_medium_never_leaves_silent_hold_on_story_panels(self):
+        from core.beat_engine import StoryBeat
+        from core.script_generator import _fill_empty_story_panels
+        dump = "Bu sahne hikayenin aksiyon seviyesini yükseltir."
+        analyses = {
+            str(i): {
+                "scene": dump,
+                "action": dump,
+                "characters": [{"name": "Sunho"}, {"name": "Haeseon"}],
+            }
+            for i in range(6)
+        }
+        ch = _chapter(6, analyses)
+        gen = ScriptGenerator.__new__(ScriptGenerator)
+        segs = gen._materialize_segments(
+            ch,
+            [StoryBeat(0, list(range(6)), "setup", word_budget=80)],
+            {0: "Sunho's heart pounds after Ms. Haeseon calls him mean. He still cannot look away from her."},
+            {},
+            "en",
+            0,
+            use_hook=False,
+            length="medium",
+        )
+        segs = _fill_empty_story_panels(segs, ch, "en", "medium")
+        story = [s for s in segs if (s.role or "") not in ("cold_open", "last_time")]
+        assert len(story) == 6
+        assert all((s.text or "").strip() for s in story)
+        blob = " ".join(s.text or "" for s in story)
+        assert "hikaye" not in blob.lower()
+        assert "pressure shifts" not in blob.lower()
+        assert "this beat" not in blob.lower()
+        from core.script_generator import ScriptGenerator as SG
+        for s in story:
+            expected = SG.estimate_duration(s.text, "en")
+            assert abs((s.duration or 0) - expected) < 0.05
+            assert (s.duration or 0) < 12.0
+
+    def test_duration_is_tts_words_not_padded_floor(self):
+        from core.script_generator import ScriptGenerator as SG
+        six = SG.estimate_duration("The pressure shifts on this beat.", "en")
+        assert 0.4 <= six <= 3.0
+        spoken = (
+            "Sunho keeps the same look, as if the last word is still hanging in the air."
+        )
+        longish = SG.estimate_duration(spoken, "en")
+        assert longish > six
+        assert abs(longish - (len(spoken.split()) / 160.0) * 60) < 0.05
+
+    def test_medium_54_panels_named_fill_not_meta_filler(self):
+        from core.beat_engine import StoryBeat
+        n = 54
+        analyses = {
+            str(i): {
+                "scene": "Bu sahne hikayenin aksiyon seviyesini yükseltir.",
+                "action": "Bu sahne hikayenin aksiyon seviyesini yükseltir.",
+                "characters": [{"name": "Sunho"}, {"name": "Haeseon"}],
+            }
+            for i in range(n)
+        }
+        ch = _chapter(n, analyses)
+        gen = ScriptGenerator.__new__(ScriptGenerator)
+        beats = []
+        vo = {}
+        idx = 0
+        sizes = [8, 8, 4, 5, 7, 4, 4, 4, 4, 6]
+        assert sum(sizes) == n
+        for bid, take in enumerate(sizes):
+            panels = list(range(idx, idx + take))
+            idx += take
+            role = "setup" if bid == 0 else ("cliffhanger" if bid == 9 else "beat")
+            beats.append(StoryBeat(bid, panels, role, word_budget=take * 26))
+            vo[bid] = (
+                "Sunho's heart pounds after Ms. Haeseon calls him mean. "
+                "He still cannot look away from her in the crowded hallway."
+            )
+        segs = gen._materialize_segments(
+            ch, beats, vo, {}, "en", 0, use_hook=False, length="medium",
+        )
+        story = [s for s in segs if (s.role or "") not in ("cold_open", "last_time")]
+        assert {s.image_index for s in story} == set(range(n))
+        blob = " ".join((s.text or "") for s in story).lower()
+        assert "pressure shifts" not in blob
+        assert "this beat" not in blob
+        assert "hikaye" not in blob
+        empty = [s for s in story if not (s.text or "").strip()]
+        assert not empty
+        for s in story:
+            expected = ScriptGenerator.estimate_duration(s.text, "en")
+            assert abs((s.duration or 0) - expected) < 0.05
+            assert (s.duration or 0) != 3.8
+            assert (s.duration or 0) != 0.75
+            words = len((s.text or "").split())
+            if words <= 8:
+                assert (s.duration or 0) < 3.2
 
     def test_does_not_repeat_last_line_or_mood_dump(self):
         from core.beat_engine import StoryBeat
@@ -606,6 +710,10 @@ class TestLinter:
     def test_flags_protagonist(self):
         issues = lint_text("The protagonist walks in.", role="beat", is_first=True)
         assert any("etiket" in i.lower() or "jenerik" in i.lower() for i in issues)
+
+    def test_flags_meta_filler(self):
+        issues = lint_text("The pressure shifts on this beat.", role="beat")
+        assert any("filler" in i.lower() for i in issues)
 
     def test_does_not_flag_emdash(self):
         issues = lint_text("He turns. The door opens.", role="beat")

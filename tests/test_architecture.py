@@ -27,6 +27,38 @@ def test_secrets_not_written_to_settings(tmp_path, monkeypatch):
         sm_mod.SettingsManager._instance = previous
 
 
+def test_placeholder_env_does_not_override_saved_key(tmp_path, monkeypatch):
+    from core import secrets as sec
+    from core import settings_manager as sm_mod
+
+    secrets_path = tmp_path / "secrets.json"
+    settings_path = tmp_path / "settings.json"
+    monkeypatch.setattr(sec, "SECRETS_PATH", secrets_path)
+    monkeypatch.setattr(sm_mod, "SETTINGS_PATH", settings_path)
+    monkeypatch.setattr(sec, "load_dotenv", lambda: None)
+    monkeypatch.setenv("OPENROUTER_API_KEY", "YOUR_OPENROUTER_API_KEY_HERE")
+    previous = sm_mod.SettingsManager._instance
+    sm_mod.SettingsManager._instance = None
+    try:
+        mgr = sm_mod.SettingsManager()
+        assert mgr.get_api_key() == ""
+        assert not mgr.has_api_key()
+        mgr.set_api_key("sk-or-v1-real-test-key-123456")
+        assert mgr.get_api_key() == "sk-or-v1-real-test-key-123456"
+        assert "YOUR_OPENROUTER" not in secrets_path.read_text(encoding="utf-8")
+    finally:
+        sm_mod.SettingsManager._instance = previous
+
+
+def test_placeholder_detection():
+    from core.secrets import is_placeholder_key, is_usable_api_key
+
+    assert is_placeholder_key("YOUR_OPENROUTER_API_KEY_HERE")
+    assert is_placeholder_key("sk-or-buraya-api-anahtarınızı-girin")
+    assert not is_usable_api_key("YOUR_OPENROUTER_API_KEY_HERE")
+    assert is_usable_api_key("sk-or-v1-real-test-key-123456")
+
+
 def test_settings_save_is_atomic(tmp_path, monkeypatch):
     from core import settings_manager as sm_mod
 
@@ -100,6 +132,43 @@ def test_ab_hook_not_embedded_in_vo():
     apply_selected_hook(chapter.segments, "B hook line.")
     assert cold_open_text(chapter.segments) == "B hook line."
     assert chapter.script_meta["selected_hook"] == "A"
+
+
+def test_polish_does_not_replace_saved_script_when_unassigned():
+    from core.script_quality import polish_segments
+
+    class FakeGen:
+        def regenerate_segment(self, chapter, idx, model, **kwargs):
+            chapter.segments[idx].text = "Jin-Woo walks through the gate."
+            return chapter.segments[idx]
+
+    saved = [SegmentData(0, "Saved story stays.", role="beat")]
+    draft = [SegmentData(0, "The protagonist walks through the gate.", role="beat")]
+    chapter = Chapter(id="c", name="n", segments=saved)
+    out = polish_segments(FakeGen(), chapter, draft, model="x", language="en", assign=False)
+    assert "protagonist" not in out[0].text.lower()
+    assert chapter.segments[0].text == "Saved story stays."
+
+
+def test_alt_hook_does_not_rewrite_chapter(monkeypatch):
+    from core.script_generator import ScriptGenerator
+
+    chapter = Chapter(
+        id="c",
+        name="Ch 2",
+        segments=[SegmentData(0, "The real recap stays.", role="cold_open")],
+    )
+    gen = ScriptGenerator.__new__(ScriptGenerator)
+    gen._pick_model = lambda model, premium=False: model
+    gen._shared_layers = lambda *a, **k: {
+        "language_lock": "English only.",
+        "hook_layer": "hook",
+        "niche_module": "",
+    }
+    gen._chat = lambda *a, **k: "What if the gate never closed?"
+    text = gen.generate_alt_hook(chapter, "dummy", language="en", primary="The real recap stays.")
+    assert "gate" in text.lower()
+    assert chapter.segments[0].text == "The real recap stays."
 
 
 def test_polish_rewrites_error_segments():

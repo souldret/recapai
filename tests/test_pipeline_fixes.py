@@ -76,6 +76,40 @@ class TestOpenRouter429:
         assert client._session.post.call_count == RETRY_COUNT
         assert len(sleeps) == RETRY_COUNT - 1
 
+    def test_401_on_claude_falls_back_to_gemini(self, monkeypatch):
+        client = OpenRouterClient.__new__(OpenRouterClient)
+        client._settings_manager = None
+        client._explicit_key = "sk-test"
+        client._session = MagicMock()
+        client._total_tokens = 0
+        client._usage_events = []
+        monkeypatch.setattr(client, "_current_base_url", lambda: "https://example.invalid/v1")
+
+        denied = MagicMock()
+        denied.status_code = 401
+        denied.headers = {}
+        denied.json.return_value = {"error": {"message": "User not found."}}
+
+        ok = MagicMock()
+        ok.status_code = 200
+        ok.json.return_value = {
+            "choices": [{"message": {"content": "ok"}}],
+            "model": "google/gemini-2.5-flash",
+            "usage": {},
+        }
+
+        def post(_url, **kwargs):
+            model = (kwargs.get("json") or {}).get("model")
+            return denied if "anthropic" in str(model) else ok
+
+        client._session.post.side_effect = post
+        data = client._post_with_fallback(
+            "chat/completions",
+            {"model": "anthropic/claude-sonnet-4", "messages": []},
+            ["google/gemini-2.5-flash"],
+        )
+        assert data["model"] == "google/gemini-2.5-flash"
+
 
 class TestTTSCache:
     def test_put_get_roundtrip(self, tmp_path):

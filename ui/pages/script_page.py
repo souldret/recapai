@@ -268,17 +268,32 @@ class SegmentCard(QFrame):
         self._lint_timer.start()
         self._push_or_merge_undo(old_text, new_text)
 
+    def _is_last_card(self) -> bool:
+        page = self.parent()
+        while page is not None and not hasattr(page, "_cards"):
+            page = page.parent() if hasattr(page, "parent") else None
+        cards = getattr(page, "_cards", None) if page is not None else None
+        if not cards:
+            return False
+        return cards[-1] is self
+
     def _run_lint(self) -> None:
         text = self.text_edit.toPlainText()
         from core.script_generator import ScriptGenerator
-        self.segment.duration = ScriptGenerator.estimate_duration(text)
+        language = "en"
+        page = self.parent()
+        while page is not None and not hasattr(page, "lang_combo"):
+            page = page.parent() if hasattr(page, "parent") else None
+        if page is not None and hasattr(page, "lang_combo"):
+            language = page.lang_combo.currentData() or "en"
+        self.segment.duration = ScriptGenerator.estimate_duration(text, language)
         self.lbl_duration.setText(self._dur_label())
         from core.script_linter import lint_text
         self.segment.lint_issues = lint_text(
             text,
             role=getattr(self.segment, "role", "") or "",
             is_first=self.segment_index == 0,
-            is_last=False,
+            is_last=self._is_last_card(),
         )
         self._refresh_lint(apply_border=False)
 
@@ -784,23 +799,29 @@ class ScriptPage(QWidget):
                 tip = model_tooltip(m)
                 if tip:
                     self.model_combo.setItemData(idx, tip, Qt.ItemDataRole.ToolTipRole)
-            pref = default_model_id("script_models")
+            pref = None
+            try:
+                pref = self.ctx.settings_manager.get("defaults.script_model", "")
+            except Exception:
+                pref = ""
+            if not pref:
+                pref = default_model_id("script_models")
             if pref:
                 i = self.model_combo.findData(pref)
                 if i >= 0:
                     self.model_combo.setCurrentIndex(i)
         except Exception:
             self.model_combo.addItem(
-                "Claude Sonnet 4  ·  Fiyat/Performans  [$$$]",
-                "anthropic/claude-sonnet-4",
+                "Gemini 2.5 Flash  ·  Fiyat/Performans  [$]",
+                "google/gemini-2.5-flash",
             )
             self.model_combo.addItem(
                 "DeepSeek V3  ·  Bütçe  [$]",
                 "deepseek/deepseek-chat-v3-0324",
             )
             self.model_combo.addItem(
-                "Gemini 2.5 Flash  ·  Fiyat/Performans  [$]",
-                "google/gemini-2.5-flash",
+                "Claude Sonnet 4  ·  Performans  [$$$]",
+                "anthropic/claude-sonnet-4",
             )
 
     def _get_api_key(self) -> str:
@@ -881,7 +902,8 @@ class ScriptPage(QWidget):
         if not chosen:
             return
         from core.script_quality import apply_selected_hook, store_hook_variants
-        apply_selected_hook(chapter.segments or [], chosen.get("text") or "")
+        language = self.lang_combo.currentData() or "en"
+        apply_selected_hook(chapter.segments or [], chosen.get("text") or "", language)
         store_hook_variants(chapter, variants, selected=str(hid))
         self._load_segments(chapter)
         self._save_project()
@@ -936,8 +958,8 @@ class ScriptPage(QWidget):
 
     def _add_card(self, index: int, seg: SegmentData, thumb: Optional[str]) -> SegmentCard:
         card = SegmentCard(index, seg, thumb, self._undo_stack)
-        card.btn_del.clicked.connect(lambda: self._delete_card(card))
-        card.btn_regen.clicked.connect(lambda: self._regen_card(card))
+        card.btn_del.clicked.connect(lambda _checked=False, c=card: self._delete_card(c))
+        card.btn_regen.clicked.connect(lambda _checked=False, c=card: self._regen_card(c))
         card.text_edit.textChanged.connect(self._update_stats)
         card._focus_callback = self._on_card_focus
         # Stretch'in önüne ekle
@@ -1020,7 +1042,7 @@ class ScriptPage(QWidget):
                                 "Ayarlar > API sekmesinden OpenRouter anahtarını girin.")
             return
 
-        model = self.model_combo.currentData() or "anthropic/claude-3.5-sonnet"
+        model = self.model_combo.currentData() or "google/gemini-2.5-flash"
         style = "fresh"
         length = LENGTHS[self.length_slider.value()]
         language = self.lang_combo.currentData() or "en"
@@ -1088,7 +1110,6 @@ class ScriptPage(QWidget):
             f"Manhwa Fresh · {self.niche_combo.currentText()}{note}...</span>"
         )
         self.ctx.app_state.status_message.emit("Script üretimi başladı…")
-        self._autosave_timer.start()
         start_worker(self, self._worker)
 
     def _stop_generation(self) -> None:
@@ -1213,7 +1234,7 @@ class ScriptPage(QWidget):
         if not chapter:
             return
 
-        model = self.model_combo.currentData() or "anthropic/claude-3.5-sonnet"
+        model = self.model_combo.currentData() or "google/gemini-2.5-flash"
         style = "fresh"
         language = self.lang_combo.currentData() or "en"
         length = LENGTHS[self.length_slider.value()]
@@ -1229,13 +1250,15 @@ class ScriptPage(QWidget):
             project=state.current_project,
             parent=self,
         )
-        self._regen_worker.finished.connect(lambda i, s: self._on_regen_done(i, s))
-        self._regen_worker.error.connect(lambda m: QMessageBox.critical(self, "Hata", m))
+        self._regen_worker.finished.connect(lambda i, s, w=self._regen_worker: self._on_regen_done(i, s, w))
+        self._regen_worker.error.connect(lambda m, w=self._regen_worker: self._on_regen_error(m, w))
         card.btn_regen.setEnabled(False)
         card.btn_regen.setIcon(Icons.get(Icons.PROCESSING, color="#e0af68"))
         start_worker(self, self._regen_worker)
 
-    def _on_regen_done(self, index: int, segment: SegmentData) -> None:
+    def _on_regen_done(self, index: int, segment: SegmentData, worker=None) -> None:
+        if worker is not None and worker is not self._regen_worker:
+            return
         for card in self._cards:
             if getattr(card, "segment_index", -1) == index:
                 card.update_segment(segment)
@@ -1243,7 +1266,15 @@ class ScriptPage(QWidget):
                 card.btn_regen.setIcon(Icons.get(Icons.REFRESH))
                 break
         self._update_stats()
-        self._save_project()
+        self._save_project(quiet=True)
+
+    def _on_regen_error(self, msg: str, worker=None) -> None:
+        if worker is not None and worker is not self._regen_worker:
+            return
+        for card in self._cards:
+            card.btn_regen.setEnabled(True)
+            card.btn_regen.setIcon(Icons.get(Icons.REFRESH))
+        QMessageBox.critical(self, "Hata", msg)
 
     # ── Stats ──────────────────────────────────────────────────────
 
@@ -1270,7 +1301,7 @@ class ScriptPage(QWidget):
 
     # ── Save ───────────────────────────────────────────────────────
 
-    def _save_project(self) -> None:
+    def _save_project(self, *, quiet: bool = False) -> None:
         state = self.ctx.app_state
         if not state.current_project:
             return
@@ -1283,16 +1314,18 @@ class ScriptPage(QWidget):
             for card in self._cards:
                 if card.segment_index < len(chapter.segments):
                     chapter.segments[card.segment_index].text = card.text_edit.toPlainText()
+                    chapter.segments[card.segment_index].duration = card.segment.duration
             from core.project_manager import save_project
             try:
                 save_project(state.current_project)
                 logger.debug("Proje otomatik kaydedildi.")
             except Exception as exc:
                 logger.error("Kaydetme hatası: %s", exc)
-                QMessageBox.warning(self, "Kayıt hatası", f"Proje kaydedilemedi:\n{exc}")
+                if not quiet:
+                    QMessageBox.warning(self, "Kayıt hatası", f"Proje kaydedilemedi:\n{exc}")
 
     def _autosave(self) -> None:
-        self._save_project()
+        self._save_project(quiet=True)
 
     # ── Export ─────────────────────────────────────────────────────
 

@@ -197,7 +197,8 @@ class SettingsManager(QObject):
         self.set("api.openrouter_api_key", api_key.strip())
 
     def has_api_key(self) -> bool:
-        return len(self.get_api_key()) > 10
+        from core.secrets import is_usable_api_key
+        return is_usable_api_key(self.get_api_key())
 
     # ── Varsayılan ayarlar ─────────────────────────────────────────
 
@@ -234,7 +235,7 @@ class SettingsManager(QObject):
             },
             "defaults": {
                 "vision_model": "google/gemini-2.5-flash",
-                "script_model": "anthropic/claude-sonnet-4",
+                "script_model": "google/gemini-2.5-flash",
                 "tts_engine": "edge-tts",
                 "tts_voice": "tr-TR-AhmetNeural",
             },

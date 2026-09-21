@@ -198,10 +198,20 @@ class OpenRouterClient:
                     raise OpenRouterError(detail, status_code=404, response_data=err_data)
 
                 if resp.status_code == 401:
+                    model = payload.get("model", "")
+                    provider = model.split("/")[0] if "/" in str(model) else str(model)
                     raise OpenRouterError(
-                        "API key geçersiz. Ayarlar > API sekmesinden kontrol edin.\n"
-                        "https://openrouter.ai/keys adresinden yeni key alın.",
+                        f"Model '{model}' bu hesapla açılamadı (401).\n\n"
+                        "Bu çoğu zaman API anahtarının tamamen yanlış olduğu anlamına gelmez.\n"
+                        "Görsel analiz (Gemini) çalışıyorsa anahtar geçerlidir.\n\n"
+                        "Sık neden:\n"
+                        f"  • {provider.title()} modelleri OpenRouter gizlilik/data-policy onayı ister\n"
+                        "    https://openrouter.ai/settings/privacy\n"
+                        "  • Bu modele kredi/erişim yok\n\n"
+                        "Çözüm: Script sayfasında Gemini 2.5 Flash seçin, ya da "
+                        "OpenRouter Privacy ayarından Anthropic'i açın.",
                         status_code=401,
+                        response_data={"model": model},
                     )
 
                 if resp.status_code == 402:
@@ -298,12 +308,14 @@ class OpenRouterClient:
         hatasının tüm denemeler tükendikten sonra sürmesi) `fallback_models`
         listesindeki modellere sırayla geçer.
 
-        Modeller arası geçiş sadece modele özgü hatalarda (404, no-endpoints,
-        401/402 hariç) yapılır; 401/402 gibi hesap seviyesi hatalarda hemen
-        yükseltilir (başka modelde de aynı sorun tekrar eder).
+        401 çoğu zaman anahtarın tamamen geçersiz olduğu anlamına gelmez:
+        Anthropic/OpenAI modelleri gizlilik onayı veya model erişimi ister.
+        Gemini gibi yedek modeller aynı anahtarla çalışabilir.
+        402 (yetersiz kredi) hesap seviyesidir; fallback denenmez.
         """
         models_to_try = [payload["model"]] + [m for m in (fallback_models or []) if m != payload["model"]]
         last_error: Optional[OpenRouterError] = None
+        auth_failures = 0
 
         for i, model in enumerate(models_to_try):
             attempt_payload = dict(payload, model=model)
@@ -314,14 +326,23 @@ class OpenRouterClient:
                 return data
             except OpenRouterError as exc:
                 last_error = exc
-                if exc.status_code in (401, 402):
-                    raise  # Hesap seviyesi hata — model değiştirmek çözmez
+                if exc.status_code == 402:
+                    raise
+                if exc.status_code == 401:
+                    auth_failures += 1
                 if i < len(models_to_try) - 1:
                     logger.warning(
                         "Model '%s' başarısız (%s), fallback deneniyor: '%s'",
-                        model, exc, models_to_try[i + 1],
+                        model, exc.status_code or exc, models_to_try[i + 1],
                     )
                     continue
+                if auth_failures == len(models_to_try):
+                    raise OpenRouterError(
+                        "API key geçersiz (401). Tüm modeller reddetti.\n"
+                        "Ayarlar > API'den sk-or-v1-... anahtarını kaydedin.\n"
+                        "https://openrouter.ai/keys",
+                        status_code=401,
+                    ) from exc
                 raise
 
         raise last_error or OpenRouterError("Tüm modeller başarısız oldu.")
@@ -618,28 +639,35 @@ class OpenRouterClient:
 
     def test_connection(self) -> Tuple[bool, str]:
         """
-        API bağlantısını test eder.
-
-        Returns:
-            (True, "Bağlantı OK (N model)")  — başarılı
-            (False, "Hata mesajı")            — başarısız
+        Anahtarı gerçek bir chat isteğiyle doğrular.
+        GET /models herkese açıktır; 200 dönmesi key'in geçerli olduğu anlamına gelmez.
         """
         if not self._current_api_key():
             return False, "API anahtarı tanımlı değil"
 
         try:
-            resp = self._session.get(
-                f"{self._current_base_url()}/models",
-                headers=self._get_headers(),
-                timeout=10,
+            resp = self._session.post(
+                f"{self._current_base_url()}/chat/completions",
+                headers=self._headers(),
+                json={
+                    "model": "google/gemini-2.5-flash",
+                    "messages": [{"role": "user", "content": "Reply with OK"}],
+                    "max_tokens": 8,
+                    "temperature": 0,
+                },
+                timeout=20,
             )
             if resp.status_code == 200:
-                count = len(resp.json().get("data", []))
-                return True, f"Bağlantı başarılı ({count} model)"
-            elif resp.status_code == 401:
-                return False, "API key geçersiz (401)"
-            else:
-                return False, f"HTTP {resp.status_code}"
+                return True, "Anahtar geçerli (Gemini chat OK)"
+            if resp.status_code == 401:
+                return False, (
+                    "Anahtar Gemini chat'i reddetti (401). "
+                    "Yeni sk-or-v1-... key alın: https://openrouter.ai/keys"
+                )
+            if resp.status_code == 402:
+                return False, "Yetersiz kredi. https://openrouter.ai/credits"
+            err = self._extract_error_message(self._safe_json(resp))
+            return False, f"HTTP {resp.status_code}: {err}"
         except requests.exceptions.ConnectionError:
             return False, "İnternet bağlantısı yok"
         except requests.exceptions.Timeout:

@@ -20,6 +20,7 @@ _ERROR_HINTS = (
     "kanca değil",
     "outro",
     "saç/görünüm",
+    "sahte beat filler",
 )
 
 
@@ -38,19 +39,30 @@ def cold_open_text(segments: List[SegmentData]) -> str:
     return ""
 
 
-def apply_selected_hook(segments: List[SegmentData], hook_text: str) -> List[SegmentData]:
+def apply_selected_hook(
+    segments: List[SegmentData],
+    hook_text: str,
+    language: str = "en",
+) -> List[SegmentData]:
     """Seçilen A/B kancayı cold_open (veya ilk konuşulan) segmente yazar."""
     text = (hook_text or "").strip()
     if not text or not segments:
         return segments
+    target = None
     for seg in segments:
         if (getattr(seg, "role", "") or "") == "cold_open":
-            seg.text = text
-            return segments
-    for seg in segments:
-        if (seg.text or "").strip():
-            seg.text = text
+            target = seg
             break
+    if target is None:
+        for seg in segments:
+            if (seg.text or "").strip():
+                target = seg
+                break
+    if target is None:
+        return segments
+    target.text = text
+    from core.script_generator import ScriptGenerator
+    target.duration = ScriptGenerator.estimate_duration(text, language)
     return segments
 
 
@@ -84,43 +96,51 @@ def polish_segments(
     limit: int = 6,
     stop_flag: Optional[Callable[[], bool]] = None,
     stream_callback: Optional[Callable[[str], None]] = None,
+    assign: bool = True,
 ) -> List[SegmentData]:
     """
     Lint hatalı segmentleri regenerate_segment ile düzeltir.
     LLM yoksa / hata olursa mevcut metni korur.
+
+    assign=False iken bölümün kayıtlı segmentleri değiştirilmez. A/B kanca
+    ve çok bölümlü derleme bu yüzden ana senaryonun üzerine yazmaz.
     """
     if not segments or generator is None:
         return segments
-    chapter.segments = segments
-    for round_i in range(max(1, rounds)):
-        if stop_flag and stop_flag():
-            break
-        lint_segments(segments)
-        total = issue_count(segments)
-        error_idx = [
-            i for i in worst_indices(segments, limit=limit)
-            if any(_is_error_issue(m) for m in (segments[i].lint_issues or []))
-        ]
-        if not error_idx:
-            if stream_callback and round_i == 0:
-                stream_callback(f"\n[Lint: {total} uyarı, otomatik düzeltme gerekmedi]\n")
-            break
-        if stream_callback:
-            stream_callback(f"\n[Lint tur {round_i + 1}: {len(error_idx)} beat yeniden yazılıyor]\n")
-        for idx in error_idx:
+    backup = list(chapter.segments or [])
+    working = list(segments)
+    chapter.segments = working
+    try:
+        for round_i in range(max(1, rounds)):
             if stop_flag and stop_flag():
                 break
-            try:
-                generator.regenerate_segment(
-                    chapter, idx, model,
-                    style=style, language=language, length=length,
-                    niche=niche, project=project,
-                )
-            except Exception as exc:
-                logger.warning("Lint rewrite atlandı [%d]: %s", idx, exc)
-        segments = list(chapter.segments or segments)
-        lint_segments(segments)
-        if issue_count(segments) >= total:
-            break
-    chapter.segments = segments
-    return segments
+            lint_segments(working)
+            total = issue_count(working)
+            error_idx = [
+                i for i in worst_indices(working, limit=limit)
+                if any(_is_error_issue(m) for m in (working[i].lint_issues or []))
+            ]
+            if not error_idx:
+                if stream_callback and round_i == 0:
+                    stream_callback(f"\n[Lint: {total} uyarı, otomatik düzeltme gerekmedi]\n")
+                break
+            if stream_callback:
+                stream_callback(f"\n[Lint tur {round_i + 1}: {len(error_idx)} beat yeniden yazılıyor]\n")
+            for idx in error_idx:
+                if stop_flag and stop_flag():
+                    break
+                try:
+                    generator.regenerate_segment(
+                        chapter, idx, model,
+                        style=style, language=language, length=length,
+                        niche=niche, project=project,
+                    )
+                except Exception as exc:
+                    logger.warning("Lint rewrite atlandı [%d]: %s", idx, exc)
+            working = list(chapter.segments or working)
+            lint_segments(working)
+            if issue_count(working) >= total:
+                break
+        return working
+    finally:
+        chapter.segments = working if assign else backup

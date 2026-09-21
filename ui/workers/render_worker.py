@@ -233,8 +233,10 @@ class PipelineWorker(QThread):
                 from core.ai_analyzer import AIAnalyzer
 
                 client = OpenRouterClient.instance()
-                if self._api_key:
-                    client.update_api_key(self._api_key)
+                from core.settings_manager import SettingsManager
+                key = (self._api_key or "").strip() or SettingsManager.instance().get_api_key()
+                if key:
+                    client.update_api_key(key)
                 analyzer = AIAnalyzer(client)
 
                 def analysis_progress(done: int, total: int, msg: str) -> None:
@@ -285,8 +287,9 @@ class PipelineWorker(QThread):
                 sm = SettingsManager.instance()
                 sm.reload()
                 client = OpenRouterClient.instance()
-                if self._api_key and not sm.has_api_key():
-                    client.update_api_key(self._api_key)
+                key = sm.get_api_key() or (self._api_key or "").strip()
+                if key:
+                    client.update_api_key(key)
 
                 generator = ScriptGenerator(client)
                 segments = generator.generate_script(
@@ -306,21 +309,19 @@ class PipelineWorker(QThread):
                 if self._hook_variants > 1:
                     from core.script_quality import cold_open_text, store_hook_variants
                     primary = cold_open_text(segments)
-                    alt = generator.generate_script(
-                        chapter,
-                        self._script_model,
-                        style=self._script_style or "fresh",
-                        length="short",
-                        language=self._script_language,
-                        niche="auto",
-                        use_hook=True,
-                        project=self._project,
-                        auto_niche=True,
-                        include_last_time=False,
-                        target_minutes=self._target_minutes,
-                        assign=False,
-                    )
-                    alt_hook = cold_open_text(alt or [])
+                    try:
+                        alt_hook = generator.generate_alt_hook(
+                            chapter,
+                            self._script_model,
+                            style=self._script_style or "fresh",
+                            language=self._script_language,
+                            niche="auto",
+                            project=self._project,
+                            primary=primary,
+                        )
+                    except Exception as exc:
+                        self.log.emit(f"  [Script] A/B kanca atlandı: {exc}")
+                        alt_hook = ""
                     variants = []
                     if primary:
                         variants.append({"id": "A", "text": primary})
