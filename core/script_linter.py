@@ -13,7 +13,11 @@ from core.models import SegmentData
 _PATTERNS: List[Tuple[str, re.Pattern, str]] = [
     ("error", re.compile(r"\b(protagonist|main\s*character|\bmc\b|ana\s*karakter|kahramanımız|our\s+hero)\b", re.I),
      "Jenerik karakter etiketi"),
-    ("error", re.compile(r"\b(we see|görüyoruz|ekranda|bu panelde|this panel|in this scene)\b", re.I),
+    ("error", re.compile(
+        r"\b(we see|görüyoruz|ekranda|bu panelde|this panel|in this scene|"
+        r"on screen|the panel shows|bu karede|şu karede|o karede)\b",
+        re.I,
+    ),
      "Görsel tasvir / panel meta"),
     ("warn", re.compile(r"\b(like and subscribe|beğen.*abone|abone ol|kanalımıza)\b", re.I),
      "Outro / CTA"),

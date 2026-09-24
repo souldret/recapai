@@ -6,7 +6,9 @@ Modül-seviyesi fonksiyonlar geriye dönük uyumluluk için korunuyor.
 
 import json
 import logging
+import os
 import shutil
+import threading
 import uuid
 from datetime import datetime
 from pathlib import Path
@@ -36,7 +38,9 @@ def _write_project_json(project_dir: Path, project: Project) -> None:
     """project.json'u atomik yazar (tmp + replace). Yarı yazılmış dosya bırakmaz."""
     json_path = project_dir / PROJECT_FILE
     payload = json.dumps(project.to_dict(), indent=2, ensure_ascii=False)
-    tmp_path = json_path.with_suffix(".json.tmp")
+    tmp_path = json_path.with_name(
+        f"{json_path.name}.{os.getpid()}.{threading.get_ident()}.tmp"
+    )
     tmp_path.write_text(payload, encoding="utf-8")
     tmp_path.replace(json_path)
 
@@ -303,6 +307,18 @@ def load_project(path: "str | Path") -> Project:
 
 def save_project(project: Project) -> None:
     _get_pm().save_project(project)
+
+
+def persist_project(project: Project) -> bool:
+    """Ara kayıt. Klasör yoksa veya yazma hatasında analizi durdurmaz."""
+    if project is None:
+        return False
+    try:
+        save_project(project)
+        return True
+    except Exception as exc:
+        logger.warning("Proje ara kaydı yazılamadı: %s", exc)
+        return False
 
 
 def delete_project(project_id: str) -> None:

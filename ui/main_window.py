@@ -8,7 +8,7 @@ from PyQt6.QtWidgets import (
     QLabel, QPushButton, QStackedWidget, QStatusBar,
     QApplication,
 )
-from PyQt6.QtCore import Qt, QSize
+from PyQt6.QtCore import Qt, QSize, QTimer
 from PyQt6.QtGui import QFont
 
 from ui.widgets.sidebar import Sidebar
@@ -31,6 +31,7 @@ class MainWindow(QMainWindow):
         self._connect_signals()
         self._select_page(0)
         self._center_on_screen()
+        QTimer.singleShot(400, self._report_startup_health)
         logger.debug("MainWindow olusturuldu.")
 
     def _build_ui(self) -> None:
@@ -197,6 +198,23 @@ class MainWindow(QMainWindow):
     def set_status(self, message: str) -> None:
         """Alt cubuk mesajini gunceller."""
         self.lbl_message.setText(message)
+
+    def _report_startup_health(self) -> None:
+        """API, FFmpeg ve TTS eksikse işin ortasında değil, açılışta göster."""
+        try:
+            from core.health import startup_checks
+            checks = startup_checks()
+        except Exception as exc:
+            logger.debug("Açılış kontrolü atlandı: %s", exc)
+            return
+        api = next((item for item in checks if item[0] == "API"), None)
+        if api is not None:
+            self.set_api_status(bool(api[1]))
+        missing = [f"{name}: {note}" for name, ok, note in checks if not ok]
+        if missing:
+            self.set_status("Kontrol: " + " · ".join(missing))
+        else:
+            self.set_status("API, FFmpeg ve TTS hazır.")
 
     def set_active_project(self, name: str) -> None:
         """Aktif proje adini gunceller."""

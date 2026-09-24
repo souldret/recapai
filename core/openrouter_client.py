@@ -162,7 +162,21 @@ class OpenRouterClient:
 
     # ── Core Request ───────────────────────────────────────────────
 
+    def _io_guard(self):
+        """Paralel vision çağrıları aynı Session'ı paylaşmasın diye kilit."""
+        lock = getattr(self, "_io_lock", None)
+        if lock is None:
+            import threading
+            lock = threading.Lock()
+            self._io_lock = lock
+        return lock
+
     def _post(self, endpoint: str, payload: Dict) -> Dict:
+        """Retry logic ile POST isteği gönderir."""
+        with self._io_guard():
+            return self._post_body(endpoint, payload)
+
+    def _post_body(self, endpoint: str, payload: Dict) -> Dict:
         """Retry logic ile POST isteği gönderir."""
         base = self._current_base_url()
         url = f"{base}/{endpoint.lstrip('/')}"

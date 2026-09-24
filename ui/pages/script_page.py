@@ -176,6 +176,7 @@ class SegmentCard(QFrame):
         self.text_edit = FocusAwareTextEdit(self)
         self.text_edit.setUndoRedoEnabled(False)
         self.text_edit.setPlainText(self.segment.text)
+        self.text_edit.setPlaceholderText("Bu görsel sessiz — analizde hedef dilde cümle yok.")
         self.text_edit.setFixedHeight(110)
         self.text_edit.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
         self.text_edit.textChanged.connect(self._on_text_changed)
@@ -498,6 +499,13 @@ class ScriptPage(QWidget):
 
         root.addWidget(self._make_bottom_bar())
 
+    def _remember_script_language(self, _index: int = 0) -> None:
+        lang = self.lang_combo.currentData() or "en"
+        try:
+            self.ctx.settings_manager.set("defaults.script_language", lang)
+        except Exception:
+            logger.debug("Script dili kaydedilemedi.", exc_info=True)
+
     def _make_header(self) -> QWidget:
         w = QWidget()
         v = QVBoxLayout(w)
@@ -579,6 +587,15 @@ class ScriptPage(QWidget):
         self.lang_combo = QComboBox()
         for key, label in LANGUAGES:
             self.lang_combo.addItem(label, key)
+        saved_lang = "en"
+        try:
+            saved_lang = self.ctx.settings_manager.get("defaults.script_language", "en") or "en"
+        except Exception:
+            saved_lang = "en"
+        lang_idx = self.lang_combo.findData(saved_lang)
+        if lang_idx >= 0:
+            self.lang_combo.setCurrentIndex(lang_idx)
+        self.lang_combo.currentIndexChanged.connect(self._remember_script_language)
         self.lang_combo.setMinimumWidth(120)
         row2a.addWidget(self.lang_combo)
 
@@ -647,6 +664,15 @@ class ScriptPage(QWidget):
         vbox.addLayout(row2b)
 
         self.length_slider.valueChanged.connect(self._on_length_changed)
+        self.length_slider.valueChanged.connect(lambda _v: self._refresh_plan())
+        self.lang_combo.currentIndexChanged.connect(lambda _i: self._refresh_plan())
+        self.model_combo.currentIndexChanged.connect(lambda _i: self._refresh_plan())
+        self.chapter_combo.currentIndexChanged.connect(lambda _i: self._refresh_plan())
+        self.auto_duration_check.toggled.connect(lambda _c: self._refresh_plan())
+        self.minutes_spin.valueChanged.connect(lambda _v: self._refresh_plan())
+        self.ab_hook_check.toggled.connect(lambda _c: self._refresh_plan())
+        self.compile_check.toggled.connect(lambda _c: self._refresh_plan())
+        self._refresh_plan()
 
         # Satır 4: Aksiyonlar
         row2 = QHBoxLayout()
@@ -673,6 +699,11 @@ class ScriptPage(QWidget):
         row2.addWidget(btn_redo)
 
         row2.addStretch()
+
+        self.plan_lbl = QLabel("Önizleme: bölüm seçilince çağrı ve süre burada görünür.")
+        self.plan_lbl.setObjectName("pageSubtitle")
+        self.plan_lbl.setWordWrap(False)
+        row2.addWidget(self.plan_lbl)
 
         # Kaydet
         self.btn_save = QPushButton("  Kaydet")
@@ -762,6 +793,91 @@ class ScriptPage(QWidget):
     def _on_auto_duration_toggled(self, checked: bool) -> None:
         self.minutes_spin.setEnabled(not checked)
         self._refresh_auto_duration_hint()
+
+    def _refresh_plan(self) -> None:
+        """Üretmeden önce çağrı, beat, süre ve maliyet aralığını butonun yanında gösterir."""
+        label = getattr(self, "plan_lbl", None)
+        if label is None:
+            return
+        try:
+            from core.costing import estimate_script_plan
+
+            state = self.ctx.app_state
+            chapter = None
+            chapter_id = self.chapter_combo.currentData() if getattr(self, "chapter_combo", None) else None
+            if chapter_id and state.current_project:
+                chapter = state.current_project.get_chapter(chapter_id)
+            n = len(getattr(chapter, "images", None) or []) if chapter else 0
+            if getattr(self, "compile_check", None) and self.compile_check.isChecked() and state.current_project:
+                n = sum(
+                    len(getattr(ch, "images", None) or [])
+                    for ch in state.current_project.chapters
+                    if any(str(k).isdigit() for k in (getattr(ch, "analysis_data", None) or {}))
+                    and not (getattr(ch, "script_meta", None) or {}).get("compiled")
+                )
+            if n <= 0:
+                label.setText("Önizleme: bölüm seçilince çağrı ve süre burada görünür.")
+                return
+            length = LENGTHS[self.length_slider.value()]
+            language = self.lang_combo.currentData() or "en"
+            model = self.model_combo.currentData() or ""
+            target = None
+            if not self.auto_duration_check.isChecked():
+                target = float(self.minutes_spin.value())
+            outline = {}
+            if chapter is not None and not (
+                getattr(self, "compile_check", None) and self.compile_check.isChecked()
+            ):
+                stored = getattr(chapter, "script_meta", None) or {}
+                outline = stored.get("outline") if isinstance(stored, dict) else {}
+            beats = outline.get("beats") if isinstance(outline, dict) else None
+            expected_ids: List[int] = []
+            if chapter is not None and not (
+                getattr(self, "compile_check", None) and self.compile_check.isChecked()
+            ):
+                from core.beat_engine import cluster_beats
+                clustered = cluster_beats(
+                    chapter,
+                    target_minutes=target,
+                    include_last_time=False,
+                    length=length,
+                )
+                expected_ids = [int(b.beat_id) for b in clustered]
+            reusable = False
+            if isinstance(beats, list) and beats and expected_ids and len(beats) == len(expected_ids):
+                ids: List[int] = []
+                payloads_ok = True
+                for item in beats:
+                    if not isinstance(item, dict) or not str(item.get("payload") or "").strip():
+                        payloads_ok = False
+                        break
+                    try:
+                        ids.append(int(item.get("id", item.get("beat_id"))))
+                    except (TypeError, ValueError):
+                        payloads_ok = False
+                        break
+                reusable = payloads_ok and ids == expected_ids
+            plan = estimate_script_plan(
+                n,
+                length=length,
+                language=language,
+                model=str(model or ""),
+                target_minutes=target,
+                reuse_outline=reusable,
+                hook_variants=2 if self.ab_hook_check.isChecked() else 1,
+            )
+            if expected_ids:
+                plan["beats"] = len(expected_ids)
+            minutes = plan.get("minutes")
+            minute_txt = f"~{float(minutes):.1f} dk" if minutes else "sıkı kısa"
+            reuse_txt = " · kayıtlı iskelet" if plan.get("reuse_outline") else ""
+            label.setText(
+                f"Önizleme: {plan['calls']} çağrı · {plan['beats']} beat · {minute_txt}"
+                f" · ${plan['usd_low']:.3f}–${plan['usd_high']:.3f}{reuse_txt}"
+            )
+        except Exception:
+            logger.debug("Üretim önizlemesi hesaplanamadı.", exc_info=True)
+            label.setText("")
 
     def _refresh_auto_duration_hint(self) -> None:
         if not getattr(self, "auto_duration_check", None):
@@ -1054,6 +1170,7 @@ class ScriptPage(QWidget):
             compile_chapters = [
                 ch for ch in state.current_project.chapters
                 if any(str(k).isdigit() for k in (ch.analysis_data or {}))
+                and not (getattr(ch, "script_meta", None) or {}).get("compiled")
             ]
             if not compile_chapters:
                 QMessageBox.warning(self, "Derleme", "Analizli bölüm yok.")
@@ -1090,7 +1207,6 @@ class ScriptPage(QWidget):
         self._worker.cancelled.connect(self._on_generation_cancelled)
         self._worker.error.connect(self._on_generation_error)
 
-        self._clear_cards()
         self.btn_generate.setEnabled(False)
         self.btn_stop.setEnabled(True)
         extra = []
@@ -1140,7 +1256,9 @@ class ScriptPage(QWidget):
         self._autosave_timer.stop()
         self.btn_generate.setEnabled(True)
         self.btn_stop.setEnabled(False)
-        self.lbl_stream.setText(f"<span style='color:#22c55e;'><b>BAŞARILI:</b> {len(segments)} segment üretildi.</span>")
+        self.lbl_stream.setText(
+            f"<span style='color:#6366f1;'><b>ÜRETİLİYOR:</b> {len(segments)} segment kaydediliyor.</span>"
+        )
 
         state = self.ctx.app_state
         chapter_id = self.chapter_combo.currentData()
@@ -1148,11 +1266,52 @@ class ScriptPage(QWidget):
         if not chapter:
             return
 
-        chapter.segments = segments
+        compiled = bool(getattr(self._worker, "_compile_chapters", None))
+        if compiled:
+            chapter = self._store_compiled_script(state.current_project, segments)
+        else:
+            chapter.segments = segments
         self._load_segments(chapter)
         self._refresh_hook_variants(chapter)
         self._save_project()
-        self.ctx.app_state.status_message.emit(f"Script hazır: {len(segments)} segment")
+        silent = sum(1 for s in segments if not (getattr(s, "text", "") or "").strip())
+        note = f" · {silent} görsel sessiz" if silent else ""
+        self.lbl_stream.setText(
+            f"<span style='color:#22c55e;'><b>BAŞARILI:</b> {len(segments)} segment{note}.</span>"
+        )
+        self.ctx.app_state.status_message.emit(f"Script hazır: {len(segments)} segment{note}")
+
+    def _store_compiled_script(self, project, segments: list):
+        """Derlemeyi kaynak bölümlerin üzerine yazmadan ayrı bir bölümde saklar."""
+        from core.models import Chapter, ImageData
+        import uuid
+
+        COMPILED_NAME = "Derleme"
+        images = []
+        for seg in segments:
+            path = getattr(seg, "image_path", None) or ""
+            images.append(ImageData(
+                path=path,
+                filename=Path(path).name if path else f"panel-{len(images) + 1}",
+                order=len(images),
+            ))
+            seg.image_index = len(images) - 1
+        existing = next((c for c in project.chapters if c.name == COMPILED_NAME), None)
+        if existing is None:
+            existing = Chapter(id=uuid.uuid4().hex[:8], name=COMPILED_NAME)
+            project.chapters.append(existing)
+            self.chapter_combo.addItem(Icons.get(Icons.BOOK), existing.name, existing.id)
+        existing.images = images
+        existing.segments = list(segments)
+        existing.analysis_data = {}
+        existing.script_meta = {"compiled": True}
+        idx = self.chapter_combo.findData(existing.id)
+        if idx >= 0 and self.chapter_combo.currentIndex() != idx:
+            self.chapter_combo.blockSignals(True)
+            self.chapter_combo.setCurrentIndex(idx)
+            self.chapter_combo.blockSignals(False)
+        self.ctx.app_state.current_chapter = existing
+        return existing
 
     def _on_generation_cancelled(self) -> None:
         self._autosave_timer.stop()
@@ -1171,6 +1330,9 @@ class ScriptPage(QWidget):
         self.lbl_stream.setText(f"<span style='color:#ef4444;'><b>HATA:</b> {msg[:80]}</span>")
         QMessageBox.critical(self, "Script Üretim Hatası", msg)
         self._autosave_timer.stop()
+        chapter = self.ctx.app_state.current_chapter
+        if chapter and chapter.segments and not self._cards:
+            self._load_segments(chapter)
 
     # ── Card Actions ───────────────────────────────────────────────
 

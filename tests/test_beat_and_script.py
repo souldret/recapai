@@ -138,6 +138,13 @@ class TestBeatCluster:
         assert not _wrong_language("The surveyor checks the gate and they attack.", "en")
         assert not _wrong_language("He makes a remark and they attack.", "en")
 
+    def test_turkish_target_keeps_latin_turkish(self):
+        from core.script_generator import _wrong_language
+        assert not _wrong_language("Jin kapıyı açar ve içeri girer.", "tr")
+        assert not _wrong_language("Avcı kapıdan geçer.", "tr")
+        assert _wrong_language("The hunter opens the gate and they attack.", "tr")
+        assert not _wrong_language("Jin-Woo kapıyı açar.", "tr", ["Jin-Woo"])
+
     def test_short_budget_is_tight(self):
         from core.beat_engine import _word_budget
         short = _word_budget("beat", 4, None, 10, length="short")
@@ -237,8 +244,8 @@ class TestDurationAndLanguageLock:
             StoryBeat(1, [1, 2], "beat", word_budget=52),
         ]
         note = _duration_note("medium", 0.0, "en", chunk, 10)
-        assert "each IMAGE" in note
-        assert "COMPLETE" in note
+        assert "STORY" in note
+        assert "Third person" in note
         assert "30-second" in note
         short = _duration_note("short", 0.0, "en", chunk, 10)
         assert "1–2 sentences" in short or "1-2 sentences" in short or "story beat" in short
@@ -409,6 +416,33 @@ class TestDistribute:
         assert all((s.text or "").strip() for s in by_role["rehook"])
         assert all((s.text or "").strip() for s in story)
 
+    def test_clip_keeps_complete_sentences_under_budget(self):
+        from core.script_generator import _clip_to_budget
+        text = (
+            "Sunho's heart pounds as his face turns bright red. "
+            "This isn't just embarrassment anymore."
+        )
+        clipped = _clip_to_budget(text, 8)
+        assert clipped.endswith(".")
+        assert "pounds" in clipped
+        assert "embarrassment" not in clipped
+        assert clipped == "Sunho's heart pounds as his face turns bright red."
+
+    def test_short_spreads_sentences_across_panels(self):
+        from core.beat_engine import StoryBeat
+        vo = "He opens the gate. She follows him inside."
+        ch = _chapter(2, {str(i): {"action": "He opens the gate."} for i in range(2)})
+        gen = ScriptGenerator.__new__(ScriptGenerator)
+        segs = gen._materialize_segments(
+            ch, [StoryBeat(0, [0, 1], "setup", word_budget=20)],
+            {0: vo}, {}, "en", 0, use_hook=False, length="short",
+        )
+        story = [s for s in segs if (s.role or "") != "cold_open"]
+        spoken = [s.text.strip() for s in story if (s.text or "").strip()]
+        assert len(spoken) == 2
+        assert spoken[0].startswith("He opens")
+        assert "follows" in spoken[1]
+
     def test_split_sentences_keeps_ms_title(self):
         parts = _split_sentences("Ms. Haeseon cuts him off sharply. He stares.")
         assert parts == [
@@ -514,9 +548,9 @@ class TestDistribute:
         assert "pressure shifts" not in blob.lower()
         assert "this beat" not in blob.lower()
 
-    def test_medium_never_leaves_silent_hold_on_story_panels(self):
+    def test_wrong_language_analysis_stays_silent_instead_of_invented_vo(self):
         from core.beat_engine import StoryBeat
-        from core.script_generator import _fill_empty_story_panels
+        from core.script_generator import SILENT_HOLD_SEC, _fill_empty_story_panels
         dump = "Bu sahne hikayenin aksiyon seviyesini yükseltir."
         analyses = {
             str(i): {
@@ -541,16 +575,23 @@ class TestDistribute:
         segs = _fill_empty_story_panels(segs, ch, "en", "medium")
         story = [s for s in segs if (s.role or "") not in ("cold_open", "last_time")]
         assert len(story) == 6
-        assert all((s.text or "").strip() for s in story)
+        spoken = [s for s in story if (s.text or "").strip()]
+        silent = [s for s in story if not (s.text or "").strip()]
+        assert spoken
+        assert silent
         blob = " ".join(s.text or "" for s in story)
         assert "hikaye" not in blob.lower()
         assert "pressure shifts" not in blob.lower()
         assert "this beat" not in blob.lower()
+        assert "still in it" not in blob.lower()
+        assert "doesn't look away" not in blob.lower()
         from core.script_generator import ScriptGenerator as SG
-        for s in story:
+        for s in spoken:
             expected = SG.estimate_duration(s.text, "en")
             assert abs((s.duration or 0) - expected) < 0.05
             assert (s.duration or 0) < 12.0
+        for s in silent:
+            assert abs((s.duration or 0) - SILENT_HOLD_SEC) < 0.05
 
     def test_duration_is_tts_words_not_padded_floor(self):
         from core.script_generator import ScriptGenerator as SG
@@ -563,7 +604,7 @@ class TestDistribute:
         assert longish > six
         assert abs(longish - (len(spoken.split()) / 160.0) * 60) < 0.05
 
-    def test_medium_54_panels_named_fill_not_meta_filler(self):
+    def test_medium_54_panels_stay_silent_without_invented_fill(self):
         from core.beat_engine import StoryBeat
         n = 54
         analyses = {
@@ -600,15 +641,22 @@ class TestDistribute:
         assert "this beat" not in blob
         assert "hikaye" not in blob
         empty = [s for s in story if not (s.text or "").strip()]
-        assert not empty
-        for s in story:
+        spoken = [s for s in story if (s.text or "").strip()]
+        assert spoken
+        assert empty
+        blob = " ".join((s.text or "") for s in spoken).lower()
+        assert "still in it" not in blob
+        assert "doesn't look away" not in blob
+        from core.script_generator import SILENT_HOLD_SEC
+        for s in spoken:
             expected = ScriptGenerator.estimate_duration(s.text, "en")
             assert abs((s.duration or 0) - expected) < 0.05
             assert (s.duration or 0) != 3.8
-            assert (s.duration or 0) != 0.75
             words = len((s.text or "").split())
             if words <= 8:
                 assert (s.duration or 0) < 3.2
+        for s in empty:
+            assert abs((s.duration or 0) - SILENT_HOLD_SEC) < 0.05
 
     def test_does_not_repeat_last_line_or_mood_dump(self):
         from core.beat_engine import StoryBeat
@@ -704,6 +752,33 @@ class TestParseVoiceover:
         assert aligned[0] == "Bir"
         assert aligned[1] == "İki"
         assert aligned[-1] == "Hook"
+
+    def test_retry_does_not_wipe_filled_beats(self):
+        from core.script_generator import _merge_vo
+        first = {0: "He opens the gate and the guards freeze.", 1: "She blocks the blow."}
+        retry = {0: "", 1: "She blocks the blow before it lands on him."}
+        merged = _merge_vo(first, retry, "en")
+        assert "opens the gate" in merged[0]
+        assert "before it lands" in merged[1]
+
+    def test_retry_does_not_replace_english_with_turkish(self):
+        from core.script_generator import _merge_vo
+        first = {0: "He opens the gate and the guards freeze."}
+        retry = {0: "Kapıyı açar ve hikaye aksiyon seviyesini yükseltir burada."}
+        merged = _merge_vo(first, retry, "en")
+        assert "opens the gate" in merged[0]
+        assert "hikaye" not in merged[0].lower()
+
+    def test_voiceover_accepts_payload_and_voiceover_keys(self):
+        raw = '{"beats":[{"id":0,"voiceover":"He opens the gate."},{"id":1,"payload":"She blocks the blow."}]}'
+        parsed = _parse_beats_voiceover(raw)
+        assert "opens the gate" in parsed[0]
+        assert "blocks the blow" in parsed[1]
+
+    def test_spoken_comma_clause_is_not_mood_dump(self):
+        from core.script_generator import _is_atmosphere_dump
+        assert not _is_atmosphere_dump("He opens the gate, then he freezes.")
+        assert _is_atmosphere_dump("Gergin, heybetli, tehditkar")
 
 
 class TestLinter:

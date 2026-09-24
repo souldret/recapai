@@ -225,6 +225,7 @@ class SettingsManager(QObject):
             },
             "analysis": {
                 "rate_limit_delay": 1.0,
+                "parallel_workers": 2,
                 "skip_low_score_fillers": True,
                 "filler_score_threshold": 0.28,
             },
@@ -236,6 +237,7 @@ class SettingsManager(QObject):
             "defaults": {
                 "vision_model": "google/gemini-2.5-flash",
                 "script_model": "google/gemini-2.5-flash",
+                "script_language": "en",
                 "tts_engine": "edge-tts",
                 "tts_voice": "tr-TR-AhmetNeural",
             },

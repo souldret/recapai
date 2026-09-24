@@ -6,6 +6,7 @@ import json
 import logging
 import re
 import time
+from concurrent.futures import CancelledError, ThreadPoolExecutor, as_completed
 from typing import Any, Callable, Dict, List, Optional
 
 from core.models import Chapter
@@ -109,6 +110,52 @@ def _parse_json_response(text: str) -> Dict:
 
     logger.warning("JSON ayrıştırılamadı, ham metin döndürülüyor.")
     return {"raw_text": text, "parse_error": True}
+
+
+def _persist_analysis(project, chapter) -> None:
+    """Analiz bellekte birikmesin; her kareden sonra proje dosyasına yaz."""
+    if project is None:
+        return
+    try:
+        from core.character_bible import extract_records_from_chapter, upsert_characters
+        upsert_characters(
+            project,
+            extract_records_from_chapter(chapter, project),
+            getattr(chapter, "id", ""),
+        )
+    except Exception as exc:
+        logger.warning("Karakter bible güncellenemedi: %s", exc)
+    try:
+        from core.project_manager import persist_project
+        persist_project(project)
+    except Exception as exc:
+        logger.warning("Analiz ara kaydı yazılamadı: %s", exc)
+
+
+def _fatal_analysis_error(exc: BaseException) -> bool:
+    """Anahtar, model veya vision hatası tüm bölümü durdurur."""
+    if not isinstance(exc, OpenRouterError):
+        return False
+    status = int(getattr(exc, "status_code", 0) or 0)
+    if status in (401, 404):
+        return True
+    msg = str(exc).lower()
+    return any(hint in msg for hint in (
+        "does not support image",
+        "image input",
+        "cannot read",
+        "bulunamadı",
+        "no endpoints",
+        "not found",
+    ))
+
+
+def _analysis_workers(settings) -> int:
+    try:
+        workers = int(settings.get("analysis.parallel_workers", 2) or 2)
+    except (TypeError, ValueError):
+        workers = 2
+    return max(1, min(3, workers))
 
 
 def _is_usable_analysis(data: Any) -> bool:
@@ -258,68 +305,97 @@ class AIAnalyzer:
         # analysis_data'daki tüm key'leri string'e normalize et (integer key uyumsuzluğunu önler)
         results: Dict[str, Any] = {str(k): v for k, v in chapter.analysis_data.items()}
         total = len(chapter.images)
+        known = _known_roster_lines(project=project)
+        pending: List[int] = []
+        done = 0
 
         for i, image_data in enumerate(chapter.images):
             if stop_flag and stop_flag():
                 logger.info("Analiz kullanıcı tarafından durduruldu.")
-                break
-
-            # Önbellekte varsa yeniden sanitize et (eski kirli etiketler düşsün)
+                return results
             cache_key = str(i)
             if cache_key in results and _is_usable_analysis(results[cache_key]):
-                known = _known_roster_lines(project=project)
                 cleaned = _sanitize_analysis_characters(
                     dict(results[cache_key]), known_names=known, project=project,
                 )
                 results[cache_key] = cleaned
                 chapter.analysis_data[cache_key] = cleaned
-                if project is not None:
-                    from core.character_bible import extract_records_from_chapter, upsert_characters
-                    upsert_characters(
-                        project,
-                        extract_records_from_chapter(chapter, project),
-                        getattr(chapter, "id", ""),
-                    )
-                msg = f"{i + 1}/{total} önbellekten yüklendi: {image_data.filename}"
+                done += 1
+                msg = f"{done}/{total} önbellekten yüklendi: {image_data.filename}"
                 logger.debug(msg)
                 if progress_callback:
-                    progress_callback(i + 1, total, msg)
-                continue
+                    progress_callback(done, total, msg)
+            else:
+                pending.append(i)
 
-            use_model = self._model_for_index(i, total, model)
-            label = "" if use_model == model else f" (ekonomi: {use_model})"
-            msg = f"{i + 1}/{total} analiz ediliyor: {image_data.filename}{label}"
-            logger.info(msg)
-            if progress_callback:
-                progress_callback(i + 1, total, msg)
+        if done:
+            _persist_analysis(project, chapter)
+        if not pending:
+            return results
 
-            known = _known_roster_lines(project=project)
+        workers = _analysis_workers(self._settings)
+        delay = self._settings.get("analysis.rate_limit_delay", RATE_LIMIT_DELAY)
+        try:
+            delay = max(0.0, float(delay))
+        except (TypeError, ValueError):
+            delay = RATE_LIMIT_DELAY
+
+        def _one(index: int) -> tuple:
+            if stop_flag and stop_flag():
+                return index, None
+            image_data = chapter.images[index]
+            use_model = self._model_for_index(index, total, model)
             result = self.analyze_image(
                 image_data.path, use_model, known_names=known, project=project,
             )
-            results[cache_key] = result
-
-            # chapter.analysis_data'ya hemen kaydet
-            chapter.analysis_data[cache_key] = result
-            if project is not None:
-                from core.character_bible import extract_records_from_chapter, upsert_characters
-                upsert_characters(
-                    project,
-                    extract_records_from_chapter(chapter, project),
-                    getattr(chapter, "id", ""),
-                )
-
-            # Rate limit: istekler arası bekleme
-            delay = self._settings.get("analysis.rate_limit_delay", RATE_LIMIT_DELAY)
-            try:
-                delay = float(delay)
-                if delay < 0:
-                    delay = 0.0
-            except (TypeError, ValueError):
-                delay = RATE_LIMIT_DELAY
-            if i < total - 1 and not (stop_flag and stop_flag()):
+            if delay and not (stop_flag and stop_flag()):
                 time.sleep(delay)
+            return index, result
 
+        fatal: Optional[BaseException] = None
+        stopped = False
+        with ThreadPoolExecutor(max_workers=min(workers, len(pending))) as pool:
+            futures = [pool.submit(_one, i) for i in pending]
+            for fut in as_completed(futures):
+                if stop_flag and stop_flag():
+                    stopped = True
+                    for other in futures:
+                        other.cancel()
+                    logger.info("Analiz kullanıcı tarafından durduruldu.")
+                try:
+                    index, result = fut.result()
+                except CancelledError:
+                    continue
+                except Exception as exc:
+                    if _fatal_analysis_error(exc):
+                        fatal = exc
+                        for other in futures:
+                            other.cancel()
+                        logger.error("Analiz durdu: %s", exc)
+                    else:
+                        logger.error("Görsel analiz görevi düştü: %s", exc)
+                    continue
+                if result is None:
+                    continue
+                cache_key = str(index)
+                results[cache_key] = result
+                chapter.analysis_data[cache_key] = result
+                _persist_analysis(project, chapter)
+                done += 1
+                label = ""
+                used = str(result.get("_model") or "")
+                if used and used != model:
+                    label = f" (ekonomi: {used})"
+                image_data = chapter.images[index]
+                msg = f"{done}/{total} analiz edildi: {image_data.filename}{label}"
+                logger.info(msg)
+                if progress_callback:
+                    progress_callback(done, total, msg)
+
+        if fatal is not None:
+            raise fatal
+        if stopped:
+            logger.info("Analiz durduruldu; tamamlanan kareler kaydedildi.")
         return results
 
     def _model_for_index(self, index: int, total: int, primary: str) -> str:

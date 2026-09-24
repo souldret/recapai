@@ -42,6 +42,48 @@ def estimate_script_usd(model: str, n_beats: int = 10) -> Dict[str, Any]:
     }
 
 
+def estimate_script_plan(
+    n_images: int,
+    *,
+    length: str = "medium",
+    language: str = "en",
+    model: str = "",
+    target_minutes: Optional[float] = None,
+    reuse_outline: bool = False,
+    hook_variants: int = 1,
+) -> Dict[str, Any]:
+    """Üretimden önce çağrı sayısı, süre ve maliyet aralığı."""
+    from core.beat_engine import MAX_STORY_BEATS
+    from core.script_generator import BEAT_CHUNK_SIZE, resolve_target_minutes
+
+    images = max(0, int(n_images or 0))
+    key = (length or "medium").lower()
+    cap = int(MAX_STORY_BEATS.get(key, MAX_STORY_BEATS["medium"]))
+    beats = min(cap, max(1, images)) if images else 0
+    minutes = resolve_target_minutes(key, target_minutes, n_images=images or None, language=language)
+    chunks = max(1, (beats + BEAT_CHUNK_SIZE - 1) // BEAT_CHUNK_SIZE) if beats else 0
+    calls = (0 if reuse_outline else 1) + chunks
+    if int(hook_variants or 1) > 1:
+        calls += 1
+    cost = estimate_script_usd(model or "google/gemini-2.5-flash", beats or 4)
+    if reuse_outline:
+        cost = {
+            **cost,
+            "usd_low": round(float(cost["usd_low"]) * 0.55, 4),
+            "usd_high": round(float(cost["usd_high"]) * 0.55, 4),
+            "usd": round(float(cost["usd"]) * 0.55, 4),
+        }
+    return {
+        "images": images,
+        "beats": beats,
+        "calls": calls,
+        "minutes": minutes,
+        "reuse_outline": bool(reuse_outline),
+        "usd_low": cost["usd_low"],
+        "usd_high": cost["usd_high"],
+    }
+
+
 def estimate_chapter_cost(
     chapter,
     vision_model: str,

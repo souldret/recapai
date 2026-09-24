@@ -29,6 +29,87 @@ def _is_error_issue(msg: str) -> bool:
     return any(h in low for h in _ERROR_HINTS)
 
 
+def _apply_rewrite(generator, chapter, seg: SegmentData, text: str, language: str, index: int) -> None:
+    from core.script_generator import (
+        ScriptGenerator,
+        _clip_to_budget,
+        _is_meta_filler,
+        _scrub_generic_labels,
+        _wrong_language,
+    )
+    from core.script_linter import lint_text
+    from core.beat_engine import panel_word_cap
+
+    cleaned = (text or "").strip().strip('"').strip("`")
+    if cleaned.lower().startswith("text:"):
+        cleaned = cleaned[5:].strip().strip('"')
+    cleaned = _scrub_generic_labels(cleaned, language, project=None)
+    role = getattr(seg, "role", "") or "beat"
+    cleaned = _clip_to_budget(cleaned, panel_word_cap("medium", role))
+    if len(cleaned) < 5 or _wrong_language(cleaned, language) or _is_meta_filler(cleaned):
+        raise ValueError("Toplu düzeltme kullanılamadı.")
+    seg.text = cleaned
+    seg.duration = ScriptGenerator.estimate_duration(cleaned, language)
+    image_idx = int(getattr(seg, "image_index", 0) or 0)
+    if not seg.image_path and chapter is not None:
+        images = getattr(chapter, "images", None) or []
+        if 0 <= image_idx < len(images):
+            seg.image_path = getattr(images[image_idx], "path", None)
+    n = len(getattr(chapter, "segments", None) or [])
+    seg.lint_issues = lint_text(cleaned, role=role, is_first=index == 0, is_last=index == n - 1)
+
+
+def _rewrite_batch(generator, chapter, indices: List[int], *, model: str, language: str) -> bool:
+    """Hatalı satırları tek JSON isteğinde düzeltir. Başarısızsa False döner."""
+    from core.script_generator import _extract_json_obj
+
+    chat = getattr(generator, "_chat", None)
+    if not callable(chat) or not indices:
+        return False
+    lines = []
+    for idx in indices:
+        seg = chapter.segments[idx]
+        issues = " | ".join(getattr(seg, "lint_issues", None) or [])
+        lines.append(
+            f'{idx}. role={getattr(seg, "role", "") or "beat"} issues={issues}\n'
+            f'   text: {(seg.text or "").strip()}'
+        )
+    en = (language or "").lower().startswith("en")
+    prompt = (
+        "Rewrite ONLY the numbered lines as third-person story, like reading a book aloud.\n"
+        "Keep the same story facts. Do not add new events.\n"
+        "Do not describe the picture, hair, clothes, or the room.\n"
+        "No generic labels (protagonist, main character, yellow hair).\n"
+        "No panel captions (we see, this panel, bu panelde, on screen).\n"
+        "No filler (on this beat, pressure shifts).\n"
+        + ("Write English only.\n" if en else "Yalnızca Türkçe yaz.\n")
+        + "Return JSON only: {\"lines\":[{\"index\":0,\"text\":\"...\"}]}\n\n"
+        + "\n".join(lines)
+    )
+    raw = chat(model, prompt, temperature=0.4, max_tokens=900, language=language, retries=0)
+    data = _extract_json_obj(raw) or {}
+    rows = data.get("lines") or data.get("rewrites") or []
+    if not isinstance(rows, list):
+        return False
+    applied = 0
+    by_index = {int(i) for i in indices}
+    for row in rows:
+        if not isinstance(row, dict):
+            continue
+        try:
+            idx = int(row.get("index"))
+        except (TypeError, ValueError):
+            continue
+        if idx not in by_index:
+            continue
+        try:
+            _apply_rewrite(generator, chapter, chapter.segments[idx], str(row.get("text") or ""), language, idx)
+            applied += 1
+        except Exception as exc:
+            logger.warning("Toplu lint satırı atlandı [%s]: %s", idx, exc)
+    return applied > 0
+
+
 def cold_open_text(segments: List[SegmentData]) -> str:
     for seg in segments or []:
         if (getattr(seg, "role", "") or "") == "cold_open" and (seg.text or "").strip():
@@ -125,18 +206,27 @@ def polish_segments(
                     stream_callback(f"\n[Lint: {total} uyarı, otomatik düzeltme gerekmedi]\n")
                 break
             if stream_callback:
-                stream_callback(f"\n[Lint tur {round_i + 1}: {len(error_idx)} beat yeniden yazılıyor]\n")
-            for idx in error_idx:
-                if stop_flag and stop_flag():
-                    break
-                try:
-                    generator.regenerate_segment(
-                        chapter, idx, model,
-                        style=style, language=language, length=length,
-                        niche=niche, project=project,
-                    )
-                except Exception as exc:
-                    logger.warning("Lint rewrite atlandı [%d]: %s", idx, exc)
+                stream_callback(f"\n[Lint tur {round_i + 1}: {len(error_idx)} beat tek istekte düzeltiliyor]\n")
+            batched = False
+            try:
+                batched = _rewrite_batch(
+                    generator, chapter, error_idx, model=model, language=language,
+                )
+            except Exception as exc:
+                logger.warning("Toplu lint düzeltmesi düştü, satır satır denenecek: %s", exc)
+                batched = False
+            if not batched:
+                for idx in error_idx:
+                    if stop_flag and stop_flag():
+                        break
+                    try:
+                        generator.regenerate_segment(
+                            chapter, idx, model,
+                            style=style, language=language, length=length,
+                            niche=niche, project=project,
+                        )
+                    except Exception as exc:
+                        logger.warning("Lint rewrite atlandı [%d]: %s", idx, exc)
             working = list(chapter.segments or working)
             lint_segments(working)
             if issue_count(working) >= total:

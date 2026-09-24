@@ -182,10 +182,34 @@ class PipelineConfigDialog(QDialog):
             pending = ", ".join(stages) if stages else "render"
             self.cost_lbl.setText(
                 f"Calisacak: {pending}\n"
-                f"Tahmini maliyet: ${est['usd_low']:.3f} – ${est['usd_high']:.3f} USD"
+                f"Tahmini maliyet: ${est['usd_low']:.3f} – ${est['usd_high']:.3f} USD\n"
+                f"Yaklaşık süre: {self._script_minutes_note(chapter, skip_s)}"
             )
         except Exception as exc:
             self.cost_lbl.setText(f"Maliyet tahmini yok: {exc}")
+
+    @staticmethod
+    def _script_minutes_note(chapter, skip_script: bool) -> str:
+        if skip_script:
+            return "script atlanacak"
+        try:
+            from core.costing import estimate_script_plan
+            from core.settings_manager import SettingsManager
+            model = SettingsManager.instance().get(
+                "defaults.script_model", "google/gemini-2.5-flash",
+            )
+            images = len(getattr(chapter, "images", None) or [])
+            stored = (getattr(chapter, "script_meta", None) or {}).get("outline") or {}
+            plan = estimate_script_plan(
+                images,
+                model=model,
+                reuse_outline=bool(stored.get("beats")),
+            )
+            minutes = plan.get("minutes")
+            minute_txt = f"~{minutes:.1f} dk" if minutes else "kısa"
+            return f"{minute_txt} · {plan['calls']} çağrı"
+        except Exception:
+            return "süre otomatik"
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -723,7 +747,7 @@ class HomePage(QWidget):
             render_settings=render_settings, render_output=render_output,
             api_key=api_key, vision_model=vision_model, script_model=script_model,
             script_style="fresh", script_length="medium",
-            script_language=app.get_setting("app", "language", default="tr") or "tr",
+            script_language=app.get_setting("defaults", "script_language", default="en") or "en",
             tts_engine=tts_engine, tts_voice=tts_voice, audio_dir=audio_dir,
             parent=self,
             skip_analysis=skip_analysis,

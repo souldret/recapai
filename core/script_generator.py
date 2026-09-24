@@ -577,7 +577,20 @@ def _strip_known_names(text: str, names: Optional[List[str]] = None) -> str:
     return out
 
 
+_EN_FUNCTION_RE = re.compile(
+    r"\b(?:the|and|with|from|that|this|they|their|them|his|her|"
+    r"she|he|was|were|have|has|had|into|onto|through|while|after|"
+    r"before|because|opens|walks|screams|hits|says|said)\b",
+    re.IGNORECASE,
+)
+
+
 def _wrong_language(text: str, language: str, known_names: Optional[List[str]] = None) -> bool:
+    """Hedef dilin dışına çıkan metin mi?
+
+    Türkçe hedefte yalnızca açık İngilizce yapı silinir. Latin harfli Türkçe
+    (Jin kapıyı açar) yanlış dil sayılmaz.
+    """
     lang = (language or "tr").lower()
     raw = _strip_known_names((text or "").strip(), known_names)
     if not raw.strip():
@@ -587,8 +600,7 @@ def _wrong_language(text: str, language: str, known_names: Optional[List[str]] =
     if lang.startswith("tr"):
         if _looks_turkish(raw):
             return False
-        letters = re.findall(r"[A-Za-z]+", raw)
-        return len(letters) >= 4
+        return len(_EN_FUNCTION_RE.findall(raw)) >= 2
     return False
 
 
@@ -723,18 +735,22 @@ def _duration_note(length: str, target_minutes: float, language: str, chunk, tot
     )
     if en:
         return (
-            f"PACE: each IMAGE gets spoken VO, ~12–{per} words (about 5–10 seconds of TTS). "
-            "Write 1–2 COMPLETE sentences per IMAGE in the beat JSON text so we can split them. "
+            f"PACE: write the STORY, not the picture. Third person, like reading a book aloud. "
+            f"2–4 flowing sentences for the whole beat, about 12–{per} words each. "
+            "Do not describe hair, clothes, rooms, or what is on screen. "
+            "Tell what happens, why, and what it costs. "
             "Never write filler like 'the pressure shifts on this beat'. Never one-word crumbs. "
-            f"Beat budget is for ALL panels in that beat. This chunk: {budgets}. "
-            "HARD RULE: a 1-panel beat is 1–2 spoken sentences, never a 30-second paragraph. "
+            f"Beat budget covers every panel in that beat. This chunk: {budgets}. "
+            "HARD RULE: a 1-panel beat is still story, never a 30-second paragraph and never a caption. "
             "Do not pad to fill minutes. Empty JSON text is forbidden. Invent nothing."
         )
     return (
-        f"TEMPO: her GÖRSEL 1–2 TAM cümle, en fazla ~{per} kelime (~10 saniye). "
+        f"TEMPO: hikâyeyi anlat, kareyi değil. Üçüncü şahıs, birine kitap okur gibi. "
+        f"Beat başına 2–4 akıcı cümle, cümle en fazla ~{per} kelime. "
+        f"Saç, kıyafet, oda, ekranda görüneni tarif etme. Olanı, nedenini ve bedelini anlat. "
         f"Cümleyi görseller arasında KESME. Tek kelimelik satır YASAK (Ms. / as.). "
         f"Beat bütçesi o beat'in TÜM panelleri içindir. Bu chunk: {budgets}. "
-        "ZORUNLU: 1 panellik beat = 1–2 cümle, 30 saniyelik paragraf YASAK. "
+        "ZORUNLU: 1 panellik beat de hikâye, 30 saniyelik paragraf ve kare tarifi YASAK. "
         "Dakikayı doldurmak için şişirme. Boş text YASAK. Uydurma yok."
     )
 
@@ -1008,24 +1024,71 @@ def _parse_segments(text: str) -> List[dict]:
     return []
 
 
+def _vo_body(item: dict) -> str:
+    """Beat metnini olası alan adlarından alır. Boş string dolu metni ezmez."""
+    for key in ("text", "payload", "voiceover", "vo", "line", "script"):
+        body = item.get(key)
+        if isinstance(body, str) and body.strip():
+            return body.strip()
+    return ""
+
+
 def _parse_beats_voiceover(text: str) -> Dict[int, str]:
     data = _extract_json_obj(text) or {}
     out: Dict[int, str] = {}
-    items = data.get("beats") or data.get("segments") or []
+    items = data.get("beats") or data.get("segments") or data.get("voiceover") or []
+    if isinstance(items, dict):
+        items = [{"id": key, "text": value} for key, value in items.items()]
     if isinstance(items, list):
         for item in items:
             if not isinstance(item, dict):
                 continue
             raw_id = item.get("id", item.get("beat_id", item.get("image_index")))
-            body = (item.get("text") or item.get("payload") or "").strip()
+            body = _vo_body(item)
             beat_id = _safe_int(raw_id)
             if beat_id is None or not body:
                 continue
             out[beat_id] = body
-    hook = (data.get("hook") or "").strip()
+    if not out:
+        for match in re.finditer(
+            r'"id"\s*:\s*"?(-?\d+)"?[\s\S]{0,240}?"(?:text|payload|voiceover)"\s*:\s*"((?:\\.|[^"\\])*)"',
+            text or "",
+        ):
+            body = match.group(2).replace('\\"', '"').replace("\\n", " ").strip()
+            if body:
+                out[int(match.group(1))] = body
+    hook = (data.get("hook") or "").strip() if isinstance(data, dict) else ""
     if hook:
         out[-1] = hook
     return out
+
+
+def _merge_vo(
+    base: Dict[int, str],
+    incoming: Dict[int, str],
+    language: str = "",
+    known_names: Optional[List[str]] = None,
+) -> Dict[int, str]:
+    """İkinci yanıt yalnızca eksik veya yanlış dildeki beat'i doldurur.
+
+    Dolu ve doğru dildeki metni boş, kısa veya yanlış dille ezmez.
+    """
+    merged = dict(base or {})
+    for bid, text in (incoming or {}).items():
+        body = (text or "").strip()
+        if not body:
+            continue
+        if language and (
+            _wrong_language(body, language, known_names) or _is_atmosphere_dump(body)
+        ):
+            continue
+        current = (merged.get(bid) or "").strip()
+        current_bad = bool(current) and bool(language) and (
+            _wrong_language(current, language, known_names) or _is_atmosphere_dump(current)
+        )
+        if not current or current_bad or len(body.split()) > len(current.split()):
+            merged[bid] = body
+    return merged
 
 
 def _align_vo_to_beats(parsed: Dict[int, str], beat_ids: List[int]) -> Dict[int, str]:
@@ -1040,15 +1103,19 @@ def _align_vo_to_beats(parsed: Dict[int, str], beat_ids: List[int]) -> Dict[int,
         if hook:
             aligned[-1] = hook
         return aligned
-    values = [parsed[k] for k in sorted(k for k in parsed if k >= 0) if (parsed.get(k) or "").strip()]
+    claimed = {bid for bid in beat_ids if (parsed.get(bid) or "").strip()}
+    leftover = [
+        parsed[k] for k in sorted(k for k in parsed if k >= 0 and k not in claimed)
+        if (parsed.get(k) or "").strip()
+    ]
     aligned: Dict[int, str] = {}
     used = 0
     for bid in beat_ids:
         text = (parsed.get(bid) or "").strip()
         if text:
             aligned[bid] = text
-        elif used < len(values):
-            aligned[bid] = values[used]
+        elif used < len(leftover):
+            aligned[bid] = leftover[used]
             used += 1
     if hook:
         aligned[-1] = hook
@@ -1087,6 +1154,10 @@ def _first_sentence(text: str) -> str:
     return sents[0] if sents else raw
 
 
+def _ends_sentence(text: str) -> bool:
+    return (text or "").rstrip().endswith((".", "!", "?", "…"))
+
+
 def _clip_to_budget(text: str, max_words: int) -> str:
     """Kelime tavanı: cümle ortasında kesme. 1–2 kelimelik kırıntı üretme."""
     raw = (text or "").strip()
@@ -1095,41 +1166,48 @@ def _clip_to_budget(text: str, max_words: int) -> str:
     words = raw.split()
     if len(words) <= max_words:
         return raw
-    first = _first_sentence(raw)
-    first_n = len(first.split()) if first else 0
-    if first and first_n <= max(max_words, int(max_words * 1.35)):
-        window = " ".join(words[:max_words])
-        sents = _split_sentences(window)
-        if len(sents) >= 2:
-            kept = []
-            total = 0
-            for sent in sents:
-                n = len(sent.split())
-                complete = sent.endswith((".", "!", "?", "…"))
-                if kept and (total + n > max_words or not complete):
-                    break
-                if not complete and not kept:
-                    break
-                if complete:
-                    kept.append(sent)
-                    total += n
-            if kept:
-                return " ".join(kept).strip()
+    sents = _split_sentences(raw)
+    kept: List[str] = []
+    total = 0
+    for sent in sents:
+        n = len(sent.split())
+        complete = _ends_sentence(sent)
+        if not complete:
+            break
+        if kept and total + n > max_words:
+            break
+        if not kept and n > max(max_words, int(max_words * 1.35)):
+            break
+        kept.append(sent)
+        total += n
+    if kept:
+        return " ".join(kept).strip()
+    first = sents[0] if sents else raw
+    if _ends_sentence(first) and len(first.split()) <= max(max_words, int(max_words * 1.35)):
         return first
     clipped = " ".join(words[:max_words]).rstrip(" ,;:")
-    if clipped and clipped[-1] not in ".!?…":
+    if clipped and not _ends_sentence(clipped):
         clipped += "."
     return clipped
 
 
 def _is_atmosphere_dump(text: str) -> bool:
-    """'Gergin, heybetli, tehditkar' gibi plot'suz mood listesi."""
+    """'Gergin, heybetli, tehditkar' gibi plot'suz mood listesi.
+
+    Konuşulan cümle (he/she/they veya fiil) mood listesi sayılmaz.
+    """
     raw = (text or "").strip().rstrip(".!?,;:")
     if not raw:
         return False
     parts = [p.strip() for p in re.split(r"[,;/|]", raw) if p.strip()]
     if len(parts) >= 2 and all(len(p.split()) <= 3 for p in parts):
-        return True
+        if not re.search(
+            r"\b(he|she|they|the|and|opens|hits|walks|screams|blocks|"
+            r"o|bir|bu|ama|çünkü|sonra|kapıyı|vurur|yürür)\b",
+            raw,
+            re.I,
+        ):
+            return True
     words = raw.split()
     if len(words) <= 6 and "," in (text or "") and not re.search(
         r"\b(he|she|they|the|and|opens|hits|walks|screams|blocks|o|bir|bu)\b",
@@ -1158,141 +1236,49 @@ def _is_meta_filler(text: str) -> bool:
     return "on this beat" in low or "bu beat" in low
 
 
-def _panel_names(chapter, index: int, language: str, project=None) -> List[str]:
-    data = (getattr(chapter, "analysis_data", None) or {}).get(str(index), {}) if chapter is not None else {}
-    if not isinstance(data, dict):
-        data = {}
-    names = _sanitize_characters(data.get("characters"), language, project=project)
-    out: List[str] = []
-    for n in names:
-        n = (n or "").strip()
-        if n and n not in out and not _is_generic_character_label(n):
-            out.append(n)
-    return out[:3]
-
-
 def _usable_plot_bit(raw: str, language: str, avoid: str, project=None) -> str:
     bit = _clause_text(raw or "")
     bit = _scrub_generic_labels(bit, language, project=project)
     if not bit or _is_atmosphere_dump(bit) or _is_meta_filler(bit):
         return ""
-    if bit.strip().rstrip(".").lower() == (avoid or "").strip().rstrip(".").lower():
+    if (avoid or "").strip() and bit.strip().rstrip(".").lower() in (avoid or "").lower():
         return ""
     if not bit.endswith((".", "!", "?", "…")):
         bit += "."
     bit = _first_sentence(bit)
-    if not bit or _wrong_language(bit, language) or _is_meta_filler(bit):
+    if not bit or len(bit.split()) < 4 or _wrong_language(bit, language) or _is_meta_filler(bit):
         return ""
     return bit
 
 
-def _expand_to_spoken(bit: str, names: List[str], language: str, length: str) -> str:
-    """Orta/uzun kare: TTS'in tutacağı kadar (12–22 kelime) konuşma."""
+def _expand_to_spoken(bit: str, language: str, length: str) -> str:
+    """Analiz cümlesini olduğu gibi bırak. Eksik kelime veya isim uydurulmaz."""
+    del language, length
     text = (bit or "").strip()
     if not text:
         return ""
     if not text.endswith((".", "!", "?", "…")):
         text += "."
-    min_words = 8 if (length or "medium").lower() == "short" else 14
-    if len(text.split()) >= min_words:
-        return text
-    name = names[0] if names else ""
-    other = names[1] if len(names) > 1 else ""
-    en = (language or "").lower().startswith("en")
-    if en:
-        extra = ""
-        if name and name.lower() not in text.lower():
-            extra = f" {name} is still in it"
-            if other:
-                extra += f" with {other}"
-            extra += "."
-        elif name:
-            extra = f" {name} doesn't break that look."
-        else:
-            extra = " Nobody in the room pretends it didn't land."
-        text = (text + extra).strip()
-    else:
-        extra = ""
-        if name and name.lower() not in text.lower():
-            extra = f" {name} hâlâ bunun içinde"
-            if other:
-                extra += f", {other} ile"
-            extra += "."
-        elif name:
-            extra = f" {name} bakışını kaçırmaz."
-        else:
-            extra = " Odadaki kimse bunu yok sayamaz."
-        text = (text + extra).strip()
     return text
 
 
-def _named_continue(names: List[str], language: str, index: int, avoid: str) -> str:
-    """Analiz yanlış dildeyse isimle gerçek VO. 'this beat' meta yok."""
-    name = names[0] if names else ""
-    other = names[1] if len(names) > 1 else ""
-    en = (language or "").lower().startswith("en")
-    if en:
-        options = []
-        if name and other:
-            options = [
-                f"{name} doesn't look away from {other}, waiting to see who breaks first in this room.",
-                f"{name} feels {other}'s last line sitting in the chest and still can't answer it.",
-                f"For {name}, {other} is close enough that the hallway stops feeling safe.",
-            ]
-        elif name:
-            options = [
-                f"{name} keeps the same look, as if the last word is still hanging in the air.",
-                f"{name} hasn't recovered from what just landed, and the next second is worse.",
-                f"{name} stays locked on the person who said it, pulse still catching up.",
-            ]
-        else:
-            options = [
-                "The last word is still hanging in the air, and nobody in the room moves.",
-                "Whatever just landed hasn't finished echoing through the hallway yet.",
-            ]
-    else:
-        options = []
-        if name and other:
-            options = [
-                f"{name}, {other}'ya bakışını kaçırmaz; bu odada kim önce kırılacak belli değildir.",
-                f"{name}, {other}'nın son cümlesini göğsünde taşır ve hâlâ cevap veremez.",
-            ]
-        elif name:
-            options = [
-                f"{name} aynı bakışta kalır; son söz hâlâ havada asılı durur.",
-                f"{name} az önce inen şeyi henüz atlatamamıştır, sonraki saniye daha ağırdır.",
-            ]
-        else:
-            options = [
-                "Son söz hâlâ havada asılıdır ve odadaki kimse kımıldamaz.",
-                "Az önce inen şey koridorda henüz bitmemiştir.",
-            ]
-    avoid_l = (avoid or "").lower()
-    for offset, line in enumerate(options):
-        pick = options[(int(index) + offset) % len(options)]
-        if pick.lower() not in avoid_l and not _is_meta_filler(pick):
-            return pick
-    return options[int(index) % len(options)] if options else ""
-
-
 def _panel_glue(chapter, index: int, language: str, avoid: str = "", project=None, length: str = "medium") -> str:
-    """Boş panel: aynı dilde aksiyon/sahne, yoksa kadro ismiyle konuşma. Meta filler yok."""
+    """Boş panel: yalnızca hedef dildeki gerçek aksiyon/sahne. İsimle uydurma yok."""
     data = (getattr(chapter, "analysis_data", None) or {}).get(str(index), {}) if chapter is not None else {}
     if not isinstance(data, dict) or data.get("error") or data.get("parse_error"):
-        data = {}
-    names = _panel_names(chapter, index, language, project)
+        return ""
     for key in ("action", "scene", "summary"):
         bit = _usable_plot_bit(data.get(key) or "", language, avoid, project)
         if bit:
-            return _expand_to_spoken(bit, names, language, length)
+            return _expand_to_spoken(bit, language, length)
     dialogues = data.get("dialogues") or data.get("dialogue") or []
     if isinstance(dialogues, str):
         dialogues = [dialogues]
     for line in dialogues[:2]:
         bit = _usable_plot_bit(str(line), language, avoid, project)
         if bit:
-            return _expand_to_spoken(bit, names, language, length)
-    return _named_continue(names, language, index, avoid)
+            return _expand_to_spoken(bit, language, length)
+    return ""
 
 
 def _redistribute_beat_sentences(segments, language: str = "en") -> None:
@@ -1324,8 +1310,8 @@ def _redistribute_beat_sentences(segments, language: str = "en") -> None:
 
 
 def _fill_empty_story_panels(segments, chapter, language: str, length: str, project=None):
-    """Orta/uzun: hikaye kareleri boş kalmaz. Süre = TTS kelime süresi, şişirme yok."""
-    if not segments or (length or "medium").lower() == "short":
+    """Fazla cümle boş kareye yayılır. Analiz hedef dilde değilse kare sessiz kalır."""
+    if not segments:
         return segments
     _redistribute_beat_sentences(segments, language)
     avoid = " ".join((getattr(s, "text", None) or "") for s in segments)
@@ -1337,11 +1323,19 @@ def _fill_empty_story_panels(segments, chapter, language: str, length: str, proj
         if text and not _is_meta_filler(text) and not _wrong_language(text, language):
             seg.duration = ScriptGenerator.estimate_duration(text, language)
             continue
+        if (length or "medium").lower() == "short":
+            if not text or _wrong_language(text, language) or _is_meta_filler(text):
+                seg.text = ""
+                seg.duration = SILENT_HOLD_SEC
+            continue
         idx = int(getattr(seg, "image_index", 0) or 0)
         bit = _panel_glue(
             chapter, idx, language, avoid=avoid, project=project, length=length,
         )
         if not bit or _is_meta_filler(bit) or _wrong_language(bit, language):
+            if not text or _wrong_language(text, language) or _is_meta_filler(text):
+                seg.text = ""
+                seg.duration = SILENT_HOLD_SEC
             continue
         cap = panel_word_cap(length, role or "beat")
         seg.text = _clip_to_budget(bit, cap)
@@ -1638,6 +1632,15 @@ class ScriptGenerator:
             use_hook=bool(use_hook), include_last_time=bool(include_last_time),
             last_src=last_src, length=length, project=project,
         )
+        empty_story = [
+            s for s in segments
+            if (getattr(s, "role", "") or "") not in ("cold_open", "last_time")
+            and not (s.text or "").strip()
+        ]
+        if empty_story and stream_callback:
+            stream_callback(
+                f"\n[{len(empty_story)} görselde analiz cümlesi yok, sessiz bırakıldı]\n"
+            )
         segments = _fill_empty_story_panels(segments, chapter, language, length, project)
         segments = _pace_clip_segments(segments, length, language)
         segments = _drop_wrong_language_segments(
@@ -1667,6 +1670,7 @@ class ScriptGenerator:
                 "target_minutes": minutes,
                 "beat_count": len(beats),
                 "cold_open_image": cold_idx,
+                "outline": outline,
             })
             chapter.script_meta = meta
             chapter.segments = segments
@@ -1830,11 +1834,31 @@ class ScriptGenerator:
         if stream_callback:
             stream_callback("\n[Outline]\n")
         known = [e.get("canonical", "") for e in bible.get_entries(project)]
-        raw = self._chat(
-            self._pick_model(model, premium=True), prompt, temperature=0.25, max_tokens=2200,
-            language=language, known_names=known, retries=1,
-        )
-        data = _extract_json_obj(raw) or {}
+        stored = {}
+        if chapter is not None:
+            stored = dict((getattr(chapter, "script_meta", None) or {}).get("outline") or {})
+        stored_beats = stored.get("beats") if isinstance(stored.get("beats"), list) else []
+        expected_ids = [int(b.beat_id) for b in beats]
+        stored_ids: List[int] = []
+        payloads_ok = bool(stored_beats) and len(stored_beats) == len(expected_ids)
+        if payloads_ok:
+            for item in stored_beats:
+                bid = _safe_int(item.get("id", item.get("beat_id"))) if isinstance(item, dict) else None
+                if bid is None or not str(item.get("payload") or "").strip():
+                    payloads_ok = False
+                    break
+                stored_ids.append(int(bid))
+        reusable = payloads_ok and stored_ids == expected_ids
+        if reusable:
+            data = dict(stored)
+            if stream_callback:
+                stream_callback("[kayıtlı iskelet]\n")
+        else:
+            raw = self._chat(
+                self._pick_model(model, premium=True), prompt, temperature=0.25, max_tokens=2200,
+                language=language, known_names=known, retries=1,
+            )
+            data = _extract_json_obj(raw) or {}
         if not isinstance(data.get("beats"), list):
             data["beats"] = [
                 {"id": b.beat_id, "payload": (b.summary or b.action or "")[:120], "stakes": ""}
@@ -1967,14 +1991,21 @@ class ScriptGenerator:
                        or _wrong_language(parsed.get(b.beat_id) or "", language, known)]
             if missing:
                 logger.warning("VO chunk %d eksik/yanlış dil beat: %s — yeniden denenecek", chunk_i + 1, missing)
-                raw = self._chat(
-                    model, prompt, temperature=0.45, max_tokens=max_tokens,
-                    language=language, known_names=known, retries=1,
-                )
-                parsed = _align_vo_to_beats(
-                    _parse_beats_voiceover(raw),
-                    [b.beat_id for b in chunk],
-                ) or parsed
+                try:
+                    retry_raw = self._chat(
+                        model, prompt, temperature=0.45, max_tokens=max_tokens,
+                        language=language, known_names=known, retries=1,
+                    )
+                    retry_parsed = _align_vo_to_beats(
+                        _parse_beats_voiceover(retry_raw),
+                        [b.beat_id for b in chunk],
+                    )
+                    parsed = _merge_vo(parsed, retry_parsed, language, known)
+                except Exception as exc:
+                    logger.warning(
+                        "VO chunk %d yeniden deneme düştü, ilk metin korunuyor: %s",
+                        chunk_i + 1, exc,
+                    )
             if not parsed:
                 logger.error("VO chunk %d parse edilemedi.", chunk_i + 1)
             for b in chunk:
@@ -2001,9 +2032,12 @@ class ScriptGenerator:
                 prev_tail = f"[ÖNCEKİ BEAT — devam et, yeniden açma]:\n\"{last_written}\"" if last_written else ""
 
         if length != "short":
-            vo = self._refill_short_voiceover(
-                vo, beats, outline_beats, model, language, known, project, length,
-            )
+            try:
+                vo = self._refill_short_voiceover(
+                    vo, beats, outline_beats, model, language, known, project, length,
+                )
+            except Exception as exc:
+                logger.warning("Eksik beat doldurma atlandı, mevcut VO korunuyor: %s", exc)
         return vo
 
     def _refill_short_voiceover(
@@ -2017,13 +2051,16 @@ class ScriptGenerator:
         project,
         length: str,
     ) -> Dict[int, str]:
-        """Çok kısa kalan ÇOK panelli beat'leri doldurur; tek kareyi 30 sn'ye şişirmez."""
+        """Boş veya çok kısa beat'leri doldurur. Tek kareyi 30 saniyeye şişirmez."""
         short_beats = []
         for b in beats:
             text = (vo.get(b.beat_id) or "").strip()
             budget = int(b.word_budget or 0)
             n_panels = max(1, len(b.panel_indices or []))
-            if not text or n_panels < 2 or budget < 24:
+            if not text:
+                short_beats.append(b)
+                continue
+            if n_panels < 2 or budget < 24:
                 continue
             if len(text.split()) >= min(18, max(12, int(budget * 0.4))):
                 continue
@@ -2032,8 +2069,27 @@ class ScriptGenerator:
             return vo
 
         en = (language or "").lower().startswith("en")
+        for batch_start in range(0, len(short_beats), 8):
+            vo = self._refill_voiceover_batch(
+                vo, short_beats[batch_start:batch_start + 8], outline_beats,
+                model, language, known, project, length, en,
+            )
+        return vo
+
+    def _refill_voiceover_batch(
+        self,
+        vo: Dict[int, str],
+        short_beats,
+        outline_beats: Dict[int, dict],
+        model: str,
+        language: str,
+        known: List[str],
+        project,
+        length: str,
+        en: bool,
+    ) -> Dict[int, str]:
         lines = []
-        for b in short_beats[:8]:
+        for b in short_beats:
             item = outline_beats.get(b.beat_id, {})
             payload = (item.get("payload") or b.summary or b.action or "").strip()
             cap = int(b.word_budget or (panel_word_cap(length, b.role) * max(1, len(b.panel_indices or []))))
@@ -2042,17 +2098,17 @@ class ScriptGenerator:
             )
         if en:
             prompt = (
-                "Rewrite these recap beats. Stay UNDER max_words. "
-                "1–2 spoken sentences per IMAGE in the beat. Never a 30-second paragraph. "
-                "Same plot, names, cause-effect, stakes. Invent nothing. "
+                "Rewrite these recap beats as spoken story, third person, like reading a book. "
+                "Stay UNDER max_words. Do not describe the picture, hair, clothes, or the room. "
+                "Tell what happens and why. Same plot, names, cause-effect, stakes. Invent nothing. "
                 "JSON only: {\"beats\":[{\"id\":0,\"text\":\"...\"}]}\n"
                 + "\n".join(lines)
             )
         else:
             prompt = (
-                "Bu beat'leri yeniden yaz. max_words'ü AŞMA. "
-                "Beat'teki her görsel için 1–2 cümle. 30 saniyelik paragraf YASAK. "
-                "Aynı plot, isim, sebep-sonuç, stakes. Uydurma yok. "
+                "Bu beat'leri üçüncü şahıs hikâye gibi yeniden yaz. Birine kitap okur gibi. "
+                "max_words'ü AŞMA. Kareyi, saçı, kıyafeti, odayı tarif etme. "
+                "Olanı ve nedenini anlat. Aynı plot, isim, sebep-sonuç, stakes. Uydurma yok. "
                 "Sadece JSON: {\"beats\":[{\"id\":0,\"text\":\"...\"}]}\n"
                 + "\n".join(lines)
             )
@@ -2061,7 +2117,7 @@ class ScriptGenerator:
             language=language, known_names=known, retries=1,
         )
         parsed = _parse_beats_voiceover(raw)
-        for b in short_beats[:8]:
+        for b in short_beats:
             text = (parsed.get(b.beat_id) or "").strip()
             if not text or _wrong_language(text, language, known) or _is_atmosphere_dump(text):
                 continue
@@ -2070,7 +2126,8 @@ class ScriptGenerator:
                 text,
                 int(b.word_budget or (panel_word_cap(length, b.role) * max(1, len(b.panel_indices or [])))),
             )
-            if len(text.split()) > len((vo.get(b.beat_id) or "").split()):
+            current = (vo.get(b.beat_id) or "").strip()
+            if not current or len(text.split()) > len(current.split()):
                 vo[b.beat_id] = text
         return vo
 
@@ -2117,13 +2174,17 @@ class ScriptGenerator:
                 hero = b.lead_index if 0 <= b.lead_index < n else 0
                 panels = [hero]
             per = panel_word_cap(length, b.role)
-            if length == "short" or len(panels) == 1:
+            if len(panels) == 1:
+                parts = [body]
+            elif len(_split_sentences(body)) <= 1:
                 parts = [""] * len(panels)
                 parts[0] = body
             else:
                 parts = _pace_distribute(body, len(panels), per)
+                if sum(1 for part in parts if (part or "").strip()) <= 1 and len(_split_sentences(body)) >= 2:
+                    parts = _distribute_text(body, len(panels))
             avoid = " ".join(p for p in parts if p)
-            if length != "short":
+            if (length or "medium").lower() != "short":
                 for i, panel_i in enumerate(panels):
                     if (parts[i] or "").strip():
                         continue
@@ -2196,14 +2257,12 @@ class ScriptGenerator:
         for i in range(n):
             if i in covered:
                 continue
-            glue = ""
-            if length != "short":
-                glue = _panel_glue(
-                    chapter, i, language, avoid=avoid_all, project=project, length=length,
-                )
-                if glue:
-                    glue = _clip_to_budget(glue, panel_word_cap(length, roles[i] or "beat"))
-                    avoid_all = (avoid_all + " " + glue).strip()
+            glue = _panel_glue(
+                chapter, i, language, avoid=avoid_all, project=project, length=length,
+            )
+            if glue:
+                glue = _clip_to_budget(glue, panel_word_cap(length, roles[i] or "beat"))
+                avoid_all = (avoid_all + " " + glue).strip()
             story.append(self._make_segment(
                 chapter, i, glue, language,
                 beat_id=beat_ids[i], role=roles[i] or "beat",
@@ -2292,12 +2351,13 @@ class ScriptGenerator:
                 auto_niche=auto_niche and i == 0,
                 include_last_time=(i > 0),
                 stop_flag=stop_flag,
-                assign=True,
+                assign=False,
                 last_src_override=prev_tail if i > 0 else "",
             )
             for s in segs:
                 if s.role == "filler" and len((s.text or "").split()) > 18:
-                    s.text = " ".join((s.text or "").split()[:14])
+                    words = (s.text or "").split()
+                    s.text = _clip_to_budget(" ".join(words), 18)
                     s.duration = self.estimate_duration(s.text, language)
                 if not s.image_path and 0 <= s.image_index < len(ch.images):
                     s.image_path = getattr(ch.images[s.image_index], "path", None)
@@ -2519,9 +2579,9 @@ class ScriptGenerator:
             )
         elif minutes:
             duration_note = (
-                f"PACE: each IMAGE max ~{panel_word_cap(length, 'beat')} words (~10 seconds). Do not write a 30-second paragraph on one still."
+                "PACE: third-person story, like reading a book. Do not describe the picture. No 30-second paragraph."
                 if (language or "").lower().startswith("en") else
-                f"TEMPO: her GÖRSEL en fazla ~{panel_word_cap(length, 'beat')} kelime (~10 saniye). Tek kareye 30 saniyelik paragraf yazma."
+                "TEMPO: üçüncü şahıs hikâye. Kareyi tarif etme. Tek kareye 30 saniyelik paragraf yazma."
             )
         else:
             duration_note = "Fill the length budget. Do not write a 40-second recap."
@@ -2757,7 +2817,10 @@ def fit_segments_to_target(segments, target_minutes: float, language: str = "tr"
         if len(words) <= 4:
             continue
         keep = max(4, int(len(words) * 0.55))
-        seg.text = " ".join(words[:keep])
+        clipped = _clip_to_budget(seg.text, keep)
+        if clipped == (seg.text or ""):
+            continue
+        seg.text = clipped
         old = float(seg.duration or 0)
         seg.duration = ScriptGenerator.estimate_duration(seg.text, language)
         extra -= max(0.0, old - float(seg.duration or 0))

@@ -4,7 +4,6 @@ SettingsManager üzerinden API key okunur; her zaman güncel.
 """
 
 import logging
-import time
 from typing import Optional
 
 from PyQt6.QtCore import QThread, pyqtSignal
@@ -84,56 +83,24 @@ class AnalysisWorker(QThread):
             client.update_api_key(api_key)
 
             analyzer = AIAnalyzer(client)
+            seen = set()
 
-            total = len(self._chapter.images)
+            def _progress(done: int, total: int, message: str) -> None:
+                self.progress.emit(done, total, message)
+                data = getattr(self._chapter, "analysis_data", None) or {}
+                for key, result in list(data.items()):
+                    if not str(key).isdigit() or key in seen or not isinstance(result, dict):
+                        continue
+                    seen.add(key)
+                    self.image_analyzed.emit(int(key), result)
 
-            for i, image_data in enumerate(self._chapter.images):
-                if self._stop:
-                    logger.info("Analiz durduruldu (indeks %d).", i)
-                    break
-
-                cache_key = str(i)
-                cached = self._chapter.analysis_data.get(cache_key)
-                if cached and not cached.get("error"):
-                    from core.ai_analyzer import _known_roster_lines, _sanitize_analysis_characters
-                    known = _known_roster_lines(project=self._project)
-                    cleaned = _sanitize_analysis_characters(
-                        dict(cached), known_names=known, project=self._project,
-                    )
-                    self._chapter.analysis_data[cache_key] = cleaned
-                    if self._project is not None:
-                        from core.character_bible import extract_records_from_chapter, upsert_characters
-                        upsert_characters(
-                            self._project,
-                            extract_records_from_chapter(self._chapter, self._project),
-                            getattr(self._chapter, "id", ""),
-                        )
-                    msg = f"{i + 1}/{total} önbellekten: {image_data.filename}"
-                    self.progress.emit(i + 1, total, msg)
-                    self.image_analyzed.emit(i, cleaned)
-                    continue
-
-                self.progress.emit(
-                    i + 1, total,
-                    f"{i + 1}/{total} analiz ediliyor: {image_data.filename}",
-                )
-                from core.ai_analyzer import _known_roster_lines
-                known = _known_roster_lines(project=self._project)
-                result = analyzer.analyze_image(
-                    image_data.path, self._model, known_names=known, project=self._project,
-                )
-                self._chapter.analysis_data[cache_key] = result
-                if self._project is not None:
-                    from core.character_bible import extract_records_from_chapter, upsert_characters
-                    upsert_characters(
-                        self._project,
-                        extract_records_from_chapter(self._chapter, self._project),
-                        getattr(self._chapter, "id", ""),
-                    )
-                self.image_analyzed.emit(i, result)
-
-                if i < total - 1 and not self._stop:
-                    time.sleep(1.0)
+            analyzer.analyze_chapter(
+                self._chapter,
+                self._model,
+                progress_callback=_progress,
+                stop_flag=lambda: self._stop,
+                project=self._project,
+            )
 
         except OpenRouterError as exc:
             failed = True

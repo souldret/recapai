@@ -288,9 +288,12 @@ class TestNichesAndHook:
         assert "{beats_block}" in data["script_voiceover"]
         ret = data["script_prompt_retention"].lower()
         assert "kanca" in ret or "hook" in ret or "cold" in ret
-        assert "tek anlat" in ret or "yayılır" in ret or "10 saniye" in ret
+        assert "tek anlat" in ret or "yayılır" in ret
         vo = data["script_voiceover"].lower()
-        assert "10 sn" in vo or "panellere" in vo
+        p1 = data["script_prompt_1_universal"].lower()
+        assert "üçüncü şahıs" in p1 or "ucuncu sahis" in p1
+        assert "kitap" in p1
+        assert "panellere" in vo
 
 
 class TestResolveStyle:
