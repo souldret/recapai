@@ -1137,8 +1137,19 @@ class ScriptPage(QWidget):
         if not chapter:
             return
 
+        compile_chapters = None
+        if self.compile_check.isChecked() and state.current_project:
+            compile_chapters = [
+                ch for ch in state.current_project.chapters
+                if any(str(k).isdigit() for k in (ch.analysis_data or {}))
+                and not (getattr(ch, "script_meta", None) or {}).get("compiled")
+            ]
+            if not compile_chapters:
+                QMessageBox.warning(self, "Derleme", "Analizli bölüm yok.")
+                return
+
         has_analysis = any(str(k).isdigit() for k in (chapter.analysis_data or {}))
-        if not has_analysis and not self.compile_check.isChecked():
+        if not has_analysis and not compile_chapters:
             QMessageBox.warning(
                 self, "Analiz Verisi Yok",
                 f"'{chapter.name}' bölümü için önce AI Analiz yapın."
@@ -1147,7 +1158,10 @@ class ScriptPage(QWidget):
 
         try:
             from core.pipeline import require_character_bible
-            require_character_bible(state.current_project, chapter)
+            require_character_bible(
+                state.current_project,
+                compile_chapters[0] if compile_chapters else chapter,
+            )
         except ValueError as bible_exc:
             QMessageBox.warning(self, "Karakter Bible", str(bible_exc))
             return
@@ -1165,16 +1179,6 @@ class ScriptPage(QWidget):
         niche = self.niche_combo.currentData() or "auto"
         use_hook = self.hook_check.isChecked()
         auto_niche = niche == "auto"
-        compile_chapters = None
-        if self.compile_check.isChecked() and state.current_project:
-            compile_chapters = [
-                ch for ch in state.current_project.chapters
-                if any(str(k).isdigit() for k in (ch.analysis_data or {}))
-                and not (getattr(ch, "script_meta", None) or {}).get("compiled")
-            ]
-            if not compile_chapters:
-                QMessageBox.warning(self, "Derleme", "Analizli bölüm yok.")
-                return
 
         from core.script_generator import resolve_target_minutes
 
@@ -1304,7 +1308,12 @@ class ScriptPage(QWidget):
         existing.images = images
         existing.segments = list(segments)
         existing.analysis_data = {}
-        existing.script_meta = {"compiled": True}
+        meta = {"compiled": True}
+        pending = getattr(self._worker, "_pending_hooks", None) or []
+        if pending:
+            meta["hook_variants"] = pending
+            meta["selected_hook"] = "A"
+        existing.script_meta = meta
         idx = self.chapter_combo.findData(existing.id)
         if idx >= 0 and self.chapter_combo.currentIndex() != idx:
             self.chapter_combo.blockSignals(True)

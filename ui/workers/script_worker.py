@@ -62,6 +62,7 @@ class ScriptWorker(QThread):
         self._include_last_time = include_last_time
         self._compile_chapters = compile_chapters
         self._hook_variants = max(1, int(hook_variants or 1))
+        self._pending_hooks = []
         self._stop = False
 
     def stop(self) -> None:
@@ -140,7 +141,10 @@ class ScriptWorker(QThread):
                 if alt_hook and alt_hook != primary:
                     variants.append({"id": "B", "text": alt_hook})
                 if variants:
-                    store_hook_variants(self._chapter, variants, selected="A")
+                    if self._compile_chapters:
+                        self._pending_hooks = variants
+                    else:
+                        store_hook_variants(self._chapter, variants, selected="A")
                     self.progress.emit("A/B kanca meta olarak kaydedildi (VO'ya gömülmedi).")
 
             if self._stop:
