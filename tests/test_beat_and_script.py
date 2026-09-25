@@ -1130,15 +1130,20 @@ class TestMaterialize:
         segs = [
             SegmentData(0, "MS. HAESEON has Sunbae pinned to the floor, leaving him flustered.", role="beat"),
             SegmentData(1, "This scene highlights the romantic tension of the story.", role="beat"),
-            SegmentData(2, "MS. HAESEON asks if he is okay.", role="beat"),
+            SegmentData(2, "Sunbae's presence indicates his involvement.", role="beat"),
+            SegmentData(3, "It demonstrates Sunbae's determination and focus.", role="beat"),
+            SegmentData(4, "MS. HAESEON asks if he is okay, creating tension between them.", role="beat"),
         ]
         _spoken_story_pass(segs, None, "en")
         blob = " ".join(s.text for s in segs)
         assert "MS." not in blob
-        assert "highlights" not in blob.lower()
-        assert "this scene" not in blob.lower()
+        for banned in ("highlights", "this scene", "indicates", "demonstrates", "creating tension"):
+            assert banned not in blob.lower()
         assert segs[0].text.startswith("Ms. Haeseon")
-        assert segs[2].text.lower().startswith("she")
+        assert segs[1].text == ""
+        assert segs[2].text == ""
+        assert segs[3].text == ""
+        assert segs[4].text.lower().startswith("she")
 
     def test_compiled_segments_keep_source_chapter(self):
         from core.models import Chapter, ImageData, SegmentData

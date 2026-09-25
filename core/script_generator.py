@@ -1316,7 +1316,9 @@ def _sentence_key(text: str) -> str:
 _COMMENTARY_RE = re.compile(
     r"\b(?:this scene|this moment|this dialogue|this confession|this physical|"
     r"highlights?|showcas\w*|emphasiz\w*|signif\w*|foreshadow\w*|"
-    r"turning point|the dynamics|internal conflict|new phase|new insight|"
+    r"indicat\w*|demonstrat\w*|underscor\w*|signaling|hinting|implying|implies|"
+    r"marking a|creating tension|observation about|potential consequences|"
+    r"new beginning|turning point|the dynamics|internal conflict|new phase|new insight|"
     r"the audience|in the story|of the story|to the story|"
     r"romantic tension|potential misunderstanding)\b",
     re.I,
@@ -1324,22 +1326,22 @@ _COMMENTARY_RE = re.compile(
 
 
 def _strip_commentary(text: str) -> str:
-    """Olay kalsın. 'Bu sahne şunu gösterir' cümlesi düşsün."""
+    """Olay kalsın. Yorum cümlesi ve virgülden sonraki anlam eki düşsün."""
     kept: List[str] = []
     for sent in _split_sentences(text):
         if not _COMMENTARY_RE.search(sent):
             kept.append(sent)
             continue
-        head = sent.split(",", 1)[0].strip()
-        if (
-            head
-            and head.rstrip(".") != sent.strip().rstrip(".")
-            and not _COMMENTARY_RE.search(head)
-            and len(head.split()) >= 4
-        ):
-            if not _ends_sentence(head):
-                head += "."
-            kept.append(head)
+        parts = sent.split(",")
+        action = [part.strip(" ,") for part in parts if part.strip(" ,") and not _COMMENTARY_RE.search(part)]
+        if not action:
+            continue
+        bit = ", ".join(action).strip()
+        if len(bit.split()) < 4:
+            continue
+        if not _ends_sentence(bit):
+            bit += "."
+        kept.append(bit)
     return " ".join(kept).strip()
 
 
@@ -1383,7 +1385,7 @@ def _thin_repeated_subjects(segments, names: List[str], genders: Dict[str, str])
             elif lead:
                 last = lead.lower()
             out.append(sent)
-        joined = " ".join(out).strip()
+        joined = " ".join(s.strip() for s in out if s.strip())
         if not joined:
             continue
         seg.text = joined
