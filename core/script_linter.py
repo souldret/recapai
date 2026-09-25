@@ -56,6 +56,35 @@ def _word_count(text: str) -> int:
     return len((text or "").split())
 
 
+_TITLE_TOKEN_RE = re.compile(r"[A-Za-zÇĞİÖŞÜçğıöşü''\u2019]+")
+
+
+def _title_case_token(token: str) -> bool:
+    """Where'D, I'M, Could'VE gibi kesmeli kelimede ilk harf büyük mü?"""
+    letters = _TITLE_TOKEN_RE.findall(token or "")
+    if not letters:
+        return False
+    word = max(letters, key=len)
+    return word[:1].isupper()
+
+
+def _has_raw_dialogue_run(text: str) -> bool:
+    """Cümle başı hariç, art arda 3 kelimenin her biri büyük harfle başlıyor mu?"""
+    for sentence in re.split(r"[.!?…]+", text or ""):
+        words = [w for w in sentence.split() if _TITLE_TOKEN_RE.search(w)]
+        if len(words) < 4:
+            continue
+        run = 0
+        for word in words[1:]:
+            if _title_case_token(word):
+                run += 1
+                if run >= 3:
+                    return True
+            else:
+                run = 0
+    return False
+
+
 def lint_text(text: str, *, role: str = "", is_first: bool = False, is_last: bool = False) -> List[str]:
     issues: List[str] = []
     raw = (text or "").strip()
@@ -82,6 +111,9 @@ def lint_text(text: str, *, role: str = "", is_first: bool = False, is_last: boo
     for _sev, pat, msg in _PATTERNS:
         if pat.search(raw):
             issues.append(f"{msg}")
+
+    if _has_raw_dialogue_run(raw) and "Ham diyalog / çevrilmemiş alıntı" not in issues:
+        issues.append("Ham diyalog / çevrilmemiş alıntı")
 
     if is_first:
         low = raw.lower()

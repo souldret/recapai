@@ -9,7 +9,7 @@ import logging
 from typing import Any, Callable, Dict, List, Optional
 
 from core.models import SegmentData
-from core.script_linter import issue_count, lint_segments, worst_indices
+from core.script_linter import issue_count, lint_segments
 
 logger = logging.getLogger(__name__)
 
@@ -22,6 +22,7 @@ _ERROR_HINTS = (
     "saç/görünüm",
     "sahte beat filler",
     "isim gizli",
+    "ham diyalog / çevrilmemiş alıntı",
 )
 
 
@@ -47,6 +48,8 @@ def _apply_rewrite(generator, chapter, seg: SegmentData, text: str, language: st
     cleaned = _scrub_generic_labels(cleaned, language, project=None)
     role = getattr(seg, "role", "") or "beat"
     cleaned = _clip_to_budget(cleaned, panel_word_cap("medium", role))
+    from core.text_utils import normalize_caps
+    cleaned = normalize_caps(cleaned)
     if len(cleaned) < 5 or _wrong_language(cleaned, language) or _is_meta_filler(cleaned):
         raise ValueError("Toplu düzeltme kullanılamadı.")
     seg.text = cleaned
@@ -199,35 +202,51 @@ def polish_segments(
             lint_segments(working)
             total = issue_count(working)
             error_idx = [
-                i for i in worst_indices(working, limit=limit)
-                if any(_is_error_issue(m) for m in (working[i].lint_issues or []))
+                i for i, seg in enumerate(working)
+                if any(_is_error_issue(m) for m in (seg.lint_issues or []))
             ]
             if not error_idx:
                 if stream_callback and round_i == 0:
                     stream_callback(f"\n[Lint: {total} uyarı, otomatik düzeltme gerekmedi]\n")
                 break
+            batch_size = max(1, int(limit or 1))
+            batches = [
+                error_idx[start:start + batch_size]
+                for start in range(0, len(error_idx), batch_size)
+            ]
+            logger.info(
+                "%d hatalı segment var, bu turda %d tanesi işlendi",
+                len(error_idx),
+                len(error_idx),
+            )
             if stream_callback:
-                stream_callback(f"\n[Lint tur {round_i + 1}: {len(error_idx)} beat tek istekte düzeltiliyor]\n")
-            batched = False
-            try:
-                batched = _rewrite_batch(
-                    generator, chapter, error_idx, model=model, language=language,
+                stream_callback(
+                    f"\n[Lint tur {round_i + 1}: {len(error_idx)} hatalı segment, "
+                    f"bu turda {len(error_idx)} tanesi işlendi]\n"
                 )
-            except Exception as exc:
-                logger.warning("Toplu lint düzeltmesi düştü, satır satır denenecek: %s", exc)
+            for batch in batches:
+                if stop_flag and stop_flag():
+                    break
                 batched = False
-            if not batched:
-                for idx in error_idx:
-                    if stop_flag and stop_flag():
-                        break
-                    try:
-                        generator.regenerate_segment(
-                            chapter, idx, model,
-                            style=style, language=language, length=length,
-                            niche=niche, project=project,
-                        )
-                    except Exception as exc:
-                        logger.warning("Lint rewrite atlandı [%d]: %s", idx, exc)
+                try:
+                    batched = _rewrite_batch(
+                        generator, chapter, batch, model=model, language=language,
+                    )
+                except Exception as exc:
+                    logger.warning("Toplu lint düzeltmesi düştü, satır satır denenecek: %s", exc)
+                    batched = False
+                if not batched:
+                    for idx in batch:
+                        if stop_flag and stop_flag():
+                            break
+                        try:
+                            generator.regenerate_segment(
+                                chapter, idx, model,
+                                style=style, language=language, length=length,
+                                niche=niche, project=project,
+                            )
+                        except Exception as exc:
+                            logger.warning("Lint rewrite atlandı [%d]: %s", idx, exc)
             working = list(chapter.segments or working)
             lint_segments(working)
             if issue_count(working) >= total:

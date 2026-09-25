@@ -635,13 +635,14 @@ class ScriptPage(QWidget):
 
         row2a.addWidget(QLabel("Hedef dk:"))
         self.minutes_spin = QSpinBox()
-        self.minutes_spin.setRange(1, 180)
+        self.minutes_spin.setRange(0, 180)
         self.minutes_spin.setValue(6)
         self.minutes_spin.setEnabled(False)
-        self.minutes_spin.setFixedWidth(72)
+        self.minutes_spin.setSpecialValueText("otomatik")
+        self.minutes_spin.setValue(0)
         self.minutes_spin.setToolTip(
-            "Elle hedef süre. Süre otomatik kapalıyken kullanılır.\n"
-            "Hikayeyi kesmez; yalnızca üst tavan. 14 görseli 6 dk'ya şişirmez."
+            "Süre otomatikken kutu 'otomatik' yazar ve üretim görsel temposunu kullanır.\n"
+            "Kapatınca dakikayı elle seçersin. 6 yazması 6 dakika hedefi değildir."
         )
         row2a.addWidget(self.minutes_spin)
         vbox.addLayout(row2a)
@@ -820,7 +821,11 @@ class ScriptPage(QWidget):
 
     def _on_auto_duration_toggled(self, checked: bool) -> None:
         self.minutes_spin.setEnabled(not checked)
-        self._refresh_auto_duration_hint()
+        if checked:
+            self.minutes_spin.setValue(0)
+        elif self.minutes_spin.value() == 0:
+            self.minutes_spin.setValue(6)
+        self._refresh_plan()
 
     def _refresh_plan(self) -> None:
         """Üretmeden önce çağrı, beat, süre ve maliyet aralığını butonun yanında gösterir."""
@@ -850,7 +855,7 @@ class ScriptPage(QWidget):
             language = self.lang_combo.currentData() or "en"
             model = self.model_combo.currentData() or ""
             target = None
-            if not self.auto_duration_check.isChecked():
+            if not self.auto_duration_check.isChecked() and self.minutes_spin.value() > 0:
                 target = float(self.minutes_spin.value())
             outline = {}
             if chapter is not None and not (
@@ -912,22 +917,7 @@ class ScriptPage(QWidget):
             return
         if not self.auto_duration_check.isChecked():
             return
-        chapter_id = self.chapter_combo.currentData() if getattr(self, "chapter_combo", None) else None
-        chapter = None
-        state = self.ctx.app_state
-        if chapter_id and state.current_project:
-            chapter = state.current_project.get_chapter(chapter_id)
-        n = len(getattr(chapter, "images", None) or []) if chapter else 0
-        if n <= 0:
-            return
-        from core.script_generator import resolve_target_minutes
-        length = LENGTHS[self.length_slider.value()]
-        language = self.lang_combo.currentData() or "en"
-        resolved = resolve_target_minutes(length, None, n_images=n, language=language)
-        if resolved:
-            self.minutes_spin.setValue(max(1, min(180, int(round(resolved)))))
-        elif length == "short":
-            self.minutes_spin.setValue(1)
+        self.minutes_spin.setValue(0)
 
     # ── Helpers ────────────────────────────────────────────────────
 
@@ -1240,7 +1230,7 @@ class ScriptPage(QWidget):
         from core.script_generator import resolve_target_minutes
 
         target_minutes = None
-        if not self.auto_duration_check.isChecked():
+        if not self.auto_duration_check.isChecked() and self.minutes_spin.value() > 0:
             target_minutes = float(self.minutes_spin.value())
         n_images = len(getattr(chapter, "images", None) or [])
         if self.compile_check.isChecked() and compile_chapters:
