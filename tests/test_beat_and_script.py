@@ -1098,11 +1098,13 @@ class TestMaterialize:
         assert "quiet" in segs[2].text
         assert all(s.text.endswith((".", "!", "?")) for s in segs)
 
-    def test_flow_keeps_original_when_rewrite_is_thin(self):
+    def test_flow_keeps_original_when_one_beat_is_missing(self):
         from core.beat_engine import StoryBeat
         gen = ScriptGenerator.__new__(ScriptGenerator)
         gen._pick_model = lambda model, premium=False: model
-        gen._chat = lambda *a, **k: '{"beats":[{"id":0,"text":"Hi."}]}'
+        gen._chat = lambda *a, **k: (
+            '{"beats":[{"id":0,"text":"Jin-Woo opens the gate and the alarms start."}]}'
+        )
         beats = [
             StoryBeat(0, [0], "setup"),
             StoryBeat(1, [1], "beat"),
@@ -1112,7 +1114,7 @@ class TestMaterialize:
             1: "The rankers freeze when the name appears.",
         }
         out = gen._flow_narrative(beats, original, "m", "en", None)
-        assert out[0].startswith("Jin-Woo")
+        assert "system wakes" in out[0]
         assert "rankers" in out[1]
 
     def test_single_cast_name_replaces_bare_pronoun(self):

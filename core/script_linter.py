@@ -175,5 +175,8 @@ def restore_hidden_names(segments: List[SegmentData], names: List[str]) -> List[
         replaced = re.sub(r"^(He|She|They|O)\b", name, text, count=1)
         if replaced != text:
             seg.text = replaced
+            from core.script_generator import ScriptGenerator
+            lang = "tr" if re.search(r"[çğıöşüÇĞİÖŞÜ]", replaced) else "en"
+            seg.duration = ScriptGenerator.estimate_duration(replaced, lang)
             break
     return segments

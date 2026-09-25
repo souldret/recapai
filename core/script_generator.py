@@ -1883,7 +1883,7 @@ class ScriptGenerator:
                 continue
             out[b.beat_id] = text
             applied += 1
-        if applied < max(1, len(lines) // 2):
+        if applied != len(lines):
             return vo_by_id
         return out
 
