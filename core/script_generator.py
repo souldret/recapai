@@ -2312,18 +2312,11 @@ class ScriptGenerator:
                 ))
 
         covered = {s.image_index for s in prefix + story}
-        avoid_all = " ".join(t for t in texts if t)
         for i in range(n):
             if i in covered:
                 continue
-            glue = _panel_glue(
-                chapter, i, language, avoid=avoid_all, project=project, length=length,
-            )
-            if glue:
-                glue = _clip_to_budget(glue, panel_word_cap(length, roles[i] or "beat"))
-                avoid_all = (avoid_all + " " + glue).strip()
             story.append(self._make_segment(
-                chapter, i, glue, language,
+                chapter, i, "", language,
                 beat_id=beat_ids[i], role=roles[i] or "beat",
                 length=length,
             ))
