@@ -1145,6 +1145,12 @@ class TestMaterialize:
         assert segs[3].text == ""
         assert segs[4].text.lower().startswith("she")
 
+    def test_cut_quote_gets_its_mark_back(self):
+        from core.script_generator import _strip_commentary
+        text = "She tells him he is a 'Teto Guy,' surprising him with her observation about his personality."
+        cleaned = _strip_commentary(text)
+        assert cleaned.endswith("Guy.\"") or cleaned.endswith("Guy.'")
+
     def test_compiled_segments_keep_source_chapter(self):
         from core.models import Chapter, ImageData, SegmentData
         from core.script_generator import ScriptGenerator

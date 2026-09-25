@@ -1341,6 +1341,8 @@ def _strip_commentary(text: str) -> str:
             continue
         if not _ends_sentence(bit):
             bit += "."
+        bit = re.sub(r"(^|[\s])'([^']+)$", r"\1'\2'", bit)
+        bit = re.sub(r"“([^”]+)$", r"“\1”", bit)
         kept.append(bit)
     return " ".join(kept).strip()
 

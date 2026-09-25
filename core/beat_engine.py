@@ -15,7 +15,7 @@ logger = logging.getLogger(__name__)
 MAX_BEAT_PANELS = 4
 MIN_BEAT_PANELS = 1
 FILLER_MAX_PANELS = 3
-MAX_STORY_BEATS = {"short": 8, "medium": 10, "long": 12}
+MAX_STORY_BEATS = {"short": 8, "medium": 16, "long": 20}
 
 _STOP = {
     "the", "a", "an", "and", "or", "of", "in", "on", "to", "for", "with",
