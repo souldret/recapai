@@ -1094,6 +1094,26 @@ def _parse_segments(text: str) -> List[dict]:
     return []
 
 
+def _looks_like_raw_quote(text: str) -> bool:
+    """Fallback metni ham/çevrilmemiş alıntı gibi mi? Üçüncü şahıs
+    anlatıya çevrilmeden kullanılmamalı."""
+    t = (text or "").strip()
+    if not t:
+        return False
+    low = t.lower()
+    first_word = low.split()[0].strip(".,!?") if low.split() else ""
+    if first_word in ("i", "i'm", "i've", "i'll", "i'd", "you", "you're",
+                       "you'll", "you've", "we", "we're", "can", "if",
+                       "well", "and", "so"):
+        return True
+    if t.endswith((",", ".,", " but.", " but,")):
+        return True
+    if len(re.findall(r"\b[A-Z][a-z]*'?[A-Z]?[A-Za-z]*\b", t)) > len(t.split()) * 0.6 and len(t.split()) > 3:
+        # Kelimelerin çoğu Title-Case/ALL-CAPS ise (ham diyalog izi)
+        return True
+    return False
+
+
 def _vo_body(item: dict) -> str:
     """Beat metnini olası alan adlarından alır. Boş string dolu metni ezmez."""
     for key in ("text", "payload", "voiceover", "vo", "line", "script"):
@@ -1988,6 +2008,8 @@ class ScriptGenerator:
             restore_hidden_names(segments, names)
             lint_segments(segments)
             flag_hidden_names(segments, names)
+        from core.text_utils import normalize_segment_caps
+        normalize_segment_caps(segments)
         segments = absorb_silent_holds(segments)
         if assign:
             meta = dict(getattr(chapter, "script_meta", None) or {})
@@ -2438,6 +2460,8 @@ class ScriptGenerator:
                     item = outline_beats.get(b.beat_id, {})
                     fallback = (item.get("payload") or b.summary or b.action or "").strip()
                     if fallback and not _wrong_language(fallback, language, known) and not _is_atmosphere_dump(fallback):
+                        if _looks_like_raw_quote(fallback):
+                            fallback = self._rewrite_raw_fallback(fallback, b, model, language, known)
                         text = fallback
                     else:
                         text = ""
@@ -2463,6 +2487,42 @@ class ScriptGenerator:
             except Exception as exc:
                 logger.warning("Eksik beat doldurma atlandı, mevcut VO korunuyor: %s", exc)
         return vo
+
+    def _rewrite_raw_fallback(
+        self, raw_text: str, beat, model: str, language: str,
+        known: List[str],
+    ) -> str:
+        """Ham/çevrilmemiş fallback metnini tek cümlelik 3. şahıs anlatıya çevirir."""
+        en = (language or "").lower().startswith("en")
+        cap = int(getattr(beat, "word_budget", 0) or 24)
+        if en:
+            prompt = (
+                f"Rewrite this as ONE third-person narration sentence, like "
+                f"reading a book aloud. Do not use quotes or first person. "
+                f"Max {cap} words. Same meaning, no new events. "
+                f"Plain text only, no JSON, no labels.\n\nText: {raw_text}"
+            )
+        else:
+            prompt = (
+                f"Bunu TEK cümlelik üçüncü şahıs anlatıya çevir, kitap okur "
+                f"gibi. Tırnak veya birinci şahıs kullanma. En fazla {cap} "
+                f"kelime. Aynı anlam, yeni olay uydurma. "
+                f"Sadece düz metin, JSON yok, etiket yok.\n\nMetin: {raw_text}"
+            )
+        try:
+            raw = self._chat(
+                model, prompt, temperature=0.5, max_tokens=120,
+                language=language, known_names=known, retries=0,
+            )
+        except Exception as exc:
+            logger.warning("Fallback rewrite başarısız, ham metin kullanılmayacak: %s", exc)
+            return ""
+        text = (raw or "").strip().strip('"').strip("`")
+        if not text or _wrong_language(text, language, known) or _is_atmosphere_dump(text):
+            return ""
+        if _looks_like_raw_quote(text):
+            return ""
+        return _clip_to_budget(text, cap)
 
     def _refill_short_voiceover(
         self,
@@ -2544,6 +2604,8 @@ class ScriptGenerator:
         for b in short_beats:
             text = (parsed.get(b.beat_id) or "").strip()
             if not text or _wrong_language(text, language, known) or _is_atmosphere_dump(text):
+                continue
+            if _looks_like_raw_quote(text) or re.search(r"\b[A-Z]{2,}\b", text):
                 continue
             text = _scrub_generic_labels(text, language, project=project)
             text = _clip_to_budget(
@@ -3170,6 +3232,8 @@ class ScriptGenerator:
             )
         if len(text) < 5:
             raise ValueError("LLM çok kısa metin döndürdü.")
+        from core.text_utils import normalize_caps
+        text = normalize_caps(text)
 
         seg.text = text
         seg.duration = self.estimate_duration(text, language)

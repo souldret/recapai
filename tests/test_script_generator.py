@@ -433,3 +433,127 @@ class TestExtractJsonRepairsTruncation:
             data = _extract_json_obj(raw)
         assert data["hook"] == "Boom."
         assert "JSON onarıldı" not in caplog.text
+
+
+class TestRawDialogueLint:
+    def test_title_case_quote_is_untranslated_dialogue(self):
+        from core.script_linter import lint_text
+        from core.script_quality import _is_error_issue
+
+        raw = "IF WE Were AT MY Place, I Could'VE Used MY Foam Roller TO Loosen You UP."
+        issues = lint_text(raw, role="beat")
+        assert any("Ham diyalog" in issue for issue in issues)
+        assert any(_is_error_issue(issue) and "Ham diyalog" in issue for issue in issues)
+
+    def test_normal_sentence_is_not_raw_dialogue(self):
+        from core.script_linter import lint_text
+
+        issues = lint_text(
+            "Ms. Haeseon pins Sunbae to the floor and calls him mean.",
+            role="beat",
+        )
+        assert not any("Ham diyalog" in issue for issue in issues)
+
+
+class TestNormalizeCapsOnScript:
+    def test_all_caps_is_written_onto_segment_text(self):
+        from core.models import SegmentData
+        from core.text_utils import normalize_segment_caps
+
+        segments = [SegmentData(image_index=0, text="IF I Really AM A Teto Girl,.", role="beat")]
+        normalize_segment_caps(segments)
+        assert segments[0].text == "If I Really Am A Teto Girl,."
+
+    def test_apostrophe_all_caps_becomes_title_case(self):
+        from core.text_utils import normalize_caps
+
+        assert normalize_caps("I'M") == "I'm"
+        assert normalize_caps("DON'T") == "Don't"
+        assert normalize_caps("COULD'VE") == "Could've"
+        assert normalize_caps("YOU'LL") == "You'll"
+
+
+class TestRawQuoteFallback:
+    def test_raw_quote_is_narrated_or_dropped(self):
+        from core.script_generator import ScriptGenerator
+
+        class Beat:
+            beat_id = 3
+            role = "beat"
+            word_budget = 16
+            panel_indices = [0]
+            summary = ""
+            action = ""
+            scene = ""
+            characters = []
+            dialogues = []
+            important = False
+            mood = ""
+            setting = ""
+
+        raw_line = "If I really am a Teto girl,"
+        calls = []
+
+        def chat(model, prompt, temperature=0.7, max_tokens=2000, language="en", known_names=None, retries=1):
+            calls.append({"max_tokens": max_tokens, "temperature": temperature, "prompt": prompt})
+            if "Plain text only" in prompt and "narrate" in prompt:
+                return "Sunbae wonders if he really is a Teto type."
+            if "Plain text only" in prompt:
+                return "If I really am a Teto girl,"
+            return ""
+
+        gen = ScriptGenerator.__new__(ScriptGenerator)
+        gen._chat = chat
+        gen._pick_model = lambda model, premium=False: model
+        gen._shared_layers = lambda *args, **kwargs: {
+            "prompts": {"script_voiceover": "{beats_block}"},
+            "lang_label": "English",
+            "style_desc": "",
+            "prompt_1": "",
+            "niche_module": "",
+            "retention_layer": "",
+            "hook_layer": "",
+            "last_time_layer": "",
+            "language_lock": "",
+        }
+
+        spoken_vo = gen._generate_voiceover_chunks(
+            None, [Beat()],
+            {"beats": [{"id": 3, "payload": "narrate " + raw_line}]},
+            "test-model", "fresh", "medium", "en", "", False, None, "", 8.0, None,
+        )
+        assert spoken_vo[3]
+        assert "teto" in spoken_vo[3].lower()
+        assert raw_line not in spoken_vo[3]
+        assert any(c["max_tokens"] == 120 and c["temperature"] == 0.5 for c in calls)
+
+        calls.clear()
+        dropped_vo = gen._generate_voiceover_chunks(
+            None, [Beat()],
+            {"beats": [{"id": 3, "payload": raw_line}]},
+            "test-model", "fresh", "medium", "en", "", False, None, "", 8.0, None,
+        )
+        assert dropped_vo[3] == ""
+        assert raw_line not in dropped_vo[3]
+
+
+def test_looks_like_raw_quote_detects_dialogue_leftovers():
+    from core.script_generator import _looks_like_raw_quote
+
+    assert _looks_like_raw_quote("If I really am a Teto girl,") is True
+    assert _looks_like_raw_quote("I might just die if I say no.") is True
+    assert _looks_like_raw_quote("She wraps her arms around him, asking if he's okay.") is False
+
+
+def test_rewrite_raw_fallback_uses_chat_and_cleans_output():
+    from unittest.mock import MagicMock
+    from core.script_generator import ScriptGenerator
+
+    gen = ScriptGenerator.__new__(ScriptGenerator)
+    gen._chat = MagicMock(return_value="She wonders if she truly fits that description.")
+    beat = MagicMock(word_budget=20)
+    result = gen._rewrite_raw_fallback(
+        "If I really am a Teto girl,", beat, "some-model", "en", [],
+    )
+    assert result == "She wonders if she truly fits that description."
+    gen._chat.assert_called_once()
