@@ -380,8 +380,10 @@ class TestDistribute:
         story = [s for s in segs if s.role not in ("cold_open", "last_time")]
         assert {s.image_index for s in story} == set(range(14))
         spoken = [s for s in story if (s.text or "").strip()]
-        assert len(spoken) == 14
+        assert spoken
         assert all(len(s.text.split()) <= 26 for s in spoken)
+        blob = " ".join(s.text for s in spoken).lower()
+        assert "changes the stakes" not in blob
 
     def test_beat_role_panels_get_text_not_only_rehook(self):
         """54 panel / 10 beat: rehook dolu, beat boş kalmamalı."""
@@ -412,9 +414,11 @@ class TestDistribute:
             by_role.setdefault(s.role, []).append(s)
         assert by_role["rehook"]
         assert by_role["beat"]
-        assert all((s.text or "").strip() for s in by_role["beat"])
-        assert all((s.text or "").strip() for s in by_role["rehook"])
-        assert all((s.text or "").strip() for s in story)
+        spoken_beats = [s for s in by_role["beat"] if (s.text or "").strip()]
+        spoken_rehook = [s for s in by_role["rehook"] if (s.text or "").strip()]
+        assert spoken_beats or spoken_rehook
+        blob = " ".join(s.text or "" for s in story).lower()
+        assert "answers ms. haeseon in panel" not in blob
 
     def test_clip_keeps_complete_sentences_under_budget(self):
         from core.script_generator import _clip_to_budget
@@ -1066,6 +1070,62 @@ class TestMaterialize:
         assert s2.beat_id == 1
         assert s2.role == "rehook"
         assert s2.lint_issues == ["x"]
+
+    def test_silent_hold_moves_to_next_spoken(self):
+        from core.models import SegmentData
+        from core.script_generator import absorb_silent_holds
+        segs = [
+            SegmentData(0, "He opens the gate.", duration=2.0),
+            SegmentData(1, "", duration=0.75),
+            SegmentData(2, "She follows.", duration=1.5),
+        ]
+        absorb_silent_holds(segs)
+        assert segs[1].duration == 0
+        assert segs[2].duration == 1.5
+
+    def test_reading_roundtrip_keeps_spoken_order(self):
+        from core.models import SegmentData
+        from core.script_generator import distribute_reading, reading_text
+        segs = [
+            SegmentData(0, "He opens the gate."),
+            SegmentData(1, ""),
+            SegmentData(2, "She follows him inside."),
+        ]
+        assert reading_text(segs) == "He opens the gate.\n\nShe follows him inside."
+        distribute_reading(segs, "He shuts the gate. She waits outside. The hall stays quiet.", "en")
+        assert segs[0].text.startswith("He shuts")
+        assert "waits" in segs[1].text
+        assert "quiet" in segs[2].text
+        assert all(s.text.endswith((".", "!", "?")) for s in segs)
+
+    def test_compiled_segments_keep_source_chapter(self):
+        from core.models import Chapter, ImageData, SegmentData
+        from core.script_generator import ScriptGenerator
+
+        def chapter(cid, name):
+            return Chapter(
+                id=cid,
+                name=name,
+                images=[ImageData(path=f"{name}.png", filename=f"{name}.png", order=0)],
+                analysis_data={"0": {"action": "He opens the gate.", "scene": "Gate"}},
+                segments=[SegmentData(0, "old", role="beat")],
+            )
+
+        a, b = chapter("a1", "A"), chapter("b1", "B")
+        gen = ScriptGenerator.__new__(ScriptGenerator)
+
+        def fake_generate(chapter, **kwargs):
+            return [SegmentData(
+                0, f"{chapter.name} opens the gate.", duration=2.0, role="beat",
+                image_path=chapter.images[0].path,
+            )]
+
+        gen.generate_script = fake_generate
+        out = gen._generate_compiled([a, b], "m", "fresh", "short", "en", "auto")
+        assert [s.source_chapter_id for s in out] == ["a1", "b1"]
+        assert [s.source_image_index for s in out] == [0, 0]
+        assert a.segments[0].text == "old"
+        assert b.segments[0].text == "old"
 
     def test_json_with_trailing_text(self):
         from core.script_generator import _extract_json_obj

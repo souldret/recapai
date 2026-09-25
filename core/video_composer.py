@@ -393,6 +393,8 @@ class VideoComposer:
         def _process(idx: int, seg) -> Optional[str]:
             if cancel_check and cancel_check():
                 return None
+            if not (getattr(seg, "text", None) or "").strip() and not getattr(seg, "audio_path", None):
+                return ""
 
             img_path: Optional[str] = None
             extra_path = getattr(seg, "image_path", None)
@@ -402,6 +404,8 @@ class VideoComposer:
                 img_path = images[seg.image_index].path
 
             duration = _segment_clip_duration(seg)
+            if duration <= 0:
+                return ""
             clip_out = str(tmp_dir / f"clip_{idx:04d}.mp4")
 
             if not img_path or not Path(img_path).exists():
@@ -468,6 +472,8 @@ class VideoComposer:
         missing = 0
         for i in range(total):
             path = results.get(i)
+            if path == "":
+                continue
             if path:
                 clip_paths.append(path)
                 continue

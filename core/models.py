@@ -44,6 +44,8 @@ class SegmentData:
     role: str = ""
     lint_issues: List[str] = field(default_factory=list)
     image_path: Optional[str] = None
+    source_chapter_id: str = ""
+    source_image_index: Optional[int] = None
 
     def to_dict(self) -> Dict[str, Any]:
         return asdict(self)
@@ -62,6 +64,8 @@ class SegmentData:
             role=data.get("role") or "",
             lint_issues=[str(x) for x in issues],
             image_path=data.get("image_path"),
+            source_chapter_id=data.get("source_chapter_id") or "",
+            source_image_index=data.get("source_image_index"),
         )
 
 

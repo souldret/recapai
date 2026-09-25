@@ -153,7 +153,28 @@ class TestSanitizeAnalysisCharacters:
         out = _with_known_characters("BASE PROMPT", project=p)
         assert "Jin-Woo" in out
         assert "black hair" in out
-        assert "BİLİNEN KARAKTERLER" in out
+        assert "KNOWN CAST" in out
+
+    def test_analyze_image_locks_english(self, monkeypatch):
+        from core.ai_analyzer import AIAnalyzer
+        captured = {}
+
+        class FakeClient:
+            def vision_analyze(self, model, image_path, prompt, fallback_models=None):
+                captured["prompt"] = prompt
+                return {"content": '{"scene":"A gate.","action":"He opens it."}', "model": model, "usage": {}}
+
+        analyzer = AIAnalyzer.__new__(AIAnalyzer)
+        analyzer._settings = type("S", (), {
+            "has_api_key": lambda self: True,
+            "reload": lambda self: None,
+            "get_api_key": lambda self: "sk-test",
+            "get": lambda self, key, default=None: default,
+        })()
+        analyzer._client = FakeClient()
+        result = analyzer.analyze_image("panel.png", "google/gemini-2.5-flash")
+        assert "OUTPUT LANGUAGE: English only" in captured["prompt"]
+        assert result["scene"] == "A gate."
 
     def test_vision_prompt_uses_object_schema(self):
         from pathlib import Path

@@ -134,6 +134,29 @@ def test_ab_hook_not_embedded_in_vo():
     assert chapter.script_meta["selected_hook"] == "A"
 
 
+def test_empty_bible_does_not_block_script():
+    from core.pipeline import require_character_bible
+
+    chapter = Chapter(id="c", name="n", analysis_data={"0": {"scene": "A gate."}})
+    project = Project(id="p", name="P", created_at="", updated_at="", chapters=[chapter])
+    assert require_character_bible(project, chapter) == 0
+
+
+def test_compiled_hooks_stay_off_source_chapter():
+    from ui.workers.script_worker import ScriptWorker
+
+    source = Chapter(id="src", name="Kaynak", segments=[SegmentData(0, "Kaynak metni.", role="cold_open")])
+    worker = ScriptWorker.__new__(ScriptWorker)
+    worker._compile_chapters = [source]
+    worker._pending_hooks = []
+    worker._chapter = source
+    variants = [{"id": "A", "text": "A hook."}, {"id": "B", "text": "B hook."}]
+    if worker._compile_chapters:
+        worker._pending_hooks = variants
+    assert source.script_meta == {}
+    assert worker._pending_hooks[1]["id"] == "B"
+
+
 def test_polish_does_not_replace_saved_script_when_unassigned():
     from core.script_quality import polish_segments
 

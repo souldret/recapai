@@ -265,11 +265,11 @@ class PipelineWorker(QThread):
         try:
             from core.pipeline import require_character_bible
             n_bible = require_character_bible(self._project, chapter)
-            self.log.emit(f"  [Bible] {n_bible} karakter kaydı hazır.")
+            if n_bible:
+                self.log.emit(f"  [Bible] {n_bible} karakter kaydı hazır.")
+            else:
+                self.log.emit("  [Bible] isim yok, üretim isimsiz devam ediyor.")
         except Exception as bible_exc:
-            if not self._skip_script:
-                self.error.emit(f"Karakter bible: {bible_exc}")
-                return
             self.log.emit(f"  [Bible] atlandı: {bible_exc}")
 
         # ── Aşama 2: Script ──────────────────────────────────────

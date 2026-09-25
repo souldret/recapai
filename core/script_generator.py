@@ -1309,12 +1309,63 @@ def _redistribute_beat_sentences(segments, language: str = "en") -> None:
             s.duration = ScriptGenerator.estimate_duration(sent, language)
 
 
+def _sentence_key(text: str) -> str:
+    return re.sub(r"\s+", " ", re.sub(r"[^a-z0-9çğıöşü ]+", "", (text or "").lower())).strip()
+
+
+def _drop_repeated_sentences(segments):
+    """Aynı beat içinde aynı cümle ikinci kez söylenmez."""
+    by_beat: Dict[Any, List] = {}
+    for seg in segments or []:
+        by_beat.setdefault(getattr(seg, "beat_id", None), []).append(seg)
+    for group in by_beat.values():
+        seen = set()
+        for seg in group:
+            kept = []
+            for sent in _split_sentences(getattr(seg, "text", "") or ""):
+                key = _sentence_key(sent)
+                if len(key) >= 8 and key in seen:
+                    continue
+                if len(key) >= 8:
+                    seen.add(key)
+                kept.append(sent)
+            seg.text = " ".join(kept).strip()
+            if not seg.text:
+                seg.duration = SILENT_HOLD_SEC
+    return segments
+
+
+def _separate_hook_from_body(segments):
+    """Cold open gövdede tekrarlanmaz."""
+    hook_keys = set()
+    for seg in segments or []:
+        if (getattr(seg, "role", "") or "") != "cold_open":
+            continue
+        for sent in _split_sentences(getattr(seg, "text", "") or ""):
+            key = _sentence_key(sent)
+            if len(key) >= 8:
+                hook_keys.add(key)
+    if not hook_keys:
+        return segments
+    for seg in segments or []:
+        if (getattr(seg, "role", "") or "") == "cold_open":
+            continue
+        kept = [
+            sent for sent in _split_sentences(getattr(seg, "text", "") or "")
+            if _sentence_key(sent) not in hook_keys
+        ]
+        seg.text = " ".join(kept).strip()
+        if not seg.text:
+            seg.duration = SILENT_HOLD_SEC
+    return segments
+
+
 def _fill_empty_story_panels(segments, chapter, language: str, length: str, project=None):
-    """Fazla cümle boş kareye yayılır. Analiz hedef dilde değilse kare sessiz kalır."""
+    """Fazla cümle boş kareye yayılır. Analiz satırı seslendirme olmaz."""
+    del chapter, length, project
     if not segments:
         return segments
     _redistribute_beat_sentences(segments, language)
-    avoid = " ".join((getattr(s, "text", None) or "") for s in segments)
     for seg in segments:
         role = (getattr(seg, "role", None) or "").lower()
         if role in ("cold_open", "last_time"):
@@ -1323,24 +1374,8 @@ def _fill_empty_story_panels(segments, chapter, language: str, length: str, proj
         if text and not _is_meta_filler(text) and not _wrong_language(text, language):
             seg.duration = ScriptGenerator.estimate_duration(text, language)
             continue
-        if (length or "medium").lower() == "short":
-            if not text or _wrong_language(text, language) or _is_meta_filler(text):
-                seg.text = ""
-                seg.duration = SILENT_HOLD_SEC
-            continue
-        idx = int(getattr(seg, "image_index", 0) or 0)
-        bit = _panel_glue(
-            chapter, idx, language, avoid=avoid, project=project, length=length,
-        )
-        if not bit or _is_meta_filler(bit) or _wrong_language(bit, language):
-            if not text or _wrong_language(text, language) or _is_meta_filler(text):
-                seg.text = ""
-                seg.duration = SILENT_HOLD_SEC
-            continue
-        cap = panel_word_cap(length, role or "beat")
-        seg.text = _clip_to_budget(bit, cap)
-        seg.duration = ScriptGenerator.estimate_duration(seg.text, language)
-        avoid = (avoid + " " + seg.text).strip()
+        seg.text = ""
+        seg.duration = SILENT_HOLD_SEC
     return segments
 
 
@@ -1358,6 +1393,27 @@ def _drop_wrong_language_segments(segments, language: str, chapter=None, length:
     return _fill_empty_story_panels(segments, chapter, language, length, project)
 
 
+def absorb_silent_holds(segments):
+    """Sessiz kare video süresi üretmez. Komşu klip uzatılmaz; ses kaymaz."""
+    if not segments:
+        return segments
+    for seg in segments:
+        if (getattr(seg, "text", None) or "").strip():
+            continue
+        seg.duration = 0.0
+        seg.audio_path = None
+    return segments
+
+
+def reading_text(segments) -> str:
+    """Konuşulan satırları tek metin olarak birleştirir. Sessiz kareler düşer."""
+    return "\n\n".join(
+        (getattr(s, "text", None) or "").strip()
+        for s in (segments or [])
+        if (getattr(s, "text", None) or "").strip()
+    )
+
+
 def _spread_parts(parts: List[str], panel_count: int) -> List[str]:
     slots = [""] * panel_count
     n = len(parts)
@@ -1370,6 +1426,30 @@ def _spread_parts(parts: List[str], panel_count: int) -> List[str]:
             end = min(n, start + 1)
         slots[i] = " ".join(parts[start:end]).strip()
     return slots
+
+
+def distribute_reading(segments, text: str, language: str = "en"):
+    """Okuma metnini tüm panellere böler. Cümle azsa birleşik bloklar panellere yayılır."""
+    targets = list(segments or [])
+    if not targets:
+        return segments
+    sentences = _split_sentences(text or "")
+    if not sentences:
+        sentences = [b.strip() for b in re.split(r"\n+", text or "") if b.strip()]
+    if not sentences:
+        return segments
+    if len(sentences) >= len(targets):
+        parts = _spread_parts(sentences, len(targets))
+    else:
+        parts = [""] * len(targets)
+        for i, sent in enumerate(sentences):
+            parts[i] = sent
+    for seg, part in zip(targets, parts):
+        seg.text = (part or "").strip()
+        seg.duration = (
+            ScriptGenerator.estimate_duration(seg.text, language) if seg.text else 0.0
+        )
+    return segments
 
 
 def _distribute_text(text: str, panel_count: int) -> List[str]:
@@ -1632,15 +1712,6 @@ class ScriptGenerator:
             use_hook=bool(use_hook), include_last_time=bool(include_last_time),
             last_src=last_src, length=length, project=project,
         )
-        empty_story = [
-            s for s in segments
-            if (getattr(s, "role", "") or "") not in ("cold_open", "last_time")
-            and not (s.text or "").strip()
-        ]
-        if empty_story and stream_callback:
-            stream_callback(
-                f"\n[{len(empty_story)} görselde analiz cümlesi yok, sessiz bırakıldı]\n"
-            )
         segments = _fill_empty_story_panels(segments, chapter, language, length, project)
         segments = _pace_clip_segments(segments, length, language)
         segments = _drop_wrong_language_segments(
@@ -1655,14 +1726,14 @@ class ScriptGenerator:
                 segments, language, chapter=chapter, length=length, project=project,
             )
             lint_segments(segments)
-        from core.script_quality import polish_segments
-        segments = polish_segments(
-            self, chapter, segments,
-            model=self._pick_model(model, premium=True),
-            style=style, language=language, length=length, niche=niche,
-            project=project, stop_flag=stop_flag, stream_callback=stream_callback,
-            assign=assign,
-        )
+        segments = _separate_hook_from_body(segments)
+        segments = _drop_repeated_sentences(segments)
+        lint_segments(segments)
+        if project is not None:
+            from core.script_linter import flag_hidden_names
+            from core.character_bible import get_entries
+            flag_hidden_names(segments, [e.get("canonical", "") for e in get_entries(project)])
+        segments = absorb_silent_holds(segments)
         if assign:
             meta = dict(getattr(chapter, "script_meta", None) or {})
             meta.update({
@@ -2183,18 +2254,6 @@ class ScriptGenerator:
                 parts = _pace_distribute(body, len(panels), per)
                 if sum(1 for part in parts if (part or "").strip()) <= 1 and len(_split_sentences(body)) >= 2:
                     parts = _distribute_text(body, len(panels))
-            avoid = " ".join(p for p in parts if p)
-            if (length or "medium").lower() != "short":
-                for i, panel_i in enumerate(panels):
-                    if (parts[i] or "").strip():
-                        continue
-                    bit = _panel_glue(
-                        chapter, panel_i, language, avoid=avoid, project=project,
-                        length=length,
-                    )
-                    if bit:
-                        parts[i] = _clip_to_budget(bit, per)
-                        avoid = (avoid + " " + parts[i]).strip()
             for panel_i, part in zip(panels, parts):
                 texts[panel_i] = (part or "").strip()
                 roles[panel_i] = b.role or "beat"
@@ -2270,7 +2329,9 @@ class ScriptGenerator:
             ))
         story.sort(key=lambda s: (s.image_index, 0 if (s.text or "").strip() else 1))
         segs = prefix + story
-        return _fill_empty_story_panels(segs, chapter, language, length, project)
+        segs = _fill_empty_story_panels(segs, chapter, language, length, project)
+        segs = _separate_hook_from_body(segs)
+        return _drop_repeated_sentences(segs)
 
     def _make_segment(
         self,
@@ -2361,6 +2422,8 @@ class ScriptGenerator:
                     s.duration = self.estimate_duration(s.text, language)
                 if not s.image_path and 0 <= s.image_index < len(ch.images):
                     s.image_path = getattr(ch.images[s.image_index], "path", None)
+                s.source_chapter_id = ch.id
+                s.source_image_index = s.image_index
             all_segs.extend(segs)
             prev_tail = " ".join(s.text.strip() for s in segs[-4:] if (s.text or "").strip())
         if not all_segs:

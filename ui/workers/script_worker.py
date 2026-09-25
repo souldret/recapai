@@ -240,3 +240,42 @@ class RegenerateSegmentWorker(QThread):
         except Exception as exc:
             logger.error("RegenerateSegmentWorker hata: %s", exc)
             self.error.emit(str(exc))
+
+
+class LintFixWorker(QThread):
+    """Lint hatalı satırları kullanıcı isteyince yeniden yazar."""
+
+    done = pyqtSignal()
+    error = pyqtSignal(str)
+
+    def __init__(self, chapter: Chapter, model: str, api_key: str, language: str = "en", parent=None) -> None:
+        super().__init__(parent)
+        self._chapter = chapter
+        self._model = model
+        self._api_key = api_key
+        self._language = language
+
+    def run(self) -> None:
+        from core.openrouter_client import OpenRouterClient, OpenRouterError
+        from core.script_generator import ScriptGenerator
+        from core.script_quality import polish_segments
+        from core.settings_manager import SettingsManager
+        try:
+            sm = SettingsManager.instance()
+            sm.reload()
+            api_key = sm.get_api_key() or (self._api_key or "").strip()
+            if not api_key:
+                self.error.emit("API anahtarı tanımlı değil.")
+                return
+            client = OpenRouterClient.instance()
+            client.update_api_key(api_key)
+            polish_segments(
+                ScriptGenerator(client), self._chapter, self._chapter.segments,
+                model=self._model, language=self._language, assign=True,
+            )
+            self.done.emit()
+        except OpenRouterError as exc:
+            self.error.emit(str(exc))
+        except Exception as exc:
+            logger.exception("Lint düzeltme hatası: %s", exc)
+            self.error.emit(str(exc))

@@ -358,12 +358,10 @@ def ensure_character_bible(project, chapter) -> int:
 
 
 def require_character_bible(project, chapter) -> int:
-    """Analizden bible'ı doldurur; isim yoksa ValueError."""
+    """Analizden bible'ı doldurur. İsim yoksa 0 döner; üretim durmaz."""
     n = ensure_character_bible(project, chapter)
     from core.character_bible import has_named_characters
     if not has_named_characters(project):
-        raise ValueError(
-            "Karakter bible boş. Analiz karakter ismi üretmedi; "
-            "AI Analiz sayfasından kadroyu doldurup tekrar dene."
-        )
+        logger.info("Karakter bible boş; üretim isimsiz devam edecek.")
+        return 0
     return n

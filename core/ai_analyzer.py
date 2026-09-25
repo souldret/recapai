@@ -49,13 +49,13 @@ def _with_known_characters(
         return prompt
     roster = "\n".join(f"- {n}" for n in names)
     extra = (
-        "\n\nBİLİNEN KARAKTERLER (bu serinin kadrosu — isim + görünüm):\n"
+        "\n\nKNOWN CAST (name + look):\n"
         f"{roster}\n"
-        "Bu panelde aynı kişi varsa characters[].name'e TAM kanonik ismi yaz. "
-        "Görünüm (saç, zırh) roster ile uyuyorsa visual label'ı name'e koyma; ismi yaz. "
-        "Yeni gerçek isim (balon/plaka) varsa ekle. "
-        "İsim yoksa name=\"\" bırak; appearance'a kısa görsel not yazılabilir. "
-        "YASAK name: Protagonist, MC, blonde woman, yellow hair, kızıl saçlı."
+        "If this panel shows one of them, write the FULL canonical name in characters[].name. "
+        "Do not put a visual label in name when the roster already names them. "
+        "Add a new real name only if a balloon or nameplate shows it. "
+        "If there is no name, leave name=\"\" and put a short visual note in appearance. "
+        "Forbidden name values: Protagonist, MC, blonde woman, yellow hair, kızıl saçlı."
     )
     return prompt + extra
 
@@ -221,6 +221,12 @@ class AIAnalyzer:
 
         effective_prompt = _with_known_characters(
             prompt or _load_vision_prompt(), known_names, project=project,
+        )
+        effective_prompt += (
+            "\n\nOUTPUT LANGUAGE: English only. "
+            "scene, action, mood, setting, and dialogues must be English sentences. "
+            "Do not write Turkish. Translate panel meaning into English. "
+            "Keep real character names unchanged."
         )
         logger.debug(
             "analyze_image: model=%s api_key_len=%d path=%s",

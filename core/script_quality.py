@@ -21,6 +21,7 @@ _ERROR_HINTS = (
     "outro",
     "saç/görünüm",
     "sahte beat filler",
+    "isim gizli",
 )
 
 

@@ -157,26 +157,29 @@ class SegmentCard(QFrame):
 
         # Orta: başlık + editör
         mid = QVBoxLayout()
-        mid.setSpacing(4)
+        mid.setSpacing(6)
 
         hdr = QHBoxLayout()
+        hdr.setSpacing(8)
         self.lbl_no = QLabel(self._title_label())
         self.lbl_no.setObjectName("cardValue")
         hdr.addWidget(self.lbl_no)
         self.lbl_duration = QLabel(self._dur_label())
         self.lbl_duration.setObjectName("pageSubtitle")
         hdr.addWidget(self.lbl_duration)
+        hdr.addStretch()
+        mid.addLayout(hdr)
+
         self.lbl_lint = QLabel("")
         self.lbl_lint.setObjectName("pageSubtitle")
         self.lbl_lint.setWordWrap(True)
-        hdr.addWidget(self.lbl_lint, 1)
-        hdr.addStretch()
-        mid.addLayout(hdr)
+        self.lbl_lint.hide()
+        mid.addWidget(self.lbl_lint)
 
         self.text_edit = FocusAwareTextEdit(self)
         self.text_edit.setUndoRedoEnabled(False)
         self.text_edit.setPlainText(self.segment.text)
-        self.text_edit.setPlaceholderText("Bu görsel sessiz — analizde hedef dilde cümle yok.")
+        self.text_edit.setPlaceholderText("")
         self.text_edit.setFixedHeight(110)
         self.text_edit.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
         self.text_edit.textChanged.connect(self._on_text_changed)
@@ -238,9 +241,11 @@ class SegmentCard(QFrame):
             self.lbl_lint.setStyleSheet(
                 "color: #ef4444;" if level == "error" else "color: #f59e0b;"
             )
+            self.lbl_lint.show()
         else:
             self.lbl_lint.setText("")
             self.lbl_lint.setStyleSheet("")
+            self.lbl_lint.hide()
         if apply_border or not self.text_edit.hasFocus():
             self.apply_lint_border()
 
@@ -478,7 +483,26 @@ class ScriptPage(QWidget):
         right = QWidget()
         rv = QVBoxLayout(right)
         rv.setContentsMargins(0, 0, 0, 0)
-        rv.setSpacing(0)
+        rv.setSpacing(8)
+
+        read_box = QFrame()
+        read_box.setObjectName("sectionFrame")
+        read_lay = QVBoxLayout(read_box)
+        read_lay.setContentsMargins(12, 10, 12, 10)
+        read_lay.setSpacing(8)
+        read_title = QLabel("Okunur metin")
+        read_title.setObjectName("cardSubtitle")
+        read_lay.addWidget(read_title)
+        self.reading_edit = QPlainTextEdit()
+        self.reading_edit.setPlaceholderText("Konuşulan metin tek parça burada. Düzenleyip panellere dağıt.")
+        self.reading_edit.setMinimumHeight(96)
+        self.reading_edit.setMaximumHeight(160)
+        read_lay.addWidget(self.reading_edit)
+        self.btn_apply_reading = QPushButton("Metni panellere dağıt")
+        self.btn_apply_reading.setObjectName("secondaryBtn")
+        self.btn_apply_reading.clicked.connect(self._apply_reading)
+        read_lay.addWidget(self.btn_apply_reading, 0, Qt.AlignmentFlag.AlignLeft)
+        rv.addWidget(read_box)
 
         scroll = QScrollArea()
         scroll.setWidgetResizable(True)
@@ -611,7 +635,7 @@ class ScriptPage(QWidget):
 
         row2a.addWidget(QLabel("Hedef dk:"))
         self.minutes_spin = QSpinBox()
-        self.minutes_spin.setRange(2, 180)
+        self.minutes_spin.setRange(1, 180)
         self.minutes_spin.setValue(6)
         self.minutes_spin.setEnabled(False)
         self.minutes_spin.setFixedWidth(72)
@@ -641,12 +665,12 @@ class ScriptPage(QWidget):
         )
         row2b.addWidget(self.ab_hook_check)
 
-        row2b.addWidget(QLabel("Kanca:"))
         self.hook_variant_combo = QComboBox()
-        self.hook_variant_combo.setMinimumWidth(72)
+        self.hook_variant_combo.setMinimumWidth(220)
+        self.hook_variant_combo.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
         self.hook_variant_combo.setToolTip("Üretilen A/B kancalardan birini cold open'a uygula.")
         self.hook_variant_combo.currentIndexChanged.connect(self._on_hook_variant_chosen)
-        row2b.addWidget(self.hook_variant_combo)
+        row2b.addWidget(self.hook_variant_combo, 1)
 
         self.last_time_check = QCheckBox("Last time")
         self.last_time_check.setToolTip(
@@ -675,6 +699,12 @@ class ScriptPage(QWidget):
         self._refresh_plan()
 
         # Satır 4: Aksiyonlar
+        self.plan_lbl = QLabel("Önizleme: bölüm seçilince çağrı ve süre burada görünür.")
+        self.plan_lbl.setObjectName("pageSubtitle")
+        self.plan_lbl.setWordWrap(True)
+        self.plan_lbl.setMinimumHeight(36)
+        vbox.addWidget(self.plan_lbl)
+
         row2 = QHBoxLayout()
         row2.setContentsMargins(0, 0, 0, 0)
         row2.setSpacing(10)
@@ -700,12 +730,6 @@ class ScriptPage(QWidget):
 
         row2.addStretch()
 
-        self.plan_lbl = QLabel("Önizleme: bölüm seçilince çağrı ve süre burada görünür.")
-        self.plan_lbl.setObjectName("pageSubtitle")
-        self.plan_lbl.setWordWrap(False)
-        row2.addWidget(self.plan_lbl)
-
-        # Kaydet
         self.btn_save = QPushButton("  Kaydet")
         self.btn_save.setFixedWidth(110)
         self.btn_save.setObjectName("secondaryBtn")
@@ -741,8 +765,9 @@ class ScriptPage(QWidget):
         h.setContentsMargins(0, 0, 0, 0)
         self.lbl_stream = QLabel("")
         self.lbl_stream.setObjectName("pageSubtitle")
-        h.addWidget(self.lbl_stream)
-        h.addStretch()
+        self.lbl_stream.setWordWrap(True)
+        self.lbl_stream.setMinimumHeight(22)
+        h.addWidget(self.lbl_stream, 1)
         return w
 
     def _make_bottom_bar(self) -> QFrame:
@@ -763,19 +788,24 @@ class ScriptPage(QWidget):
         self.lbl_lint_summary = QLabel("Lint: 0")
         self.lbl_lint_summary.setObjectName("pageSubtitle")
         hbox.addWidget(self.lbl_lint_summary)
-
         hbox.addStretch()
 
-        btn_txt = QPushButton("  TXT Export")
-        btn_txt.setFixedWidth(140)
+        self.btn_fix_lint = QPushButton("Lint düzelt")
+        self.btn_fix_lint.setObjectName("secondaryBtn")
+        self.btn_fix_lint.setEnabled(False)
+        self.btn_fix_lint.clicked.connect(self._fix_lint)
+        hbox.addWidget(self.btn_fix_lint)
+
+        btn_txt = QPushButton("TXT")
+        btn_txt.setFixedWidth(88)
         btn_txt.setObjectName("secondaryBtn")
         btn_txt.setIcon(Icons.get(Icons.EXPORT))
         btn_txt.setIconSize(QSize(16, 16))
         btn_txt.clicked.connect(self._export_txt)
         hbox.addWidget(btn_txt)
 
-        btn_srt = QPushButton("  SRT Export")
-        btn_srt.setFixedWidth(140)
+        btn_srt = QPushButton("SRT")
+        btn_srt.setFixedWidth(88)
         btn_srt.setObjectName("secondaryBtn")
         btn_srt.setIcon(Icons.get(Icons.EXPORT))
         btn_srt.setIconSize(QSize(16, 16))
@@ -786,8 +816,6 @@ class ScriptPage(QWidget):
 
     def _on_length_changed(self, value: int) -> None:
         self.lbl_length.setText(LENGTH_LABELS[LENGTHS[value]])
-        defaults = {"short": 3, "medium": 6, "long": 9}
-        self.minutes_spin.setValue(defaults.get(LENGTHS[value], 6))
         self._refresh_auto_duration_hint()
 
     def _on_auto_duration_toggled(self, checked: bool) -> None:
@@ -897,7 +925,9 @@ class ScriptPage(QWidget):
         language = self.lang_combo.currentData() or "en"
         resolved = resolve_target_minutes(length, None, n_images=n, language=language)
         if resolved:
-            self.minutes_spin.setValue(max(2, min(180, int(round(resolved)))))
+            self.minutes_spin.setValue(max(1, min(180, int(round(resolved)))))
+        elif length == "short":
+            self.minutes_spin.setValue(1)
 
     # ── Helpers ────────────────────────────────────────────────────
 
@@ -1054,11 +1084,35 @@ class ScriptPage(QWidget):
         if not chapter.segments:
             return
         for i, seg in enumerate(chapter.segments):
+            if not (getattr(seg, "text", None) or "").strip():
+                continue
             thumb = self._get_thumbnail(seg.image_index, getattr(seg, "image_path", None))
             self._add_card(i, seg, thumb)
         self._update_stats()
         if self._cards:
             self._activate_card(0)
+        self._refresh_reading(chapter)
+
+    def _refresh_reading(self, chapter=None) -> None:
+        edit = getattr(self, "reading_edit", None)
+        if edit is None:
+            return
+        from core.script_generator import reading_text
+        chapter = chapter or self.ctx.app_state.current_chapter
+        segs = getattr(chapter, "segments", None) or []
+        edit.blockSignals(True)
+        edit.setPlainText(reading_text(segs))
+        edit.blockSignals(False)
+
+    def _apply_reading(self) -> None:
+        chapter = self.ctx.app_state.current_chapter
+        if not chapter or not chapter.segments:
+            return
+        from core.script_generator import distribute_reading
+        language = self.lang_combo.currentData() or "en"
+        distribute_reading(chapter.segments, self.reading_edit.toPlainText(), language)
+        self._load_segments(chapter)
+        self._save_project(quiet=True)
 
     def _clear_cards(self) -> None:
         for card in self._cards:
@@ -1158,13 +1212,16 @@ class ScriptPage(QWidget):
 
         try:
             from core.pipeline import require_character_bible
-            require_character_bible(
+            n_bible = require_character_bible(
                 state.current_project,
                 compile_chapters[0] if compile_chapters else chapter,
             )
-        except ValueError as bible_exc:
-            QMessageBox.warning(self, "Karakter Bible", str(bible_exc))
-            return
+            if not n_bible:
+                self.lbl_stream.setText(
+                    "<span style='color:#e0af68;'>Karakter ismi yok. Üretim isimsiz devam edecek.</span>"
+                )
+        except Exception:
+            pass
 
         api_key = self._get_api_key()
         if not api_key:
@@ -1278,12 +1335,11 @@ class ScriptPage(QWidget):
         self._load_segments(chapter)
         self._refresh_hook_variants(chapter)
         self._save_project()
-        silent = sum(1 for s in segments if not (getattr(s, "text", "") or "").strip())
-        note = f" · {silent} görsel sessiz" if silent else ""
+        spoken = sum(1 for s in segments if (getattr(s, "text", "") or "").strip())
         self.lbl_stream.setText(
-            f"<span style='color:#22c55e;'><b>BAŞARILI:</b> {len(segments)} segment{note}.</span>"
+            f"<span style='color:#22c55e;'><b>BAŞARILI:</b> {spoken} konuşulan kare.</span>"
         )
-        self.ctx.app_state.status_message.emit(f"Script hazır: {len(segments)} segment{note}")
+        self.ctx.app_state.status_message.emit(f"Script hazır: {spoken} konuşulan kare")
 
     def _store_compiled_script(self, project, segments: list):
         """Derlemeyi kaynak bölümlerin üzerine yazmadan ayrı bir bölümde saklar."""
@@ -1299,6 +1355,8 @@ class ScriptPage(QWidget):
                 filename=Path(path).name if path else f"panel-{len(images) + 1}",
                 order=len(images),
             ))
+            if getattr(seg, "source_image_index", None) is None:
+                seg.source_image_index = seg.image_index
             seg.image_index = len(images) - 1
         existing = next((c for c in project.chapters if c.name == COMPILED_NAME), None)
         if existing is None:
@@ -1413,11 +1471,17 @@ class ScriptPage(QWidget):
         if niche == "auto":
             niche = "power_fantasy"
         idx = getattr(card, "segment_index", self._cards.index(card))
+        source = self._regen_source(chapter, idx)
+        if source is None:
+            QMessageBox.warning(self, "Yeniden üret", "Bu karenin kaynak bölümü bulunamadı.")
+            return
+        source_chapter, source_index = source
 
         from ui.workers.script_worker import RegenerateSegmentWorker
         from ui.workers.thread_utils import start_worker
+        self._regen_target = (chapter, idx)
         self._regen_worker = RegenerateSegmentWorker(
-            chapter, idx, model, api_key, style, language, length, niche=niche,
+            source_chapter, source_index, model, api_key, style, language, length, niche=niche,
             project=state.current_project,
             parent=self,
         )
@@ -1427,16 +1491,48 @@ class ScriptPage(QWidget):
         card.btn_regen.setIcon(Icons.get(Icons.PROCESSING, color="#e0af68"))
         start_worker(self, self._regen_worker)
 
+    def _regen_source(self, chapter, index: int):
+        """Derleme kartını kaynak bölümün kendi segmentine yönlendirir."""
+        if not chapter or index < 0 or index >= len(chapter.segments):
+            return None
+        seg = chapter.segments[index]
+        source_id = getattr(seg, "source_chapter_id", "") or ""
+        if not source_id:
+            return chapter, index
+        project = self.ctx.app_state.current_project
+        source = project.get_chapter(source_id) if project else None
+        if source is None:
+            return None
+        image_index = getattr(seg, "source_image_index", None)
+        if image_index is None:
+            image_index = seg.image_index
+        for i, item in enumerate(source.segments or []):
+            if item.image_index == image_index and (item.role or "") == (seg.role or ""):
+                return source, i
+        for i, item in enumerate(source.segments or []):
+            if item.image_index == image_index:
+                return source, i
+        return None
+
     def _on_regen_done(self, index: int, segment: SegmentData, worker=None) -> None:
         if worker is not None and worker is not self._regen_worker:
             return
+        target = getattr(self, "_regen_target", None)
+        if target and target[0] is not None and 0 <= target[1] < len(target[0].segments):
+            shown_seg = target[0].segments[target[1]]
+            source_id = getattr(shown_seg, "source_chapter_id", "") or ""
+            if source_id and source_id != getattr(target[0], "id", ""):
+                shown_seg.text = segment.text
+                shown_seg.duration = segment.duration
+        shown = target[1] if target else index
         for card in self._cards:
-            if getattr(card, "segment_index", -1) == index:
+            if getattr(card, "segment_index", -1) == shown:
                 card.update_segment(segment)
                 card.btn_regen.setEnabled(True)
                 card.btn_regen.setIcon(Icons.get(Icons.REFRESH))
                 break
         self._update_stats()
+        self._refresh_reading()
         self._save_project(quiet=True)
 
     def _on_regen_error(self, msg: str, worker=None) -> None:
@@ -1469,6 +1565,42 @@ class ScriptPage(QWidget):
             self.lbl_lint_summary.setStyleSheet("color: #f59e0b;")
         else:
             self.lbl_lint_summary.setStyleSheet("color: #22c55e;")
+        if getattr(self, "btn_fix_lint", None):
+            self.btn_fix_lint.setEnabled(issues > 0)
+
+    def _fix_lint(self) -> None:
+        chapter = self.ctx.app_state.current_chapter
+        if not chapter or not chapter.segments:
+            return
+        api_key = self._get_api_key()
+        if not api_key:
+            QMessageBox.warning(self, "API Anahtarı Eksik", "Ayarlar bölümünden API anahtarı girin.")
+            return
+        from core.script_linter import lint_segments
+        from ui.workers.script_worker import LintFixWorker
+        from ui.workers.thread_utils import start_worker
+
+        lint_segments(chapter.segments)
+        language = self.lang_combo.currentData() or "en"
+        model = self.model_combo.currentData() or "google/gemini-2.5-flash"
+        self.btn_fix_lint.setEnabled(False)
+        self._lint_worker = LintFixWorker(
+            chapter, model, api_key, language=language, parent=self,
+        )
+        self._lint_worker.done.connect(self._on_lint_fixed)
+        self._lint_worker.error.connect(self._on_lint_error)
+        start_worker(self, self._lint_worker)
+
+    def _on_lint_fixed(self) -> None:
+        chapter = self.ctx.app_state.current_chapter
+        if chapter:
+            self._load_segments(chapter)
+            self._save_project(quiet=True)
+        self.btn_fix_lint.setEnabled(True)
+
+    def _on_lint_error(self, msg: str) -> None:
+        self.btn_fix_lint.setEnabled(True)
+        QMessageBox.critical(self, "Lint", msg)
 
     # ── Save ───────────────────────────────────────────────────────
 

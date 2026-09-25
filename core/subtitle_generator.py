@@ -58,14 +58,6 @@ def _segment_timeline(
     for seg in segments:
         text = (getattr(seg, "text", None) or "").strip()
         if not text:
-            # Boş metin yine de zamanı ilerletir (sessiz klip varsa)
-            duration = getattr(seg, "duration", 0) or 0.0
-            if duration <= 0:
-                continue
-            if written > 0 and t_dur > 0:
-                cursor = max(0.0, cursor - t_dur)
-            cursor += duration
-            written += 1
             continue
 
         duration = seg.duration if getattr(seg, "duration", 0) and seg.duration > 0 else _estimate_duration(text)

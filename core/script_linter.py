@@ -142,3 +142,18 @@ def worst_indices(segments: List[SegmentData], limit: int = 8) -> List[int]:
         reverse=True,
     )
     return [i for i, n in ranked if n > 0][:limit]
+
+
+def flag_hidden_names(segments: List[SegmentData], names: List[str]) -> List[SegmentData]:
+    """Kadrodaki isim metinde hiç yoksa son konuşulan satırı işaretler."""
+    spoken = " ".join((s.text or "") for s in segments or []).lower()
+    missing = [n for n in names if n and len(n) > 2 and n.lower() not in spoken]
+    if not missing:
+        return segments
+    for seg in reversed(segments or []):
+        if (seg.text or "").strip():
+            note = "İsim gizli: " + ", ".join(missing[:3])
+            if note not in (seg.lint_issues or []):
+                seg.lint_issues = list(seg.lint_issues or []) + [note]
+            break
+    return segments
