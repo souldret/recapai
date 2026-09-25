@@ -157,3 +157,23 @@ def flag_hidden_names(segments: List[SegmentData], names: List[str]) -> List[Seg
                 seg.lint_issues = list(seg.lint_issues or []) + [note]
             break
     return segments
+
+
+def restore_hidden_names(segments: List[SegmentData], names: List[str]) -> List[SegmentData]:
+    """Tek zamirli cümlede kadro tek isimse o ismi başa koyar. Birden fazla isimde uydurmaz."""
+    usable = [n.strip() for n in names or [] if n and len(n.strip()) > 2]
+    if len(usable) != 1:
+        return segments
+    name = usable[0]
+    spoken = " ".join((s.text or "") for s in segments or [])
+    if name.lower() in spoken.lower():
+        return segments
+    for seg in segments or []:
+        text = (seg.text or "").strip()
+        if not text:
+            continue
+        replaced = re.sub(r"^(He|She|They|O)\b", name, text, count=1)
+        if replaced != text:
+            seg.text = replaced
+            break
+    return segments

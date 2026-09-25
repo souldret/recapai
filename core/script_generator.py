@@ -1706,6 +1706,10 @@ class ScriptGenerator:
             stream_callback=stream_callback,
             stop_flag=stop_flag,
         )
+        vo_by_id = self._flow_narrative(
+            beats, vo_by_id, model, language, project,
+            stream_callback=stream_callback, stop_flag=stop_flag,
+        )
 
         segments = self._materialize_segments(
             chapter, beats, vo_by_id, outline, language, cold_idx,
@@ -1730,9 +1734,12 @@ class ScriptGenerator:
         segments = _drop_repeated_sentences(segments)
         lint_segments(segments)
         if project is not None:
-            from core.script_linter import flag_hidden_names
+            from core.script_linter import flag_hidden_names, restore_hidden_names
             from core.character_bible import get_entries
-            flag_hidden_names(segments, [e.get("canonical", "") for e in get_entries(project)])
+            names = [e.get("canonical", "") for e in get_entries(project)]
+            restore_hidden_names(segments, names)
+            lint_segments(segments)
+            flag_hidden_names(segments, names)
         segments = absorb_silent_holds(segments)
         if assign:
             meta = dict(getattr(chapter, "script_meta", None) or {})
@@ -1808,6 +1815,77 @@ class ScriptGenerator:
         if primary_line and text.strip() == primary_line:
             return ""
         return text
+
+    def _flow_narrative(
+        self,
+        beats,
+        vo_by_id: Dict[int, str],
+        model: str,
+        language: str,
+        project,
+        stream_callback: Optional[Callable[[str], None]] = None,
+        stop_flag: Optional[Callable[[], bool]] = None,
+    ) -> Dict[int, str]:
+        """Beat metinlerini tek okumada akan anlatıya çevirir. Bozuksa eski metin kalır."""
+        if stop_flag and stop_flag():
+            return vo_by_id
+        story = [b for b in beats if (getattr(b, "role", "") or "") not in ("cold_open", "last_time")]
+        lines = []
+        for b in story:
+            text = (vo_by_id.get(b.beat_id) or "").strip()
+            if text:
+                lines.append(f"{b.beat_id}. {text}")
+        if len(lines) < 2:
+            return vo_by_id
+        from core import character_bible as bible
+        names = [e.get("canonical", "") for e in bible.get_entries(project)]
+        names = [n for n in names if n]
+        en = (language or "").lower().startswith("en")
+        name_rule = (
+            "If a name is in the cast, say that name. Do not hide them behind he or she.\n"
+            if names else ""
+        )
+        prompt = (
+            ("Rewrite these beats as ONE continuous third-person recap.\n" if en else
+             "Bu beat'leri tek, kesintisiz üçüncü şahıs anlatı olarak yeniden yaz.\n")
+            + "Read it aloud in one pass. Each next sentence must follow the previous one.\n"
+            + "Do not restart a beat. Do not repeat a fact. Do not describe the picture.\n"
+            + name_rule
+            + ("Cast: " + ", ".join(names[:12]) + "\n" if names else "")
+            + ("English only.\n" if en else "Yalnızca Türkçe.\n")
+            + "JSON only: {\"beats\":[{\"id\":0,\"text\":\"...\"}]}\n\n"
+            + "\n".join(lines)
+        )
+        if stream_callback:
+            stream_callback("\n[Tek okuma]\n")
+        try:
+            raw = self._chat(
+                self._pick_model(model, premium=True),
+                prompt,
+                temperature=0.45,
+                max_tokens=2200,
+                language=language,
+                known_names=names,
+                retries=0,
+            )
+        except Exception as exc:
+            logger.warning("Tek okuma düştü, beat metni korunuyor: %s", exc)
+            return vo_by_id
+        parsed = _parse_beats_voiceover(raw)
+        out = dict(vo_by_id)
+        applied = 0
+        for b in story:
+            text = (parsed.get(b.beat_id) or "").strip()
+            if not text or _wrong_language(text, language, names) or _is_meta_filler(text):
+                continue
+            text = _scrub_generic_labels(text, language, project=project)
+            if len(text.split()) < 4:
+                continue
+            out[b.beat_id] = text
+            applied += 1
+        if applied < max(1, len(lines) // 2):
+            return vo_by_id
+        return out
 
     def _chat(
         self,
