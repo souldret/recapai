@@ -12,7 +12,7 @@ from typing import Any, Dict, List, Optional, Tuple
 
 logger = logging.getLogger(__name__)
 
-MAX_BEAT_PANELS = 4
+MAX_BEAT_PANELS = 2
 MIN_BEAT_PANELS = 1
 FILLER_MAX_PANELS = 3
 MAX_STORY_BEATS = {"short": 8, "medium": 16, "long": 20}

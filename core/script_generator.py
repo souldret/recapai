@@ -1325,6 +1325,20 @@ _COMMENTARY_RE = re.compile(
 )
 
 
+def _repair_spoken_text(text: str) -> str:
+    """Kırık tırnağı kapat. Cümle who/while/as ile yarım kalırsa o kuyruğu at."""
+    raw = (text or "").strip()
+    if not raw:
+        return ""
+    if raw.count("'") % 2 == 1:
+        raw = re.sub(r"([.!?])$", r"'\1", raw) if raw.endswith((".", "!", "?")) else raw + "'"
+    if re.search(r",\s*(?:who|while|as)\b", raw, re.I):
+        raw = re.sub(r",\s*(?:who|while|as)\b[\s\S]*$", "", raw, count=1, flags=re.I).strip(" ,")
+    if raw and not _ends_sentence(raw):
+        raw += "."
+    return raw
+
+
 def _strip_commentary(text: str) -> str:
     """Olay kalsın. Yorum cümlesi ve virgülden sonraki anlam eki düşsün."""
     kept: List[str] = []
@@ -1341,9 +1355,7 @@ def _strip_commentary(text: str) -> str:
             continue
         if not _ends_sentence(bit):
             bit += "."
-        bit = re.sub(r"(^|[\s])'([^']+)$", r"\1'\2'", bit)
-        bit = re.sub(r"“([^”]+)$", r"“\1”", bit)
-        kept.append(bit)
+        kept.append(_repair_spoken_text(bit))
     return " ".join(kept).strip()
 
 
@@ -1411,7 +1423,7 @@ def _spoken_story_pass(segments, project, language: str):
                 genders[name.lower()] = "he"
     for seg in segments or []:
         text = _soften_shouted_names(getattr(seg, "text", "") or "")
-        text = _strip_commentary(text)
+        text = _repair_spoken_text(_strip_commentary(text))
         seg.text = text
     if not names:
         for seg in segments or []:

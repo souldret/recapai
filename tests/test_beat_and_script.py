@@ -1149,7 +1149,21 @@ class TestMaterialize:
         from core.script_generator import _strip_commentary
         text = "She tells him he is a 'Teto Guy,' surprising him with her observation about his personality."
         cleaned = _strip_commentary(text)
-        assert cleaned.endswith("Guy.\"") or cleaned.endswith("Guy.'")
+        assert cleaned.endswith("Guy'.")
+        assert "observation" not in cleaned
+
+    def test_dangling_tail_and_quote_are_repaired(self):
+        from core.models import SegmentData
+        from core.script_generator import _spoken_story_pass
+        segs = [
+            SegmentData(0, "She tells Sunbae he is a 'Teto Guy.", role="beat"),
+            SegmentData(1, "She confronts Sunbae, asking if his actions are 'because of Baek Yuyeon.", role="beat"),
+            SegmentData(2, "She grabs his arm, as he looks on with surprise.", role="beat"),
+        ]
+        _spoken_story_pass(segs, None, "en")
+        assert segs[0].text.endswith("Guy'.")
+        assert segs[1].text.endswith("Yuyeon'.")
+        assert "as he looks" not in segs[2].text
 
     def test_compiled_segments_keep_source_chapter(self):
         from core.models import Chapter, ImageData, SegmentData
