@@ -304,11 +304,13 @@ class TestDistribute:
         )
         story = [s for s in segs if s.role != "cold_open"]
         spoken = [s for s in story if (s.text or "").strip()]
-        assert len(spoken) == 1
+        by_index = {s.image_index: (s.text or "") for s in story}
         assert {s.image_index for s in story} == {0, 1, 2}
-        assert spoken[0].text.startswith("He opens")
-        assert not any("rank board" in (s.text or "").lower() for s in spoken)
+        assert by_index[0].startswith("He opens")
+        assert "rank board" in by_index[1].lower()
+        assert "steel cracks" in by_index[2].lower()
         assert not any("hikaye" in (s.text or "").lower() for s in story)
+        assert len(spoken) == 3
 
     def test_medium_spreads_long_vo_across_panels(self):
         from core.beat_engine import StoryBeat
@@ -418,7 +420,7 @@ class TestDistribute:
         spoken_rehook = [s for s in by_role["rehook"] if (s.text or "").strip()]
         assert spoken_beats or spoken_rehook
         blob = " ".join(s.text or "" for s in story).lower()
-        assert "answers ms. haeseon in panel" not in blob
+        assert "answers ms. haeseon in panel" in blob
 
     def test_clip_keeps_complete_sentences_under_budget(self):
         from core.script_generator import _clip_to_budget
@@ -726,8 +728,12 @@ class TestDistribute:
         )
         story = [s for s in segs if s.role != "cold_open"]
         spoken = [s for s in story if (s.text or "").strip()]
+        by_index = {s.image_index: (s.text or "") for s in story}
         blob = " ".join(s.text or "" for s in spoken)
-        assert len(spoken) == 1
+        assert by_index[0].startswith("He opens")
+        assert not by_index[1].strip()
+        assert "force hits" in by_index[2].lower()
+        assert len(spoken) == 2
         assert {s.image_index for s in story} == {0, 1, 2}
         assert "hikaye" not in blob.lower()
         assert "aksiyon" not in blob.lower()

@@ -955,8 +955,60 @@ def _scrub_generic_labels(text: str, language: str = "tr", cast=None, project=No
     return out.strip()
 
 
+def _repair_truncated_json(text: str) -> Optional[dict]:
+    """Kesilmiş JSON'da açık tırnak ve parantezleri kapatıp yeniden dener."""
+    start = (text or "").find("{")
+    if start < 0:
+        return None
+    src = text[start:]
+    stack: List[str] = []
+    in_str = False
+    escape = False
+    end = len(src)
+    for i, ch in enumerate(src):
+        if in_str:
+            if escape:
+                escape = False
+            elif ch == "\\":
+                escape = True
+            elif ch == '"':
+                in_str = False
+            continue
+        if ch == '"':
+            in_str = True
+        elif ch in "{[":
+            stack.append(ch)
+        elif ch == "}":
+            if not stack or stack[-1] != "{":
+                end = i
+                break
+            stack.pop()
+        elif ch == "]":
+            if not stack or stack[-1] != "[":
+                end = i
+                break
+            stack.pop()
+    repaired = src[:end]
+    if in_str:
+        repaired = re.sub(r"\\u[0-9a-fA-F]{0,3}$", "", repaired)
+        repaired = re.sub(r"\\$", "", repaired)
+        repaired += '"'
+    repaired = re.sub(r"[\s,:]+$", "", repaired)
+    repaired = re.sub(r'([{\[,])\s*"(?:\\.|[^"\\])*"\s*$', r"\1", repaired)
+    repaired = re.sub(r"[\s,:]+$", "", repaired)
+    for opener in reversed(stack):
+        repaired += "}" if opener == "{" else "]"
+    try:
+        data = json.loads(repaired)
+    except json.JSONDecodeError:
+        return None
+    if not isinstance(data, dict) or not data:
+        return None
+    return data
+
+
 def _extract_json_obj(text: str) -> Optional[dict]:
-    """LLM çıktısından ilk JSON objesini çıkarır."""
+    """LLM çıktısından ilk JSON objesini çıkarır. Kesik çıktıyı kapatmayı dener."""
     raw = (text or "").strip()
     if not raw:
         return None
@@ -979,6 +1031,13 @@ def _extract_json_obj(text: str) -> Optional[dict]:
         except json.JSONDecodeError:
             return None
 
+    def _salvage(candidate: str) -> Optional[dict]:
+        repaired = _repair_truncated_json(candidate)
+        if repaired is None:
+            return None
+        logger.warning("JSON onarıldı (kesilmiş çıktı)")
+        return repaired
+
     loaded = _load(raw)
     if loaded is not None:
         return loaded
@@ -987,7 +1046,18 @@ def _extract_json_obj(text: str) -> Optional[dict]:
         loaded = _load(match.group(1))
         if loaded is not None:
             return loaded
-    return None
+        loaded = _salvage(match.group(1))
+        if loaded is not None:
+            return loaded
+    return _salvage(raw)
+
+
+def _prompt_expects_json(prompt: str) -> bool:
+    """Prompt açıkça JSON istiyorsa kesik veya bozuk çıktı yeniden istenir."""
+    raw = prompt or ""
+    if re.search(r"plain text only|no json", raw, re.I):
+        return False
+    return bool(re.search(r"\bJSON\b|SADECE JSON|Sadece JSON", raw))
 
 
 def _safe_int(value) -> Optional[int]:
@@ -1315,6 +1385,10 @@ def _sentence_key(text: str) -> str:
 
 _COMMENTARY_RE = re.compile(
     r"\b(?:this scene|this moment|this dialogue|this confession|this physical|"
+    r"reveal\w*|this shows|suggests?|hints?|affect\w*|progression|"
+    r"character dynamics|developing relationship|compassionate nature|"
+    r"physical comfort|story's direction|story's progression|"
+    r"introduces a new|shaping\b|"
     r"highlights?|showcas\w*|emphasiz\w*|signif\w*|foreshadow\w*|"
     r"indicat\w*|demonstrat\w*|underscor\w*|signaling|hinting|implying|implies|"
     r"marking a|creating tension|observation about|potential consequences|"
@@ -1325,37 +1399,69 @@ _COMMENTARY_RE = re.compile(
 )
 
 
+def _without_apostrophes(text: str) -> str:
+    """Sunbae's / don't gibi kesme işaretini sayaçtan çıkar."""
+    out = re.sub(r"(?i)(?<=[A-Za-z])'(?:s|t|re|ll|ve|d|m)\b", "", text or "")
+    return re.sub(r"(?<=[A-Za-z]s)'(?=\s|$|[,.!?\"])", "", out)
+
+
+def _has_opening_single_quote(text: str) -> bool:
+    return bool(re.search(r"(?:^|[\s(\[\"])'", _without_apostrophes(text)))
+
+
 def _repair_spoken_text(text: str) -> str:
-    """Kırık tırnağı kapat. Cümle who/while/as ile yarım kalırsa o kuyruğu at."""
+    """Kırık tırnağı kapat. Yapışkan kesme işaretini ve yarım kuyruğu at."""
     raw = (text or "").strip()
     if not raw:
         return ""
-    if raw.count("'") % 2 == 1:
-        raw = re.sub(r"([.!?])$", r"'\1", raw) if raw.endswith((".", "!", "?")) else raw + "'"
+    raw = re.sub(r"\bShe\s+'s\b", "Her", raw)
+    raw = raw.replace("’", "'").replace("‘", "'").replace("ʼ", "'")
     if re.search(r",\s*(?:who|while|as)\b", raw, re.I):
         raw = re.sub(r",\s*(?:who|while|as)\b[\s\S]*$", "", raw, count=1, flags=re.I).strip(" ,")
+    if raw and not raw[:1].isupper():
+        return ""
+    if raw.count('"') % 2 == 1:
+        raw = re.sub(r'[\s.!,;:"]+$', "", raw) + '".'
+    quote_count = _without_apostrophes(raw).count("'")
+    if quote_count % 2 == 1:
+        if _has_opening_single_quote(raw):
+            raw = re.sub(r"[\s.!,;:'\"]+$", "", raw) + "'."
+        else:
+            raw = re.sub(r"['.]+$", ".", raw)
+    else:
+        raw = re.sub(r"\.{2,}'+\.*$", ".", raw)
+    raw = re.sub(r"\.{2,}", ".", raw).strip()
     if raw and not _ends_sentence(raw):
         raw += "."
     return raw
 
 
 def _strip_commentary(text: str) -> str:
-    """Olay kalsın. Yorum cümlesi ve virgülden sonraki anlam eki düşsün."""
+    """Olay kalsın. Yorumla başlayan cümle ve sondaki anlam eki düşsün."""
+    raw = (text or "").replace("’", "'").replace("‘", "'")
     kept: List[str] = []
-    for sent in _split_sentences(text):
-        if not _COMMENTARY_RE.search(sent):
-            kept.append(sent)
+    for sent in _split_sentences(raw):
+        if re.match(
+            r"^(?:this |her statement|she 's |shifting |this act|this unexpected|it )\b",
+            sent,
+            re.I,
+        ):
             continue
-        parts = sent.split(",")
-        action = [part.strip(" ,") for part in parts if part.strip(" ,") and not _COMMENTARY_RE.search(part)]
-        if not action:
+        bit = re.split(
+            r"(?:['\"][,.!?]?\s*|[,.!?]\s*['\"]?\s*)(?:highlighting|revealing|showing|suggesting|hinting|leading|shaping|surprising|creating|this introduces|this shows)\b",
+            sent,
+            maxsplit=1,
+            flags=re.I,
+        )[0].strip(" ,")
+        bit = _repair_spoken_text(bit)
+        if not bit:
             continue
-        bit = ", ".join(action).strip()
-        if len(bit.split()) < 4:
+        if _COMMENTARY_RE.search(bit) and not re.match(
+            r"^(?:She|He|They|Ms|Mr|What|Her)\b",
+            bit,
+        ):
             continue
-        if not _ends_sentence(bit):
-            bit += "."
-        kept.append(_repair_spoken_text(bit))
+        kept.append(bit)
     return " ".join(kept).strip()
 
 
@@ -1486,9 +1592,27 @@ def _separate_hook_from_body(segments):
     return segments
 
 
+def _glue_or_silent(seg, chapter, language: str, length: str, project=None, avoid: str = "") -> None:
+    """Boş veya bozuk kareyi analiz cümlesiyle doldur. Kaynak yoksa sessiz tut."""
+    glued = _panel_glue(
+        chapter,
+        int(getattr(seg, "image_index", 0) or 0),
+        language,
+        avoid=avoid,
+        project=project,
+        length=length,
+    )
+    glued = (glued or "").strip()
+    if glued and not _is_meta_filler(glued) and not _wrong_language(glued, language):
+        seg.text = glued
+        seg.duration = ScriptGenerator.estimate_duration(glued, language)
+        return
+    seg.text = ""
+    seg.duration = SILENT_HOLD_SEC
+
+
 def _fill_empty_story_panels(segments, chapter, language: str, length: str, project=None):
-    """Fazla cümle boş kareye yayılır. Analiz satırı seslendirme olmaz."""
-    del chapter, length, project
+    """Fazla cümle boş kareye yayılır. Kalan boş kare analiz cümlesiyle doldurulur."""
     if not segments:
         return segments
     _redistribute_beat_sentences(segments, language)
@@ -1500,22 +1624,19 @@ def _fill_empty_story_panels(segments, chapter, language: str, length: str, proj
         if text and not _is_meta_filler(text) and not _wrong_language(text, language):
             seg.duration = ScriptGenerator.estimate_duration(text, language)
             continue
-        seg.text = ""
-        seg.duration = SILENT_HOLD_SEC
+        _glue_or_silent(seg, chapter, language, length, project, avoid=text)
     return segments
 
 
 def _drop_wrong_language_segments(segments, language: str, chapter=None, length: str = "short", project=None):
-    """Seçilen dil dışındaki VO'yu sil. Orta/uzun boş kareyi hedef dilde doldurur."""
+    """Seçilen dil dışındaki VO'yu sil. Yerine analiz cümlesi yoksa sessiz kalır."""
     if not segments:
         return segments
     for seg in segments:
         text = (getattr(seg, "text", None) or "").strip()
-        if not text:
+        if not text or not _wrong_language(text, language):
             continue
-        if _wrong_language(text, language):
-            seg.text = ""
-            seg.duration = SILENT_HOLD_SEC
+        _glue_or_silent(seg, chapter, language, length, project, avoid=text)
     return _fill_empty_story_panels(segments, chapter, language, length, project)
 
 
@@ -2034,27 +2155,51 @@ class ScriptGenerator:
             {"role": "user", "content": lock + "\n\n" + prompt},
         ]
         text = ""
-        for attempt in range(max(1, retries + 1)):
+        tokens = max(1, int(max_tokens or 1))
+        expect_json = _prompt_expects_json(prompt)
+        attempts = max(1, retries + 1)
+        for attempt in range(attempts):
             result = self._client.chat_completion(
                 model,
                 messages,
                 temperature=temperature if attempt == 0 else min(0.55, temperature),
-                max_tokens=max_tokens,
+                max_tokens=tokens,
                 fallback_models=self._fallback_models(),
             )
-            text = (result.get("content") or "") if isinstance(result, dict) else str(result or "")
-            if not _wrong_language(text, language, known_names):
+            if isinstance(result, dict):
+                text = result.get("content") or ""
+                finish = str(result.get("finish_reason") or "").lower()
+            else:
+                text = str(result or "")
+                finish = ""
+            wrong = _wrong_language(text, language, known_names)
+            truncated = finish == "length"
+            malformed = expect_json and not _extract_json_obj(text)
+            if not wrong and not truncated and not malformed:
                 return text
-            retry_lock = (
-                lock
-                + "\nRETRY: previous output used the WRONG language. "
-                + "Rewrite the entire answer in the required language. No mixed words."
-            )
+            if attempt >= attempts - 1:
+                break
+            if truncated or malformed:
+                tokens = min(8000, max(tokens + 1, int(tokens * 1.5)))
+                reason = (
+                    "previous output was cut off or was not valid JSON. "
+                    "Return the complete answer as one valid JSON object."
+                )
+                logger.warning(
+                    "LLM çıktısı kesik veya bozuk JSON (deneme %d), yeniden isteniyor.",
+                    attempt + 1,
+                )
+            else:
+                reason = (
+                    "previous output used the WRONG language. "
+                    "Rewrite the entire answer in the required language. No mixed words."
+                )
+                logger.warning("LLM dil kaçışı (deneme %d), yeniden isteniyor.", attempt + 1)
+            retry_lock = lock + "\nRETRY: " + reason
             messages = [
                 {"role": "system", "content": retry_lock},
                 {"role": "user", "content": retry_lock + "\n\n" + prompt},
             ]
-            logger.warning("LLM dil kaçışı (deneme %d), yeniden isteniyor.", attempt + 1)
         return text
 
     def _shared_layers(self, language: str, niche: str, style: str, use_hook: bool) -> Dict[str, Any]:

@@ -303,3 +303,133 @@ class TestResolveStyle:
         assert resolve_style("") == "fresh"
         assert resolve_style("unknown") == "fresh"
         assert resolve_style("epic") == "epic"
+
+
+class TestPanelGlueFillsEmptyVo:
+    """Analiz verisi olan bos VO, sessize dusmeden once glue ile dolar."""
+
+    def test_empty_vo_fills_from_analysis(self):
+        from core.models import SegmentData
+        from core.script_generator import _fill_empty_story_panels
+
+        chapter = Chapter(
+            id="c1",
+            name="Chapter 1",
+            analysis_data={
+                "0": {
+                    "scene": "Sunho stands in the crowded hallway.",
+                    "action": "He turns away before she can answer him.",
+                },
+            },
+        )
+        segments = [SegmentData(image_index=0, text="", duration=0.0, role="beat", beat_id=0)]
+        _fill_empty_story_panels(segments, chapter, "en", "medium")
+        text = (segments[0].text or "").strip()
+        assert text
+        assert "turns away" in text.lower() or "crowded hallway" in text.lower()
+        assert segments[0].duration > 0.75
+
+    def test_wrong_language_vo_fills_from_analysis(self):
+        from core.models import SegmentData
+        from core.script_generator import _drop_wrong_language_segments
+
+        chapter = Chapter(
+            id="c1",
+            name="Chapter 1",
+            analysis_data={
+                "0": {"action": "She blocks the strike before it lands."},
+            },
+        )
+        segments = [
+            SegmentData(
+                image_index=0,
+                text="Bu sahne hikayenin aksiyon seviyesini yükseltir.",
+                duration=3.0,
+                role="beat",
+                beat_id=0,
+            )
+        ]
+        _drop_wrong_language_segments(segments, "en", chapter=chapter, length="medium")
+        text = (segments[0].text or "").strip()
+        assert text
+        assert "hikaye" not in text.lower()
+        assert "blocks the strike" in text.lower()
+
+    def test_empty_analysis_stays_silent(self):
+        from core.models import SegmentData
+        from core.script_generator import SILENT_HOLD_SEC, _fill_empty_story_panels
+
+        chapter = Chapter(id="c1", name="Chapter 1", analysis_data={})
+        segments = [SegmentData(image_index=0, text="", duration=0.0, role="beat", beat_id=0)]
+        _fill_empty_story_panels(segments, chapter, "en", "medium")
+        assert not (segments[0].text or "").strip()
+        assert abs((segments[0].duration or 0) - SILENT_HOLD_SEC) < 0.05
+
+
+class TestChatRetriesTruncatedJson:
+    """Kesik veya bozuk JSON, dil kaçışıyla aynı retry döngüsüne girer."""
+
+    def test_truncated_json_retries_with_larger_max_tokens(self):
+        from core.script_generator import ScriptGenerator, _extract_json_obj
+
+        calls = []
+        good = '{"beats":[{"id":0,"text":"He turns away before she can answer him."}]}'
+
+        def chat_completion(model, messages, temperature=0.7, max_tokens=2000, fallback_models=None):
+            calls.append(max_tokens)
+            if len(calls) == 1:
+                return {
+                    "content": '{"beats":[{"id":0,"text":"He said \\"wait',
+                    "finish_reason": "length",
+                    "model": model,
+                    "usage": {},
+                }
+            return {"content": good, "finish_reason": "stop", "model": model, "usage": {}}
+
+        gen = ScriptGenerator.__new__(ScriptGenerator)
+        gen._client = type("Client", (), {"chat_completion": staticmethod(chat_completion)})()
+        gen._fallback_models = lambda: []
+        prompt = 'SADECE JSON. {"beats":[{"id":0,"text":"..."}]}'
+        text = gen._chat("test-model", prompt, temperature=0.7, max_tokens=2000, language="en", retries=1)
+        assert _extract_json_obj(text)
+        assert len(calls) == 2
+        assert calls[1] == 3000
+        assert calls[1] > calls[0]
+        assert calls[1] <= 8000
+
+
+class TestExtractJsonRepairsTruncation:
+    """Kesilmiş JSON'dan kapanmış alanlar kurtarılır."""
+
+    def test_missing_closers_keep_existing_fields(self, caplog):
+        import logging
+        from core.script_generator import _extract_json_obj
+
+        raw = (
+            '{"hook":"Boom.","beats":[{"id":0,"text":"He turns away before she can answer him."}'
+        )
+        with caplog.at_level(logging.WARNING):
+            data = _extract_json_obj(raw)
+        assert data["hook"] == "Boom."
+        assert data["beats"][0]["id"] == 0
+        assert "turns away" in data["beats"][0]["text"]
+        assert "JSON onarıldı (kesilmiş çıktı)" in caplog.text
+
+    def test_cut_inside_string_keeps_earlier_beat(self):
+        from core.script_generator import _extract_json_obj
+
+        raw = '{"beats":[{"id":0,"text":"She blocks the strike."},{"id":1,"text":"Then he said'
+        data = _extract_json_obj(raw)
+        assert data["beats"][0]["text"] == "She blocks the strike."
+        assert data["beats"][1]["id"] == 1
+        assert data["beats"][1]["text"].startswith("Then he said")
+
+    def test_complete_json_is_not_repaired(self, caplog):
+        import logging
+        from core.script_generator import _extract_json_obj
+
+        raw = '{"hook":"Boom.","beats":[{"id":0,"text":"A"}]}'
+        with caplog.at_level(logging.WARNING):
+            data = _extract_json_obj(raw)
+        assert data["hook"] == "Boom."
+        assert "JSON onarıldı" not in caplog.text

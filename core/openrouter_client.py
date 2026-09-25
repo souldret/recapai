@@ -290,6 +290,9 @@ class OpenRouterClient:
                     raise OpenRouterError(f"API hatası: {err_msg}", response_data=data)
 
                 self._track_tokens(data)
+                choice = (data.get("choices") or [{}])[0]
+                if isinstance(choice, dict):
+                    data["finish_reason"] = choice.get("finish_reason") or ""
                 return data
 
             except OpenRouterError:
@@ -432,7 +435,7 @@ class OpenRouterClient:
                 denenecek alternatif model ID'leri.
 
         Returns:
-            {"content": str, "model": str, "usage": dict}
+            {"content": str, "model": str, "usage": dict, "finish_reason": str}
         """
         payload = {
             "model": model,
@@ -444,10 +447,14 @@ class OpenRouterClient:
         choice = (data.get("choices") or [{}])[0]
         msg = choice.get("message") or {}
         content = _message_text(msg) if isinstance(msg, dict) else _message_text(choice)
+        finish = data.get("finish_reason")
+        if not finish and isinstance(choice, dict):
+            finish = choice.get("finish_reason") or ""
         return {
             "content": content or "",
             "model": data.get("model", model),
             "usage": data.get("usage", {}),
+            "finish_reason": finish or "",
         }
 
     # ── Vision Analyze ─────────────────────────────────────────────
