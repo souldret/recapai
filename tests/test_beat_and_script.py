@@ -1124,6 +1124,22 @@ class TestMaterialize:
         restore_hidden_names(segs, ["Jin-Woo"])
         assert segs[0].text.startswith("Jin-Woo")
 
+    def test_commentary_drops_and_name_is_not_shouted(self):
+        from core.models import SegmentData
+        from core.script_generator import _spoken_story_pass
+        segs = [
+            SegmentData(0, "MS. HAESEON has Sunbae pinned to the floor, leaving him flustered.", role="beat"),
+            SegmentData(1, "This scene highlights the romantic tension of the story.", role="beat"),
+            SegmentData(2, "MS. HAESEON asks if he is okay.", role="beat"),
+        ]
+        _spoken_story_pass(segs, None, "en")
+        blob = " ".join(s.text for s in segs)
+        assert "MS." not in blob
+        assert "highlights" not in blob.lower()
+        assert "this scene" not in blob.lower()
+        assert segs[0].text.startswith("Ms. Haeseon")
+        assert segs[2].text.lower().startswith("she")
+
     def test_compiled_segments_keep_source_chapter(self):
         from core.models import Chapter, ImageData, SegmentData
         from core.script_generator import ScriptGenerator

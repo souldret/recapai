@@ -1313,6 +1313,116 @@ def _sentence_key(text: str) -> str:
     return re.sub(r"\s+", " ", re.sub(r"[^a-z0-9çğıöşü ]+", "", (text or "").lower())).strip()
 
 
+_COMMENTARY_RE = re.compile(
+    r"\b(?:this scene|this moment|this dialogue|this confession|this physical|"
+    r"highlights?|showcas\w*|emphasiz\w*|signif\w*|foreshadow\w*|"
+    r"turning point|the dynamics|internal conflict|new phase|new insight|"
+    r"the audience|in the story|of the story|to the story|"
+    r"romantic tension|potential misunderstanding)\b",
+    re.I,
+)
+
+
+def _strip_commentary(text: str) -> str:
+    """Olay kalsın. 'Bu sahne şunu gösterir' cümlesi düşsün."""
+    kept: List[str] = []
+    for sent in _split_sentences(text):
+        if not _COMMENTARY_RE.search(sent):
+            kept.append(sent)
+            continue
+        head = sent.split(",", 1)[0].strip()
+        if (
+            head
+            and head.rstrip(".") != sent.strip().rstrip(".")
+            and not _COMMENTARY_RE.search(head)
+            and len(head.split()) >= 4
+        ):
+            if not _ends_sentence(head):
+                head += "."
+            kept.append(head)
+    return " ".join(kept).strip()
+
+
+def _soften_shouted_names(text: str) -> str:
+    text = re.sub(r"\bMS\.", "Ms.", text or "")
+    text = re.sub(r"\bMR\.", "Mr.", text)
+    def _word(match: re.Match) -> str:
+        word = match.group(0)
+        return word[:1] + word[1:].lower()
+    return re.sub(r"\b[A-Z]{3,}\b", _word, text)
+
+
+def _thin_repeated_subjects(segments, names: List[str], genders: Dict[str, str]) -> None:
+    """Aynı kişi art arda konuşuluyorsa ikinci cümle zamirle devam eder."""
+    last = ""
+    ordered = sorted([n for n in names if n], key=len, reverse=True)
+    for seg in segments or []:
+        role = (getattr(seg, "role", "") or "").lower()
+        out: List[str] = []
+        for sent in _split_sentences(getattr(seg, "text", "") or ""):
+            lead = ""
+            for name in ordered:
+                if re.match(
+                    rf"^(?:(?:Mr|Ms|Mrs)\.?\s+)?{re.escape(name)}\b",
+                    sent,
+                    re.I,
+                ):
+                    lead = name
+                    break
+            if lead and lead.lower() == last and role != "cold_open":
+                pronoun = genders.get(lead.lower(), "they")
+                rest = re.sub(
+                    rf"^(?:(?:Mr|Ms|Mrs)\.?\s+)?{re.escape(lead)}\b",
+                    "",
+                    sent,
+                    count=1,
+                    flags=re.I,
+                ).lstrip(" ,")
+                sent = f"{pronoun[:1].upper()}{pronoun[1:]} {rest}".strip()
+                last = lead.lower()
+            elif lead:
+                last = lead.lower()
+            out.append(sent)
+        joined = " ".join(out).strip()
+        if not joined:
+            continue
+        seg.text = joined
+
+
+def _spoken_story_pass(segments, project, language: str):
+    """Yorumu sil, bağıran ismi yumuşat, aynı özneyi zamire çevir."""
+    genders: Dict[str, str] = {}
+    names: List[str] = []
+    if project is not None:
+        from core.character_bible import get_entries
+        for entry in get_entries(project):
+            name = (entry.get("canonical") or "").strip()
+            if not name:
+                continue
+            names.append(name)
+            gender = (entry.get("gender") or "").lower()
+            if gender == "female":
+                genders[name.lower()] = "she"
+            elif gender == "male":
+                genders[name.lower()] = "he"
+    for seg in segments or []:
+        text = _soften_shouted_names(getattr(seg, "text", "") or "")
+        text = _strip_commentary(text)
+        seg.text = text
+    if not names:
+        for seg in segments or []:
+            for match in re.finditer(r"\b(Mr|Ms|Mrs)\.?\s+([A-Za-z][A-Za-z'-]+)", getattr(seg, "text", "") or ""):
+                name = match.group(2)
+                if name not in names:
+                    names.append(name)
+                genders.setdefault(name.lower(), "she" if match.group(1).lower() != "mr" else "he")
+    _thin_repeated_subjects(segments, names, genders)
+    for seg in segments or []:
+        text = (seg.text or "").strip()
+        seg.duration = ScriptGenerator.estimate_duration(text, language) if text else SILENT_HOLD_SEC
+    return segments
+
+
 def _drop_repeated_sentences(segments):
     """Aynı beat içinde aynı cümle ikinci kez söylenmez."""
     by_beat: Dict[Any, List] = {}
@@ -1732,6 +1842,7 @@ class ScriptGenerator:
             lint_segments(segments)
         segments = _separate_hook_from_body(segments)
         segments = _drop_repeated_sentences(segments)
+        segments = _spoken_story_pass(segments, project, language)
         lint_segments(segments)
         if project is not None:
             from core.script_linter import flag_hidden_names, restore_hidden_names
@@ -1849,6 +1960,9 @@ class ScriptGenerator:
             ("Rewrite these beats as ONE continuous third-person recap.\n" if en else
              "Bu beat'leri tek, kesintisiz üçüncü şahıs anlatı olarak yeniden yaz.\n")
             + "Read it aloud in one pass. Each next sentence must follow the previous one.\n"
+            + "Tell what happens. Never explain what the scene means.\n"
+            + "Forbidden: this scene, highlights, dynamics, turning point, the audience, signifies, foreshadows.\n"
+            + "Say a name once, then he or she, until someone else acts.\n"
             + "Do not restart a beat. Do not repeat a fact. Do not describe the picture.\n"
             + name_rule
             + ("Cast: " + ", ".join(names[:12]) + "\n" if names else "")
@@ -2402,7 +2516,8 @@ class ScriptGenerator:
         segs = prefix + story
         segs = _fill_empty_story_panels(segs, chapter, language, length, project)
         segs = _separate_hook_from_body(segs)
-        return _drop_repeated_sentences(segs)
+        segs = _drop_repeated_sentences(segs)
+        return _spoken_story_pass(segs, project, language)
 
     def _make_segment(
         self,
