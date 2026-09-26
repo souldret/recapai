@@ -51,6 +51,42 @@ _PATTERNS: List[Tuple[str, re.Pattern, str]] = [
      "Sahte beat filler"),
 ]
 
+_EMOTION_TAIL_RE = re.compile(
+    r"(?:"
+    r"leaving\s+(?:him|her|them)\b"
+    r"|"
+    r"\b(?:his|her|their)\s+face\s+burns?\s+with\b"
+    r")",
+    re.I,
+)
+_PAST_TENSE_RE = re.compile(
+    r"\b(?:"
+    r"has\s+been|have\s+been|had\s+been|had\b"
+    r"|walked|exploded|activated|looked|said|went|came|saw|felt|turned|grabbed|ran"
+    r")\b",
+    re.I,
+)
+_TR_MARK_RE = re.compile(r"[çğıöşüÇĞİÖŞÜ]")
+
+
+def _emotion_tag_repeat(text: str) -> bool:
+    hits = 0
+    for sentence in re.split(r"[.!?\u2026]+", text or ""):
+        if _EMOTION_TAIL_RE.search(sentence):
+            hits += 1
+            if hits >= 2:
+                return True
+        else:
+            hits = 0
+    return False
+
+
+def _past_tense_story(text: str) -> bool:
+    raw = text or ""
+    if _TR_MARK_RE.search(raw):
+        return False
+    return bool(_PAST_TENSE_RE.search(raw))
+
 
 def _word_count(text: str) -> int:
     return len((text or "").split())
@@ -114,6 +150,12 @@ def lint_text(text: str, *, role: str = "", is_first: bool = False, is_last: boo
 
     if _has_raw_dialogue_run(raw) and "Ham diyalog / çevrilmemiş alıntı" not in issues:
         issues.append("Ham diyalog / çevrilmemiş alıntı")
+
+    if _emotion_tag_repeat(raw) and "Duygu etiketi tekrarı" not in issues:
+        issues.append("Duygu etiketi tekrarı")
+
+    if role != "last_time" and _past_tense_story(raw) and "Geçmiş zaman anlatı" not in issues:
+        issues.append("Geçmiş zaman anlatı")
 
     if is_first:
         low = raw.lower()

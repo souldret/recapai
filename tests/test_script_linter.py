@@ -41,3 +41,69 @@ def test_teto_line_is_raw_speech_not_narration():
     assert not _looks_like_raw_quote(
         "Ms. Haeseon pins Sunbae to the floor and calls him mean."
     )
+
+
+_PAST = "Geçmiş zaman anlatı"
+_EMOTION = "Duygu etiketi tekrarı"
+
+
+def test_present_tense_story_is_clean():
+    issues = lint_text(
+        "Frondier walks in. She explodes the core and he activates his skill.",
+        role="beat",
+    )
+    assert not any(_PAST in issue for issue in issues)
+
+
+def test_past_tense_story_is_flagged():
+    issues = lint_text(
+        "Frondier walked in. She has been hiding the skill, and he activated it.",
+        role="beat",
+    )
+    assert any(_PAST in issue for issue in issues)
+
+
+def test_last_time_may_stay_past_tense():
+    issues = lint_text(
+        "Frondier walked into the dungeon and activated his skill.",
+        role="last_time",
+    )
+    assert not any(_PAST in issue for issue in issues)
+
+
+def test_repeated_emotion_tag_is_flagged():
+    issues = lint_text(
+        "He drops the sword, leaving him flustered. "
+        "The crowd laughs, leaving her stunned.",
+        role="beat",
+    )
+    assert any(_EMOTION in issue for issue in issues)
+
+
+def test_one_emotion_tag_is_not_flagged():
+    issues = lint_text(
+        "He drops the sword, leaving him flustered. Then he activates the skill.",
+        role="beat",
+    )
+    assert not any(_EMOTION in issue for issue in issues)
+
+
+def test_face_burns_repeat_is_flagged():
+    issues = lint_text(
+        "His face burns with embarrassment. Her face burns with shame.",
+        role="beat",
+    )
+    assert any(_EMOTION in issue for issue in issues)
+
+
+def test_leaked_speech_lines_are_raw_quotes():
+    from core.script_generator import _looks_like_raw_quote
+
+    samples = [
+        "If We Were At My Place, I Could've Used My Foam Roller To Loosen You Up.",
+        "If I Really Am A Teto Girl,",
+        "Well, I Mean, I'm Obviously An Egen Guy, But.",
+        "Can You Focus Completely On Me?",
+    ]
+    for sample in samples:
+        assert _looks_like_raw_quote(sample), sample

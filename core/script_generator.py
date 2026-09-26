@@ -1100,16 +1100,19 @@ def _looks_like_raw_quote(text: str) -> bool:
     t = (text or "").strip()
     if not t:
         return False
+    words = t.split()
     low = t.lower()
-    first_word = low.split()[0].strip(".,!?") if low.split() else ""
-    if first_word in ("i", "i'm", "i've", "i'll", "i'd", "you", "you're",
-                       "you'll", "you've", "we", "we're", "can", "if",
-                       "well", "and", "so"):
+    first_word = low.split()[0].strip(".,!?;:'\"") if words else ""
+    if first_word in (
+        "i", "i'm", "i've", "i'll", "i'd", "you", "you're",
+        "you'll", "you've", "we", "we're", "we'll", "we've", "we'd",
+        "can", "could", "if", "well", "and", "so", "but",
+    ):
         return True
-    if t.endswith((",", ".,", " but.", " but,")):
+    if t.rstrip().endswith((",", ".,", " but.", " but,", ",.", ",!", ",?")):
         return True
-    if len(re.findall(r"\b[A-Z][a-z]*'?[A-Z]?[A-Za-z]*\b", t)) > len(t.split()) * 0.6 and len(t.split()) > 3:
-        # Kelimelerin çoğu Title-Case/ALL-CAPS ise (ham diyalog izi)
+    title = re.findall(r"\b[A-Z][A-Za-z]*'?[A-Za-z]*\b", t)
+    if len(words) > 3 and len(title) > len(words) * 0.6:
         return True
     return False
 
@@ -1440,6 +1443,8 @@ def _repair_spoken_text(text: str) -> str:
         raw = re.sub(r",\s*(?:who|while|as)\b[\s\S]*$", "", raw, count=1, flags=re.I).strip(" ,")
     if raw and not raw[:1].isupper():
         return ""
+    raw = re.sub(r",+\s*\.+", ".", raw)
+    raw = re.sub(r"\.+,+", ".", raw)
     if raw.count('"') % 2 == 1:
         raw = re.sub(r'[\s.!,;:"]+$', "", raw) + '".'
     quote_count = _without_apostrophes(raw).count("'")
@@ -2456,6 +2461,9 @@ class ScriptGenerator:
                 logger.error("VO chunk %d parse edilemedi.", chunk_i + 1)
             for b in chunk:
                 text = (parsed.get(b.beat_id) or "").strip()
+                if text and _looks_like_raw_quote(text):
+                    rewritten = self._rewrite_raw_fallback(text, b, model, language, known)
+                    text = rewritten or ""
                 if not text or _wrong_language(text, language, known) or _is_atmosphere_dump(text):
                     item = outline_beats.get(b.beat_id, {})
                     fallback = (item.get("payload") or b.summary or b.action or "").strip()
